@@ -187,8 +187,8 @@ class RemoteConversationRepositorySlashCommandTest {
     fun menu_sendsNothingFoldsNoThreadRowAndClearsNoStall() =
         runTest {
             val (pump, repo) = interactiveRepo()
-            val thread = mutableListOf<List<ThreadItem>>()
-            backgroundScope.launch { repo.observeMessages("c1").collect { thread += it } }
+            val thread = mutableListOf<AuthoritativeThreadSnapshot>()
+            backgroundScope.launch { repo.observeAuthoritativeThread("c1").collect { thread += it } }
             val stalls = mutableListOf<Boolean>()
             backgroundScope.launch { repo.observeStall("c1").collect { stalls += it } }
             collectMenu(repo, "c1")
@@ -201,7 +201,7 @@ class RemoteConversationRepositorySlashCommandTest {
             runCurrent()
 
             assertEquals(listOf(false, true), stalls)
-            assertEquals(listOf(emptyList<ThreadItem>()), thread)
+            assertEquals(listOf(AuthoritativeThreadSnapshot()), thread)
             assertEquals(emptyList<Envelope>(), pump.sent.filter { it.type.contains("slash") })
             assertEquals(sentBefore, pump.sent)
         }

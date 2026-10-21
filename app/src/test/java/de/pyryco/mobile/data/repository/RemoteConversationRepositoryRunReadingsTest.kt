@@ -257,7 +257,7 @@ class RemoteConversationRepositoryRunReadingsTest {
         runTest {
             val (pump, repo) = repo()
             val stall = collect(repo.observeStall("c1"))
-            val thread = collect(repo.observeMessages("c1"))
+            val thread = collect(repo.observeAuthoritativeThread("c1"))
             val settings = collect(repo.observeSessionSettings("c1"))
             runCurrent()
             pump.push(stall("c1", id = 1L))
@@ -271,7 +271,7 @@ class RemoteConversationRepositoryRunReadingsTest {
             runCurrent()
 
             assertEquals("the stall stands", listOf(false, true), stall)
-            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals("no authoritative content changed", listOf(AuthoritativeThreadSnapshot()), thread)
             assertEquals("the settings reading is untouched", settingsBefore, settings)
             assertEquals("the saved override is not the announced model", "opus", settings.last()?.model)
             assertEquals("the confirmed permission mode is not claude's claim", "default", settings.last()?.permissionMode)

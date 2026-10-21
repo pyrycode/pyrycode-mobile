@@ -390,17 +390,6 @@ class AuthoritativeThreadScreenTest {
             de.pyryco.mobile.data.repository
                 .FakeConnectionStateSource(),
             ComposerDraftStore(),
-            backgroundTasks = {
-                kotlinx.coroutines.flow.flowOf(
-                    de.pyryco.mobile.data.model.BackgroundTaskRoster(
-                        listOf(
-                            de.pyryco.mobile.data.model
-                                .BackgroundTask("legacy", null, "local_bash", "legacy task", null, null, null, false),
-                        ),
-                        0,
-                    ),
-                )
-            },
             backgroundTaskStopSupported = kotlinx.coroutines.flow.flowOf(true),
             stopBackgroundTask = { conversation, task ->
                 stops += conversation to task

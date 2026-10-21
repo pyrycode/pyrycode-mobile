@@ -3,7 +3,6 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.NegotiatedThread
-import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -92,23 +91,6 @@ internal object PassiveThreadProbe {
                     }
                 }
         }
-
-    fun tap(
-        currentOwner: () -> ThreadEvidenceOwner?,
-        upstream: Flow<ThreadSnapshot>,
-    ): Flow<ThreadSnapshot> =
-        flow {
-            val observation = synchronized(this@PassiveThreadProbe) { active }
-            val reading = if (observation == null) null else currentOwner()?.let { observation.started(it, currentOwner) }
-            try {
-                upstream.collect { snapshot ->
-                    if (reading != null) observation?.record(reading, snapshot)
-                    emit(snapshot)
-                }
-            } finally {
-                if (reading != null) observation?.ended(reading)
-            }
-        }
 }
 
 internal class PassiveThreadReading(
@@ -116,9 +98,6 @@ internal class PassiveThreadReading(
     internal val currentOwner: () -> ThreadEvidenceOwner?,
     val subscription: Any = Any(),
 ) {
-    @Volatile var snapshot: ThreadSnapshot? = null
-        internal set
-
     @Volatile internal var authoritative: ThreadEvidence? = null
 
     override fun toString(): String = "PassiveThreadReading(redacted)"
@@ -145,18 +124,6 @@ internal class PassiveThreadObservation : AutoCloseable {
 
     @Synchronized internal fun record(
         reading: PassiveThreadReading,
-        snapshot: ThreadSnapshot,
-    ) {
-        if (readings[reading.subscription] !== reading) return
-        if (reading.currentOwner()?.let(reading.owner::matches) == true) {
-            reading.snapshot = snapshot
-        } else {
-            ended(reading)
-        }
-    }
-
-    @Synchronized internal fun record(
-        reading: PassiveThreadReading,
         evidence: ThreadEvidence,
     ): Boolean {
         if (readings[reading.subscription] !== reading) return false
@@ -170,7 +137,6 @@ internal class PassiveThreadObservation : AutoCloseable {
 
     @Synchronized internal fun ended(reading: PassiveThreadReading) {
         readings.remove(reading.subscription)
-        reading.snapshot = null
         reading.authoritative = null
     }
 
@@ -190,15 +156,12 @@ internal class PassiveThreadObservation : AutoCloseable {
             ended(reading)
             return null
         }
-        if (current.kind == ThreadEvidenceKind.Authoritative) return reading.authoritative?.takeIf { it.admitted }
-        val snapshot = reading.snapshot ?: return null
-        return legacyThreadEvidence(current.host, current.conversation, current.connection, snapshot.rows)
+        return reading.authoritative?.takeIf { it.admitted }
     }
 
     @Synchronized override fun close() {
         closed = true
         readings.values.forEach {
-            it.snapshot = null
             it.authoritative = null
         }
         readings.clear()

@@ -74,7 +74,6 @@ class StableConversationRepositoryTest {
             val lastMessages = mutableListOf<Message?>()
             val workspaces = mutableListOf<List<String>>()
             backgroundScope.launch { facade.observeConversations(ConversationFilter.All).collect { conversations += it } }
-            backgroundScope.launch { facade.observeMessages("c1").collect { messages += it } }
             backgroundScope.launch { facade.observeLastMessage("c1").collect { lastMessages += it } }
             backgroundScope.launch { facade.recentWorkspaces().collect { workspaces += it } }
             runCurrent()
@@ -222,7 +221,6 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.dropQueuedMessage("c1", 42L) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.sendQueuedNow("c1", 42L) }.exceptionOrNull() is IllegalStateException)
-            assertTrue(runCatching { facade.requestHistory("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestSystemPrompt("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.renameWorkspace("/w", "x") }.exceptionOrNull() is IllegalStateException)
@@ -390,7 +388,6 @@ class StableConversationRepositoryTest {
             facade.sendQueuedNow("c7", 98L)
             // #623: the cursor and limit must arrive at the live repo untouched — an opaque cursor the
             // facade re-encoded or a limit it "normalized" would break the walk one layer down.
-            val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
             assertEquals(listOf("  Chan " to "/ws/chan"), repoA.createChannelCalls)
@@ -398,12 +395,10 @@ class StableConversationRepositoryTest {
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
             assertEquals(listOf("c7" to 98L), repoA.sendQueuedNowCalls)
-            assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
             assertSame(channel, channelResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
-            assertSame(repoA.requestHistoryResult, historyResult)
         }
 
     // ---- AC #4: a throwing stub on the live repo passes through unchanged -------------------------
@@ -459,43 +454,6 @@ class StableConversationRepositoryTest {
         }
 
     // ---- #460: observeQueue delegates and tracks connection churn --------------------------------
-
-    @Test
-    fun observeQueue_whileAbsent_emitsEmpty() =
-        runTest {
-            val current = MutableStateFlow<ConversationRepository?>(null)
-            val facade = StableConversationRepository(current)
-
-            val queues = mutableListOf<List<QueuedMessage>>()
-            backgroundScope.launch { facade.observeQueue("c1").collect { queues += it } }
-            runCurrent()
-
-            assertEquals(listOf(emptyList<QueuedMessage>()), queues)
-        }
-
-    @Test
-    fun observeQueue_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
-        runTest {
-            val repoA = RecordingConversationRepository()
-            val repoB = RecordingConversationRepository()
-            val current = MutableStateFlow<ConversationRepository?>(repoA)
-            val facade = StableConversationRepository(current)
-
-            val queues = mutableListOf<List<QueuedMessage>>()
-            backgroundScope.launch { facade.observeQueue("c1").collect { queues += it } }
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queues)
-
-            val backlog = listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z")))
-            repoA.pushQueue(backlog)
-            runCurrent()
-            assertEquals(listOf(emptyList(), backlog), queues)
-
-            // Switching to a fresh (empty-backlog) connection drops the prior connection's queue.
-            current.value = repoB
-            runCurrent()
-            assertEquals(listOf(emptyList(), backlog, emptyList()), queues)
-        }
 
     // ---- #593: observeApiRetry delegates and tracks connection churn -----------------------------
 
@@ -1179,13 +1137,9 @@ class StableConversationRepositoryTest {
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
-
         override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
 
         override fun observeStall(conversationId: String): Flow<Boolean> = stalled
-
-        override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queued
 
         override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetry
 
@@ -1324,15 +1278,6 @@ class StableConversationRepositoryTest {
         ): Message {
             sendWithAttachmentsCalls += Triple(conversationId, text, attachments)
             return sendMessageResult
-        }
-
-        override suspend fun requestHistory(
-            conversationId: String,
-            cursor: String,
-            limit: Int,
-        ): HistoryPage {
-            requestHistoryCalls += Triple(conversationId, cursor, limit)
-            return requestHistoryResult
         }
 
         override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {

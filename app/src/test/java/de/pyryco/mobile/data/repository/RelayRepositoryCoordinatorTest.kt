@@ -229,41 +229,6 @@ class RelayRepositoryCoordinatorTest {
 
     // ---- AC #4: the thread read path functions end-to-end over the live pump --------------------
 
-    @Test
-    fun threadPath_overLivePump_yieldsOrderedThread() =
-        runTest {
-            val env = newEnv()
-            env.connections.value = StubRelayTransport()
-            runCurrent()
-            env.pumps.single().open()
-            runCurrent()
-            val repo = requireNotNull(env.coordinator.currentRepository.value)
-            val pump = env.pumps.single()
-
-            val emissions = mutableListOf<List<ThreadItem>>()
-            backgroundScope.launch { repo.observeMessages("c1").collect { emissions += it } }
-            runCurrent()
-
-            // The subscription drove a backfill_since request over the coordinator-built pump.
-            assertEquals("backfill_since", pump.sent.single().type)
-
-            pump.push(
-                messageChunkEnvelope(
-                    listOf(
-                        chunkRow("c1", "m1", "user", "first"),
-                        chunkRow("c1", "m2", "assistant", "second"),
-                    ),
-                ),
-            )
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m3", "user", "live", "2026-05-31T12:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "m2", "m3"), messageIds(emissions.last()))
-
-            env.coordinator.close()
-        }
-
     // ---- AC #3: a dropped connection closes the pump and stops the repository collector ----------
 
     @Test
@@ -1164,97 +1129,9 @@ class RelayRepositoryCoordinatorTest {
 
     // #825: a send goes only to the host holding the batch, even when another host holds an equal id.
     // #677: background tasks are held Eagerly like question batches, read per conversation.
-    @Test
-    fun backgroundTasks_holdFramesBeforeAnySubscriberAndReadPerConversation() =
-        runTest {
-            val env = newEnv()
-            val pump = openInteractiveConnection(env)
-
-            pump.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
-            pump.push(BackgroundTaskProjectionTest.started("t2", conversationId = "conv-1"))
-            pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
-            pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = emptyList(), conversationId = "conv-2"))
-            runCurrent()
-
-            assertEquals(setOf("conv-1", "conv-2"), env.coordinator.backgroundTasks.value.keys)
-            assertEquals(1, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
-            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-2").first())
-            assertEquals(
-                0,
-                env.coordinator
-                    .observeBackgroundTasks("conv-2")
-                    .first()
-                    ?.tasks
-                    ?.size,
-            )
-            assertNull(env.coordinator.observeBackgroundTasks("conv-3").first())
-            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-3").first())
-
-            env.coordinator.close()
-        }
 
     // The daemon re-sends its retained roster on every reconnect, and mobile reconnects on every return to the
     // foreground: only the finished mark carries over, everything else is rebuilt from the new connection.
-    @Test
-    fun backgroundTasks_resetOnReconnectButTheFinishedMarkSurvivesTheReconciledRoster() =
-        runTest {
-            val env = newEnv()
-            val first = openInteractiveConnection(env)
-            first.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
-            first.push(
-                BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("t1")), conversationId = "conv-1"),
-            )
-            first.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
-            first.push(BackgroundTaskProjectionTest.started("t9", conversationId = "conv-2"))
-            runCurrent()
-            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
-
-            val second = openInteractiveConnection(env)
-            assertTrue(
-                env.coordinator.backgroundTasks.value
-                    .isEmpty(),
-            )
-
-            second.push(
-                BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("t1")), conversationId = "conv-1"),
-            )
-            runCurrent()
-
-            val t1 =
-                env.coordinator
-                    .observeBackgroundTasks("conv-1")
-                    .first()
-                    ?.tasks
-                    ?.single()
-            assertEquals(true, t1?.isFinished)
-            assertNull(t1?.finish)
-            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
-            assertNull(env.coordinator.observeBackgroundTasks("conv-2").first())
-
-            env.coordinator.close()
-        }
-
-    @Test
-    fun backgroundTasks_areHeldPerHost() =
-        runTest {
-            val hostA = newEnv()
-            val hostB = newEnv()
-            val pumpA = openInteractiveConnection(hostA)
-            val pumpB = openInteractiveConnection(hostB)
-
-            pumpA.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
-            pumpA.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
-            pumpB.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
-            runCurrent()
-
-            assertEquals(0, hostA.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
-            assertEquals(1, hostB.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
-            assertTrue(hostA.coordinator.finishedBackgroundTasks.contains("conv-1", "t1"))
-            assertFalse(hostB.coordinator.finishedBackgroundTasks.contains("conv-1", "t1"))
-
-            hostA.coordinator.close()
-            hostB.coordinator.close()
-        }
 
     // #1317: the five pushed readings belong to the host's pairing, not one connection, so a background and
     // foreground cycle neither blanks them in the gap nor makes the next connection start from nothing.
@@ -1650,46 +1527,6 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
-    // #412 AC #4: the replay cursor is coordinator-scoped, so it survives connection churn — a fresh
-    // per-connection repo keeps recording into the same high-water mark the prior connection advanced.
-    @Test
-    fun replayCursor_survivesReconnect() =
-        runTest {
-            val env = newEnv()
-
-            // Connection 1: open with the capability, record an event_id.
-            env.connections.value = StubRelayTransport()
-            runCurrent()
-            env.pumps[0].open(capabilities = setOf(CAPABILITY_INTERACTIVE))
-            runCurrent()
-            env.pumps[0].push(turnStateEnvelope("c1", "thinking", eventId = 100))
-            runCurrent()
-            assertEquals(100L, env.coordinator.replayCursor.latest)
-
-            // Reconnect over a fresh transport (fresh pump #2): the cursor persists across the churn …
-            env.connections.value = null
-            runCurrent()
-            env.connections.value = StubRelayTransport()
-            runCurrent()
-            assertEquals(100L, env.coordinator.replayCursor.latest)
-
-            // … and the new connection's repo keeps folding into the same mark (out-of-order ignored).
-            env.pumps[1].open(capabilities = setOf(CAPABILITY_INTERACTIVE))
-            runCurrent()
-            env.pumps[1].push(turnStateEnvelope("c2", "responding", eventId = 5))
-            runCurrent()
-            assertEquals(100L, env.coordinator.replayCursor.latest)
-            env.pumps[1].push(turnStateEnvelope("c2", "responding", eventId = 200))
-            runCurrent()
-            assertEquals(200L, env.coordinator.replayCursor.latest)
-
-            env.coordinator.close()
-        }
-
-    // ---- #451: outbound modal answer/cancel passthrough to the connection-scoped concrete repo ----
-
-    // A live connection (pump Open) → answerModal delegates: exactly one modal_answer frame carrying the
-    // modal_id/option_id is sent, and the suspend completes on the correlated ack.
     @Test
     fun answerModal_withActiveConnection_delegatesAndCompletesOnAck() =
         runTest {

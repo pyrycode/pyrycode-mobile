@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
@@ -128,16 +127,13 @@ class BackgroundAgentProseScreenTest {
     @Test fun lateParentReplayMovesVisibleSyntheticIntoBlockWithoutHidingIt() {
         mount(false, true)
         val receivedAt = Instant.parse("2020-01-01T10:00:00Z")
-        val delta = LiveSessionEvent.AssistantDelta("c", "child", 0, "Reply", "")
-        var fold =
-            ThreadFold(items.filterNot { (it as? ThreadItem.MessageItem)?.message?.id == "Child" }, null)
-                .reduce(ThreadInput.Live(delta, receivedAt), "c")
-        compose.runOnIdle { items = fold.render() }
+        val reply = ThreadItem.MessageItem(Message("child", "s", Role.Assistant, "Reply", receivedAt, true))
+        val base = items.filterNot { (it as? ThreadItem.MessageItem)?.message?.id == "Child" }
+        compose.runOnIdle { items = base + reply }
         compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("background-agent-child:a").assertDoesNotExist()
         compose.runOnIdle {
-            fold = fold.reduce(ThreadInput.Live(delta.copy(parentToolUseId = "a"), receivedAt), "c")
-            items = fold.render()
+            items = base + reply.copy(message = reply.message.copy(parentToolUseId = "a"))
         }
         // The reply moves into the agent's block and stays visible there: a lone child never meets the
         // two-row fold threshold (#1827 follow-up), so there is no header to hide it behind.

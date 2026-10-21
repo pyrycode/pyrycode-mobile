@@ -19,7 +19,6 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
-import de.pyryco.mobile.data.repository.threadSnapshots
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -38,7 +37,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -508,49 +506,6 @@ class HostConversationSourceAttentionTest {
         }
 
     @Test
-    fun invariantStatusTailClearsAfterPresentedPhoneReadOrPeerConfirmationWithoutRestart() =
-        withRemoteSource { a, _, source, host ->
-            for (phoneRead in listOf(true, false)) {
-                val id = if (phoneRead) "phone" else "peer"
-                a.push(readList(id, 0u, 0u))
-                a.push(durableMessage(id, 41u), 41u)
-                a.push(liveEvent(id), 42u)
-                runCurrent()
-                assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get(id))
-                val repository = requireNotNull(host.repositories.value)
-                if (phoneRead) {
-                    val view = viewing.view("a", id)
-                    try {
-                        source.markOpened("a", id)
-                        runCurrent()
-                        assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get(id))
-                        val presented = repository.threadSnapshots(id).first()
-                        val checkpoint = requireNotNull(presented.readEvidence.checkpoint(presented.rows.single(), 0u))
-                        assertEquals(42uL, checkpoint)
-                        val request = async { repository.markConversationRead(id, checkpoint) }
-                        runCurrent()
-                        a.push(readUpdate(id, 41u), inReplyTo = a.sent.last { it.type == "mark_conversation_read" }.id)
-                        runCurrent()
-                        assertEquals(41uL, request.await().getOrThrow())
-                    } finally {
-                        view.close()
-                    }
-                } else {
-                    a.push(readUpdate(id, 41u))
-                }
-                runCurrent()
-                assertNull(source.attention.value["a"]?.get(id))
-                repeat(2) { a.push(liveEvent(id), 42u) }
-                a.push(readList(id, 0u, 41u))
-                runCurrent()
-                assertNull(source.attention.value["a"]?.get(id))
-                a.push(durableMessage(id, 43u), 43u)
-                runCurrent()
-                assertEquals(ConversationAttention.Unread, source.attention.value["a"]?.get(id))
-            }
-        }
-
-    @Test
     fun sharedUnreadStillYieldsToBusyAndEveryOutstandingPermission() =
         withRemoteSource { a, _, source, host ->
             a.push(readList("c", 0u, 1u))
@@ -846,8 +801,6 @@ class HostConversationSourceAttentionTest {
         val marks = MutableStateFlow<Map<String, ConversationReadMarks>>(emptyMap())
 
         override fun observeHostReadMarks() = marks
-
-        override fun observeThreadRowCounts() = counts
     }
 
     /** Forces an actual consumer-before-reset ordering without timing or a scheduler race. */

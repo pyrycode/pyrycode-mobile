@@ -7,8 +7,6 @@ import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
-import de.pyryco.mobile.data.network.HistoryEntryDto
-import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
@@ -24,7 +22,6 @@ import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.QueuedMessageDto
 import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.RequestAttachmentPayloadDto
-import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.ThreadDecodeOutcome
 import de.pyryco.mobile.data.network.ThreadItemDto
@@ -302,32 +299,6 @@ class SecondClientPeer(
                 }
             }
         }
-    }
-
-    /**
-     * Every entry of [conversationId]'s history as this device sees it (#1016), newest first: `request_history`
-     * pages walked from the newest, each page's cursor echoed verbatim, until one says `at_start`.
-     */
-    internal suspend fun history(
-        conversationId: String,
-        timeoutMs: Long,
-    ): List<HistoryEntryDto> {
-        val entries = mutableListOf<HistoryEntryDto>()
-        var cursor = ""
-        do {
-            val reply =
-                exchange(
-                    "request_history",
-                    MobileJson.encodeToJsonElement(RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = 0)),
-                    timeoutMs,
-                    resend = true,
-                )
-            check(reply.type == "history_page") { "peer request_history refused: ${reply.payloadField("code") ?: reply.type}" }
-            val page = MobileJson.decodeFromJsonElement(HistoryPagePayloadDto.serializer(), reply.payload)
-            entries += page.entries
-            cursor = page.cursor
-        } while (!page.atStart && page.entries.isNotEmpty())
-        return entries
     }
 
     /**

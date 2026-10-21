@@ -487,71 +487,10 @@ class RemoteConversationRepositoryAttachmentTest {
 
     // #1369: the daemon pushes the delivered send back to its sender (pyrycode#2699), naming only bare ids.
     // The phone's row keeps its names and hints, and a replay of the same push changes nothing.
-    @Test
-    fun sendWithAttachments_thenPushOfTheSameMessageId_keepsTheNamedRow_alsoOnReplay() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = repo(pump)
-            val thread = collectThread(repo)
-            runCurrent()
-
-            val send = startSend(repo, emptyList(), listOf(NAMED_A, NAMED_B))
-            runCurrent()
-            val sent = pump.sends().single()
-            pump.push(ack(sent.id))
-            runCurrent()
-            val mine = requireNotNull(send()).getOrThrow()
-            val emitted = thread.size
-
-            val messageId =
-                sent.payload.jsonObject
-                    .getValue("message_id")
-                    .jsonPrimitive.content
-            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
-            runCurrent()
-            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
-            runCurrent()
-
-            assertEquals(listOf(ThreadItem.MessageItem(mine)), thread.last())
-            assertEquals(listOf(NAMED_A, NAMED_B), (thread.last().single() as ThreadItem.MessageItem).message.attachments)
-            assertEquals("a held id re-emits nothing", emitted, thread.size)
-        }
-
-    // #1369: the push can beat the ack. The echo is drawn before the send (#1355), so the push already finds
-    // the named row and keeps it, and the ack changes nothing.
-    @Test
-    fun pushBeforeAck_theConfirmedInsertLeavesTheNamedRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = repo(pump)
-            val thread = collectThread(repo)
-            runCurrent()
-
-            val send = startSend(repo, emptyList(), listOf(NAMED_A, NAMED_B))
-            runCurrent()
-            val sent = pump.sends().single()
-            val messageId =
-                sent.payload.jsonObject
-                    .getValue("message_id")
-                    .jsonPrimitive.content
-            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
-            runCurrent()
-            assertEquals(
-                listOf(NAMED_A, NAMED_B),
-                (thread.last().single() as ThreadItem.MessageItem).message.attachments,
-            )
-
-            pump.push(ack(sent.id))
-            runCurrent()
-            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
-            runCurrent()
-
-            val mine = requireNotNull(send()).getOrThrow()
-            assertEquals(listOf(ThreadItem.MessageItem(mine)), thread.last())
-            assertEquals(listOf(NAMED_A, NAMED_B), mine.attachments)
-        }
-
-    private fun TestScope.repo(pump: FakeSessionPump) = RemoteConversationRepository(pump, backgroundScope)
+    private fun TestScope.repo(pump: FakeSessionPump) =
+        RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+            setOf("interactive", "thread")
+        }, authoritativeHostId = "host")
 
     /** The daemon's live role-`user` `message` for a delivered send, as every interactive conn receives it. */
     private fun pushedUserMessage(
@@ -583,7 +522,12 @@ class RemoteConversationRepositoryAttachmentTest {
 
     private fun TestScope.collectThread(repo: RemoteConversationRepository): List<List<ThreadItem>> {
         val emissions = mutableListOf<List<ThreadItem>>()
-        backgroundScope.launch { repo.observeMessages("conv-1").collect { emissions += it } }
+        backgroundScope.launch {
+            repo.observeAuthoritativeThread("conv-1").collect {
+                emissions +=
+                    it.pendingSends.map { send -> ThreadItem.MessageItem(send.message) }
+            }
+        }
         return emissions
     }
 

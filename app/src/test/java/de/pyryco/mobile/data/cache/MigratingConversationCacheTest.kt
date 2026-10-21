@@ -14,9 +14,6 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.CachingConversationRepository
-import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -37,8 +34,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -907,47 +902,6 @@ class MigratingConversationCacheTest {
             val restarted = open()
             assertEquals(expected, json(restarted.readHistoryPosition("Host", "thread")))
             assertEquals(rows, restarted.readThread("Host", "thread"))
-        }
-
-    @Test fun repositoryInvariant_restoreSaveAndDeleteUseRoomStorage() =
-        runBlocking {
-            val saved = listOf(row(1), row(2))
-            files.writeThread("server-a", "conv-1", saved).getOrThrow()
-            val live = MutableStateFlow<List<ThreadItem>>(emptyList())
-            val delegate =
-                object : ConversationRepository by FakeConversationRepository() {
-                    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
-
-                    override suspend fun delete(conversationId: String) = Unit
-                }
-
-            fun repository(cache: ConversationCache) =
-                CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = Dispatchers.Default)
-            assertEquals(saved, repository(open()).observeMessages("conv-1").first())
-
-            val cache = open()
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val collector =
-                launch(Dispatchers.Default) {
-                    repository(cache).observeMessages("conv-1").collect {
-                        synchronized(emissions) {
-                            emissions +=
-                                it
-                        }
-                    }
-                }
-            withTimeout(10_000) { while (synchronized(emissions) { emissions.isEmpty() }) delay(10) }
-            live.value = listOf(row(3))
-            withTimeout(10_000) { while (row(3) !in cache.readThread("server-a", "conv-1")) delay(20) }
-            collector.cancelAndJoin()
-            val merged = synchronized(emissions) { emissions.last() }
-            assertTrue(merged.containsAll(saved + row(3)))
-            assertEquals(merged, open().readThread("server-a", "conv-1"))
-            assertEquals(saved, files.readThread("server-a", "conv-1"))
-
-            repository(open()).delete("conv-1")
-            assertEquals(emptyList<ThreadItem>(), open().readThread("server-a", "conv-1"))
-            assertFalse(legacyFile("server-a", "conv-1").exists())
         }
 
     private fun conversation(id: String) =

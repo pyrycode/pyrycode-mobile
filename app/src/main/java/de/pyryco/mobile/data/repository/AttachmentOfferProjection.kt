@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
 
@@ -30,9 +29,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * The first offer of each attachment id is also appended to [threadProjection] as an [attachmentOfferRow]
  * (#983), so the thread and its disk cache keep what the wire will not replay.
  */
-internal class AttachmentOfferProjection(
-    private val threadProjection: ThreadProjection,
-) {
+internal class AttachmentOfferProjection {
     /**
      * `conversationId -> its offers in arrival order`, one entry per attachment id. Written only from the
      * repository's single inbound collector, with [MutableStateFlow.update] because each write reads the
@@ -60,9 +57,6 @@ internal class AttachmentOfferProjection(
             val held = offers[conversationId].orEmpty()
             firstSeen = held.none { it.attachmentId == attachmentOffer.attachmentId }
             if (firstSeen) offers + (conversationId to held + attachmentOffer) else offers
-        }
-        if (firstSeen) {
-            threadProjection.appendMessages(listOf(conversationId to attachmentOfferRow(attachmentOffer, Clock.System.now())))
         }
     }
 

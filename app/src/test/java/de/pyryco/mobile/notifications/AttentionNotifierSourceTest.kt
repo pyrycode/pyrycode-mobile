@@ -2,7 +2,6 @@ package de.pyryco.mobile.notifications
 
 import android.Manifest
 import android.app.Application
-import android.app.Notification
 import android.app.NotificationManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,9 +13,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
 import de.pyryco.mobile.di.ConversationAttention
@@ -26,7 +23,6 @@ import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -51,326 +47,10 @@ class AttentionNotifierSourceTest {
     private val manager get() = app.getSystemService(NotificationManager::class.java)
 
     @Test
-    fun localReplyStillRequiresRawHistoryButNeverSubscribesToBackfill() =
-        withSource { a, _, _ ->
-            a.list(0u, 2u)
-            a.pump.push("assistant_delta", """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}""", 1u)
-            a.pump.historyPayload =
-                """
-                {"entries":[
-                  {"id":2,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
-                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}}
-                ],"cursor":"older","at_start":false}
-                """.trimIndent()
-            a.end("turn", 2u)
-            runCurrent()
-            assertEquals(
-                "Local reply",
-                shadowOf(manager)
-                    .allNotifications
-                    .single()
-                    .extras
-                    .getString(Notification.EXTRA_TEXT),
-            )
-            assertEquals(
-                setOf("list_conversations", "request_history"),
-                a.pump.sent
-                    .map { it.type }
-                    .toSet(),
-            )
-        }
-
-    @Test
-    fun remoteDecodeDropCannotCertifyLocalReplyTail() = assertDroppedLiveEvidence("assistant_delta")
-
-    @Test
-    fun remoteDecodeDropCannotCertifyLocalToolSeam() = assertDroppedLiveEvidence("tool_use")
-
-    private fun assertDroppedLiveEvidence(type: String) {
-        val before = """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Before"}"""
-        val after = """{"conversation_id":"same","turn_id":"turn","seq":1,"text":"After"}"""
-        val brokenTail = """{"conversation_id":"same","turn_id":"turn","seq":1}"""
-        val brokenTool = """{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","input_summary":"target"}"""
-        val broken = if (type == "tool_use") brokenTool else brokenTail
-        withSource { a, _, _ ->
-            a.list(0u, 4u)
-            a.pump.push("assistant_delta", before, 1u)
-            a.pump.push(type, broken, 2u)
-            if (type == "tool_use") a.pump.push("assistant_delta", after, 3u)
-            // A complete history page can recover the dropped live evidence without merging it.
-            a.pump.historyPayload =
-                """
-                {"entries":[
-                  {"id":4,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
-                  {"id":3,"type":"assistant_delta","ts":"$TS","payload":$after},
-                  {"id":2,"type":"tool_use","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","name":"Bash","input_summary":"target"}},
-                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":$before}
-                ],"cursor":"older","at_start":false}
-                """.trimIndent()
-            a.end("turn", 4u)
-            runCurrent()
-            assertEquals(
-                "After",
-                shadowOf(manager)
-                    .allNotifications
-                    .single()
-                    .extras
-                    .getString(Notification.EXTRA_TEXT),
-            )
-            assertEquals(1, a.pump.sent.count { it.type == "request_history" })
-            assertTrue(a.pump.sent.none { it.type == "backfill_since" })
-            val local =
-                requireNotNull(a.repositories.value)
-                    .observeMessages("same")
-                    .first()
-                    .filterIsInstance<de.pyryco.mobile.data.repository.ThreadItem.MessageItem>()
-                    .map { it.message }
-            assertEquals(listOf(if (type == "tool_use") "BeforeAfter" else "Before"), local.map { it.content })
-            assertTrue(local.none { it.isStreaming })
-        }
-    }
-
-    @Test
-    fun historyPreviewFetchDoesNotMergeRowsAdvanceReadFactsOrRequestBackfill() =
-        withSource { a, _, source ->
-            a.list(0u, 2u)
-            a.pump.historyPayload =
-                """
-                {"entries":[
-                  {"id":3,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"other","stop_reason":"end_turn"}},
-                  {"id":2,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
-                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Recovered reply"}}
-                ],"cursor":"older","at_start":false}
-                """.trimIndent()
-            a.end("turn", 2u)
-            runCurrent()
-            assertEquals(
-                "Recovered reply",
-                shadowOf(manager)
-                    .allNotifications
-                    .single()
-                    .extras
-                    .getString(Notification.EXTRA_TEXT),
-            )
-            assertEquals(
-                setOf("list_conversations", "request_history"),
-                a.pump.sent
-                    .map { it.type }
-                    .toSet(),
-            )
-            assertEquals(1, a.pump.sent.count { it.type == "request_history" })
-            assertEquals(0, requireNotNull(a.repositories.value).observeThreadRowCounts().first()["same"] ?: 0)
-            assertEquals(ConversationReadMarks(0u, 2u), source.currentReadMarks("a", "same"))
-        }
-
-    @Test
-    fun peerPushAndListRefreshCancelOnlyTheirHostsPostedNotification() =
-        withSource { a, b, source ->
-            a.list(0u, 5u)
-            b.list(0u, 5u)
-            a.end("first", 5u)
-            b.end("first", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a"), target("b")), postedTargets())
-
-            a.read(5u)
-            runCurrent()
-            assertEquals(setOf(target("b")), postedTargets())
-            assertEquals(ConversationReadMarks(5u, 5u), source.readMarks.value["a"]?.get("same"))
-            a.read(5u)
-            a.end("first", 5u)
-            runCurrent()
-            assertEquals(setOf(target("b")), postedTargets())
-
-            b.list(5u, 5u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-            assertEquals(
-                setOf("list_conversations", "request_history"),
-                a.pump.sent
-                    .map { it.type }
-                    .toSet(),
-            )
-            assertEquals(
-                setOf("list_conversations", "request_history"),
-                b.pump.sent
-                    .map { it.type }
-                    .toSet(),
-            )
-        }
-
-    @Test
-    fun readBeforeReplayCannotPostButALaterUnreadDurableCompletionDoes() =
-        withSource { a, _, source ->
-            a.list(5u, 5u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 5u), source.readMarks.value["a"]?.get("same"))
-            // Batch delivery deliberately permits read/event collectors to run in either order.
-            a.end("already-read", 5u)
-            a.read(5u)
-            a.end("already-read", 5u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-
-            a.end("future", 6u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            a.read(6u)
-            a.end("future", 6u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-        }
-
-    @Test
-    fun aReadReplayBehindANewerUnreadEntryPreservesThePromptAndTheNextUnreadCompletionPosts() =
-        withSource { a, _, _ ->
-            a.list(5u, 6u)
-            runCurrent()
-            a.prompt("outstanding")
-            runCurrent()
-            val prompt = shadowOf(manager).allNotifications.single()
-            a.end("unseen-read-replay", 5u)
-            runCurrent()
-            assertEquals(prompt, shadowOf(manager).allNotifications.single())
-            a.read(5u)
-            a.end("unseen-read-replay", 5u)
-            runCurrent()
-            assertEquals(prompt, shadowOf(manager).allNotifications.single())
-            a.end("subsequent-unread", 7u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            assertEquals(
-                app.getString(de.pyryco.mobile.R.string.notification_turn_completed),
-                shadowOf(manager)
-                    .allNotifications
-                    .single()
-                    .extras
-                    .getString(Notification.EXTRA_TEXT),
-            )
-        }
-
-    @Test
-    fun initialReadConfirmationCancelsAPostedReplayBehindNewerActivityOnlyOnItsHost() =
-        withSource { a, b, source ->
-            a.list(null, 6u)
-            b.list(null, 6u)
-            a.end("unseen-replay", 5u)
-            b.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a"), target("b")), postedTargets())
-
-            a.list(5u, 6u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
-            assertEquals(setOf(target("b")), postedTargets())
-            a.read(5u)
-            a.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(setOf(target("b")), postedTargets())
-
-            a.end("subsequent-unread", 7u)
-            runCurrent()
-            assertEquals(setOf(target("a"), target("b")), postedTargets())
-        }
-
-    @Test
-    fun anAdvancingReadMarkCancelsAPostedReplayWhileTheLatestEntryRemainsUnread() =
-        withSource { a, _, source ->
-            a.list(4u, 6u)
-            a.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            a.read(5u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
-            assertTrue(postedTargets().isEmpty())
-            a.end("unseen-replay", 5u)
-            a.read(5u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-        }
-
-    @Test
-    fun lateReadConfirmationPreservesAPromptThatReplacedTheCoveredCompletion() =
-        withSource { a, _, source ->
-            a.list(null, 6u)
-            a.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            a.prompt("replacement")
-            runCurrent()
-            val prompt = shadowOf(manager).allNotifications.single()
-            assertEquals(
-                "t p",
-                prompt.extras.getString(Notification.EXTRA_TEXT),
-            )
-            a.list(5u, 6u)
-            runCurrent()
-            assertEquals(prompt, shadowOf(manager).allNotifications.single())
-            assertEquals(ConversationAttention.WaitingForAnswer, source.attention.value["a"]?.get("same"))
-            assertEquals(
-                "replacement",
-                a.modals.value.outstanding
-                    .single()
-                    .modalId,
-            )
-            a.end("unseen-replay", 5u)
-            a.read(5u)
-            runCurrent()
-            assertEquals(prompt, shadowOf(manager).allNotifications.single())
-        }
-
-    @Test
-    fun lateReadConfirmationPreservesANewerCompletionThatReplacedTheCoveredReplay() =
-        withSource { a, _, source ->
-            a.list(4u, 6u)
-            a.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            a.end("newer-unread", 7u)
-            runCurrent()
-            val newer = shadowOf(manager).allNotifications.single()
-            a.read(5u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
-            assertEquals(newer, shadowOf(manager).allNotifications.single())
-            a.end("unseen-replay", 5u)
-            runCurrent()
-            assertEquals(newer, shadowOf(manager).allNotifications.single())
-            a.read(7u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-        }
-
-    @Test
-    fun aCompletionDeliveredBeforeTheReadFactCollectorStillPostsItsNewUnreadCheckpoint() =
-        withSource(eager = true) { a, _, source ->
-            a.list(5u, 5u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 5u), source.readMarks.value["a"]?.get("same"))
-            // Unconfined consumers run inside tryEmit, before the inbound producer continues.
-            a.end("future", 6u)
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 5u), source.readMarks.value["a"]?.get("same"))
-            assertEquals(setOf(target("a")), postedTargets())
-        }
-
-    @Test
-    fun anInitialConfirmedListSnapshotCancelsAnAlertPostedBeforeReadSupportWasKnown() =
-        withSource { a, _, _ ->
-            a.end("first", 5u)
-            runCurrent()
-            assertEquals(setOf(target("a")), postedTargets())
-            a.list(5u, 5u)
-            runCurrent()
-            assertTrue(postedTargets().isEmpty())
-        }
-
-    @Test
     fun readCancellationLeavesRunningAndOutstandingPromptsUntouchedAndNewPromptsDeliver() =
         withSource { a, b, source ->
             a.list(0u, 5u)
-            a.end("first", 5u)
+            a.prompt("initial-prompt")
             runCurrent()
             assertEquals(setOf(target("a")), postedTargets())
             a.state("thinking")
@@ -402,47 +82,10 @@ class AttentionNotifierSourceTest {
             runCurrent()
             assertEquals(setOf(target("a")), postedTargets())
             assertEquals(
-                setOf("list_conversations", "request_history"),
+                setOf("list_conversations"),
                 a.pump.sent
                     .map { it.type }
                     .toSet(),
-            )
-        }
-
-    @Test
-    fun anOlderDaemonAndAFreshRepositoryKeepLocalFallbackWithoutOldReadSupport() =
-        withSource { a, b, source ->
-            a.list(5u, 5u)
-            b.list(null, null)
-            runCurrent()
-            b.end("legacy", null)
-            runCurrent()
-            source.markOpened("b", "same")
-            runCurrent()
-            assertEquals(setOf(target("b")), postedTargets())
-
-            a.repositories.value = null
-            runCurrent()
-            assertEquals(ConversationReadMarks(5u, 5u), source.currentReadMarks("a", "same"))
-            a.repositories.value = FakeConversationRepository()
-            runCurrent()
-            assertTrue(
-                source.readMarks.value["a"]
-                    .orEmpty()
-                    .isEmpty(),
-            )
-            assertEquals(null, source.currentReadMarks("a", "same"))
-            assertTrue(
-                source.readMarks.value["b"]
-                    .orEmpty()
-                    .isEmpty(),
-            )
-            a.read(9u)
-            runCurrent()
-            assertTrue(
-                source.readMarks.value["a"]
-                    .orEmpty()
-                    .isEmpty(),
             )
         }
 

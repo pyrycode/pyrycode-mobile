@@ -5,7 +5,6 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.ThreadReadEvidence
 
 /** Display-only placement. Lifecycle positions stay in repository order; no tool rows are invented. */
 internal fun foldBackgroundAgentBlocks(
@@ -194,27 +193,3 @@ private data class AgentEvidence(
 )
 
 /** Hidden task receipt is nonvisual except when it changes a displayed Agent block. */
-internal fun ThreadReadEvidence.forBackgroundAgentRows(
-    items: List<ThreadItem>,
-    rows: List<ThreadRow>,
-): ThreadReadEvidence {
-    val versions = versions.toMutableMap()
-    val facts = facts.toMutableMap()
-    val roots =
-        rows.filterIsInstance<ThreadRow.Delivered>().filter {
-            (it.item as? ThreadItem.MessageItem)?.message?.id == it.agentBlockId
-        }
-    for (root in roots) {
-        val projected = root.item as? ThreadItem.MessageItem ?: continue
-        val source = items.filterIsInstance<ThreadItem.MessageItem>().firstOrNull { it.message.id == projected.message.id } ?: continue
-        val lifecycle =
-            items.filterIsInstance<ThreadItem.BackgroundTaskLifecycle>().filter {
-                it.toolCallId == projected.message.ordinaryId && it.taskType == "local_agent"
-            }
-        val ids = lifecycle.flatMapTo(HashSet()) { this.versions[it].orEmpty() }
-        ids.forEach { facts[it] = false }
-        val sourceIds = versions.remove(source) ?: continue
-        versions[projected] = sourceIds + ids
-    }
-    return copy(versions = versions, facts = facts)
-}

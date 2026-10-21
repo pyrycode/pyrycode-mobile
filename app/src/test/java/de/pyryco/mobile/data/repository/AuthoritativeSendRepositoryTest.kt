@@ -57,25 +57,11 @@ class AuthoritativeSendRepositoryTest {
                     )
                     assertTrue(store.current("host", "c").pendingSends.isEmpty())
                     assertTrue(projectAuthoritativeThread("host", "c", store.current("host", "c")).rows.isEmpty())
-                    assertTrue(
-                        repo
-                            .observeThreadSnapshot("c")
-                            .first()
-                            .rows
-                            .isEmpty(),
-                    )
                     pump.push(reply(request, "ack", buildJsonObject {}))
                     runCurrent()
                     assertEquals(text, reset.await().content)
                     assertTrue(store.current("host", "c").pendingSends.isEmpty())
                     assertTrue(projectAuthoritativeThread("host", "c", store.current("host", "c")).rows.isEmpty())
-                    assertTrue(
-                        repo
-                            .observeThreadSnapshot("c")
-                            .first()
-                            .rows
-                            .isEmpty(),
-                    )
 
                     val next = async { repo.sendMessage("c", "private text") }
                     runCurrent()

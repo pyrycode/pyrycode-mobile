@@ -92,12 +92,7 @@ internal fun ThreadReadViewport(
             seen.putAll(visibleRows)
             val content = newest ?: return@collect
             val presentation = current.authoritativeThread
-            val checkpoint =
-                if (presentation != null) {
-                    presentation.readCheckpoint(content.key as? String, current.readMarks, seen)
-                } else {
-                    current.readUpTo?.let { current.readEvidence?.checkpoint(content.row, it) }
-                }
+            val checkpoint = presentation?.readCheckpoint(content.key as? String, current.readMarks, seen)
             if (checkpoint != null && checkpoint > sent) {
                 sent = checkpoint
                 dispatch(

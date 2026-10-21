@@ -330,8 +330,6 @@ class RelayConnectionFactoryTest {
                 ta.emit(turn(31))
                 tb.emit(turn(72))
                 runCurrent()
-                assertEquals(31L, a.coordinator.replayCursor.latest)
-                assertEquals(72L, b.coordinator.replayCursor.latest)
                 a.supervisor.close()
                 b.supervisor.close()
                 runCurrent()
@@ -394,8 +392,6 @@ class RelayConnectionFactoryTest {
                 assertNull(secondA.cursor())
                 secondA.emit(envelope("resync", "{}"))
                 runCurrent()
-                assertNull(a.coordinator.replayCursor.latest)
-                assertEquals(202L, b.coordinator.replayCursor.latest)
                 a.supervisor.close()
                 runCurrent()
                 a.supervisor.connect()
@@ -416,7 +412,6 @@ class RelayConnectionFactoryTest {
                 assertEquals("list_conversations", firstB.outbound.single().type)
                 firstB.emit(turn(303))
                 runCurrent()
-                assertEquals(303L, b.coordinator.replayCursor.latest)
                 assertEquals(2, firstB.collectors)
             } finally {
                 a.close()
@@ -766,7 +761,6 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertSame(repoB, b.coordinator.currentRepository.value)
                 assertEquals(modalB, b.coordinator.hostModals.value)
-                assertEquals(7L, b.coordinator.replayCursor.latest)
                 assertFalse(tb.closed)
                 tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single().id))
                 runCurrent()
@@ -1186,8 +1180,12 @@ class RelayConnectionFactoryTest {
                     contentScheduling = ThreadContentScheduling(worker),
                 )
             try {
-                val rows = destinations.repository("A").observeMessages("c").first()
-                assertTrue(rows.isEmpty())
+                val route = requireNotNull(destinations.repository("A").negotiatedThread)
+                val seen = mutableListOf<de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot>()
+                val reader = backgroundScope.launch { route.observe("c").collect { seen += it } }
+                runCurrent()
+                assertTrue(seen.last().items.isEmpty())
+                reader.cancel()
                 assertTrue("The destination cache must dispatch to its configured worker", dispatches.get() > 0)
             } finally {
                 registry.dispose()

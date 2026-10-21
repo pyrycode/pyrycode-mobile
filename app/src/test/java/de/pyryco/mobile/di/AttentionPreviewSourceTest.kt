@@ -19,15 +19,12 @@ import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.notifications.notificationPreview
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -450,26 +447,6 @@ class AttentionPreviewSourceTest {
         var asks = 0
         var cancelled = 0
         val requests = mutableListOf<Pair<String, String>>()
-
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-            if (conversationId == "conv") rows else flowOf(otherRows)
-
-        override suspend fun requestHistory(
-            conversationId: String,
-            cursor: String,
-            limit: Int,
-        ): HistoryPage {
-            asks++
-            requests += conversationId to cursor
-            try {
-                wait?.await()
-                if (fail) error("sensitive daemon failure")
-                return page
-            } catch (e: CancellationException) {
-                cancelled++
-                throw e
-            }
-        }
     }
 
     private class Harness(

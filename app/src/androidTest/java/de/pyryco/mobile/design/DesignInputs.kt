@@ -188,8 +188,6 @@ class DesignInputs {
                     // does the view model read questionBatch itself, as on the demo host.
                     questionBatch = { questionBatch },
                     answerQuestionBatch = { _, _ -> check(!failQuestionSends) { "design: the question send fails" } },
-                    backgroundTasks = { backgroundTasks },
-                    backgroundTaskCount = { backgroundTaskCount },
                     pairingRejected = pairingRejected,
                     attachmentReader = get<AttachmentReader>(),
                 ).also {

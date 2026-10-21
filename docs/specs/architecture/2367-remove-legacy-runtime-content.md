@@ -102,3 +102,13 @@ None requiring a product decision. Record implementation changes to this contrac
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-21
+
+## Revisions
+
+### 2026-10-21 — Runtime removal and evidence migration
+
+- Keep ThreadItem.mergeIdentity beside the dormant storage proof definitions until #2364; no runtime content observer reads legacy cached rows.
+- Independent producer-observation DTOs move to the shared test source set. Production retains authoritative content and supported transient/control decoders.
+- Preserve generic viewport scrolling/composition assertions with literal rows; retire legacy receipt assertions and their native overrides. The database-backed authoritative first-draw proof remains.
+- Peer history/attachment assertions now consume ThreadItemDto instead of raw history. Their retained raw-producer peer still needs an explicit authoritative query connection strategy and strict recorded/native verification before handoff. It must not silently query an unnegotiated peer or weaken watermark/attachment assertions.
+- Remaining removal audit: eliminate obsolete UI history-key/gap compatibility consumers and stale exclusive fixture helpers while retaining authoritative/presentation assertions. Complete affected class checks, deterministic durable-gap/scripted and recorded checks, final merge, final pre-verify and PR before claiming completion.

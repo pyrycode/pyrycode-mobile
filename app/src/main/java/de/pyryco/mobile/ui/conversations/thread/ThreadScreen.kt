@@ -858,17 +858,7 @@ fun ThreadScreen(
                                 }
                             }
                         ThreadReadViewport(
-                            state =
-                                state.copy(
-                                    readEvidence =
-                                        if (authoritative ==
-                                            null
-                                        ) {
-                                            state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)
-                                        } else {
-                                            null
-                                        },
-                                ),
+                            state = state,
                             listState = listState,
                             candidate = readCandidate,
                             otherCandidates = authoritativeCandidates,

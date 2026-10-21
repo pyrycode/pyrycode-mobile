@@ -158,9 +158,7 @@ class E2eTestApplication : Application() {
         module {
             includes(
                 hostConversationModule(useRelay = true, decorateRepository = { repository ->
-                    TappingConversationRepository(repository, tapNegotiated = true) { conversation, upstream ->
-                        PassiveThreadProbe.tap({ passiveThreadOwner(repository, conversation) }, upstream)
-                    }
+                    TappingConversationRepository(repository, tapNegotiated = true)
                 }),
             )
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }

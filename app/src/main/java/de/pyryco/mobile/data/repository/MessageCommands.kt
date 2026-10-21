@@ -54,8 +54,6 @@ internal class MessageCommands(
     private val requests: RelayRequests,
     private val send: (Envelope) -> Boolean,
     private val conversationList: ConversationListProjection,
-    private val threadProjection: ThreadProjection,
-    private val queueProjection: QueueProjection,
     private val trail: MessageTrail,
     private val connToken: () -> String?,
     private val registerAuthoritativeSend: suspend (String, Message) -> Boolean = { _, _ -> false },
@@ -198,11 +196,7 @@ internal class MessageCommands(
                     },
             )
         conversationList.recordLastMessage(conversationId, message)
-        val authoritative = registerAuthoritativeSend(conversationId, message)
-        if (!authoritative) threadProjection.appendMessages(listOf(conversationId to message))
-        // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
-        // queued item and removed. A failed send's id stays: no queued item will ever carry it.
-        if (!authoritative) threadProjection.recordMinted(conversationId, messageId)
+        registerAuthoritativeSend(conversationId, message)
         // Throws on a server `error` / not-Open session, leaving the echo drawn. The empty `{}` ack
         // payload carries nothing to map.
         // The trail (#1564) records the reply where it lands, in order with the queue frames around it.
@@ -339,13 +333,6 @@ internal class MessageCommands(
         conversationId: String,
         queuedMessageId: Long,
     ) {
-        val echoId =
-            queueProjection
-                .current(conversationId)
-                .firstOrNull { it.id == queuedMessageId }
-                ?.messageId
-                .orEmpty()
-        val recorded = threadProjection.recordSendNow(conversationId, echoId)
         val request =
             Envelope(
                 id = requests.nextRequestId(),
@@ -354,7 +341,6 @@ internal class MessageCommands(
                 payload = MobileJson.encodeToJsonElement(SendQueuedNowPayloadDto(conversationId, queuedMessageId)),
             )
         if (!send(request)) {
-            if (recorded) threadProjection.withdrawSendNow(conversationId, echoId)
             throw IllegalStateException("send_queued_now not sent: session not connected")
         }
     }
@@ -431,19 +417,7 @@ internal class MessageCommands(
                         DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
                     ),
             )
-        // Resolved before the send: the confirming snapshot replaces the one this reads from. "" when the
-        // id matches no current item — a correlation this connection cannot make, not an error.
-        val echoId =
-            queueProjection
-                .current(conversationId)
-                .firstOrNull { it.id == queuedMessageId }
-                ?.messageId
-                .orEmpty()
-        if (echoId.isNotEmpty()) {
-            threadProjection.recordDrop(conversationId, queuedMessageId, echoId)
-        }
         if (!send(request)) {
-            threadProjection.withdrawDrop(conversationId, queuedMessageId)
             throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
         }
     }

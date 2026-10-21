@@ -194,7 +194,7 @@ internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEv
     if (repository is RemoteConversationRepository && repository.authoritativeHost.isNotEmpty()) {
         return ThreadEvidenceSource.connection(repository)
     }
-    return ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+    error("authoritative thread source is required")
 }
 
 /** Keep ordinary reads on the captured connection; thread evidence follows its owning host. */

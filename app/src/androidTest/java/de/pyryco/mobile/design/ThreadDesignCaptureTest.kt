@@ -113,7 +113,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -1155,13 +1154,6 @@ class ThreadDesignCaptureTest {
                     val fake = get<FakeConversationRepository>()
                     val repository =
                         object : ConversationRepository by fake {
-                            override fun observeMessages(conversationId: String) =
-                                combine(fake.observeMessages(conversationId), extraItems, seedShown) { items, extra, seed ->
-                                    (if (seed) items else emptyList()) + extra
-                                }
-
-                            override fun observeQueue(conversationId: String) = queue
-
                             override fun observeLiveRefusalEvents(conversationId: String) = refusals
 
                             override fun observeTurnPhase(conversationId: String) = turnPhase
@@ -1179,12 +1171,6 @@ class ThreadDesignCaptureTest {
                                 attachmentId: String,
                             ) = attachmentGates[attachmentId]?.await()
                                 ?: AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
-
-                            override suspend fun requestHistory(
-                                conversationId: String,
-                                cursor: String,
-                                limit: Int,
-                            ) = historyGate?.await() ?: fake.requestHistory(conversationId, cursor, limit)
 
                             override suspend fun setSessionSettings(
                                 sessionId: String,
@@ -1233,8 +1219,6 @@ class ThreadDesignCaptureTest {
                         liveSessionEvents = inputs.liveSessionEvents,
                         hostModal = inputs.hostModal,
                         questionBatch = { inputs.questionBatch },
-                        backgroundTasks = { inputs.backgroundTasks },
-                        backgroundTaskCount = { inputs.backgroundTaskCount },
                         repositoryAvailable = hostAvailable,
                         pairingRejected = inputs.pairingRejected,
                         attachmentReader = get<AttachmentReader>(),

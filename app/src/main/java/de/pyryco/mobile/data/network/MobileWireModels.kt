@@ -131,13 +131,12 @@ data class HelloClientPayload(
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
     val capabilities: List<String> = MOBILE_CAPABILITIES,
-    @SerialName("last_event_id") val lastEventId: Long? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("client_features") val clientFeatures: String = "",
 ) {
     override fun toString(): String =
         "HelloClientPayload(role=$role, deviceName=$deviceName, " +
             "clientVersion=$clientVersion, protocolVersions=$protocolVersions, " +
-            "capabilities=$capabilities, lastEventId=$lastEventId, token=***)"
+            "capabilities=$capabilities, token=***)"
 }
 
 /**

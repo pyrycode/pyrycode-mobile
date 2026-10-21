@@ -436,7 +436,6 @@ class DeterministicInteractiveStreamE2ETest {
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
         } finally {
             peer.close()
-            DurableHistoryProbe.end()
         }
     }
 
@@ -1012,8 +1011,17 @@ class DeterministicInteractiveStreamE2ETest {
                     composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
                     checkpoint = "queued follow-up"
                     val sent = repository.sendMessage(conversationId, SECOND_PROMPT)
-                    val queued = repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
-                    assertTrue("the queued entry did not retain the phone-owned echo id", queued.any { it.messageId == sent.id })
+                    val queued =
+                        evidence.observe(conversationId).first { current ->
+                            current.records.any { it.fact?.kind == "queued_message" && it.message.content == SECOND_PROMPT }
+                        }
+                    assertTrue(
+                        "the queued entry did not retain the phone-owned echo id",
+                        queued.records.any {
+                            (it.fact?.content as? kotlinx.serialization.json.JsonObject)?.get("message_id")?.jsonPrimitive?.content ==
+                                sent.id
+                        },
+                    )
                     evidence.observe(conversationId).first { it.holdsOpen(start.owner, held) }
                     checkpoint = "same reply completion"
                     DaemonFaultControl().releaseStream()

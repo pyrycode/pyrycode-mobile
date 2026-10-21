@@ -79,7 +79,7 @@ class NegotiatedThreadActivationTest {
                 pump.open(setOf(CAPABILITY_INTERACTIVE))
                 runCurrent()
                 val repo = requireNotNull(host.coordinator.currentRepository.value) as RemoteConversationRepository
-                backgroundScope.launch { repo.observeThreadSnapshot("c").collect {} }
+                backgroundScope.launch { repo.observeAuthoritativeThread("c").collect {} }
                 runCurrent()
                 assertEquals(emptyList<String>(), pump.sent.map { it.type })
             } finally {
@@ -238,17 +238,14 @@ class NegotiatedThreadActivationTest {
                 absent.open(CAPABLE)
                 val early = missing.repo()
                 assertSame(ThreadSupport.Unverified, missing.coordinator.threadSupport.value)
-                assertLegacyRefused(early)
                 absent.open(setOf(CAPABILITY_INTERACTIVE))
                 present.open(CAPABLE)
                 runCurrent()
-                assertLegacyRefused(early)
                 assertFalse(early.openAuthoritativeThread("c"))
                 assertFalse(early.requestOlderAuthoritativeThread("c"))
                 assertTrue(capable.repo().openAuthoritativeThread("c"))
-                assertLegacyRefused(capable.repo())
-                backgroundScope.launch { early.observeThreadSnapshot("c").collect {} }
-                backgroundScope.launch { capable.repo().observeThreadSnapshot("c").collect {} }
+                backgroundScope.launch { early.observeAuthoritativeThread("c").collect {} }
+                backgroundScope.launch { capable.repo().observeAuthoritativeThread("c").collect {} }
                 runCurrent()
                 assertEquals(emptyList<String>(), absent.content())
                 assertEquals(listOf("thread_catch_up"), present.content())
@@ -351,7 +348,7 @@ class NegotiatedThreadActivationTest {
             }
         }
 
-    @Test fun explicitLegacyConstructorRemainsAvailableAfterHelloActivation() =
+    @Test fun unboundConstructorCannotCreateAContentFallback() =
         runTest {
             val host = host("")
             try {
@@ -364,9 +361,9 @@ class NegotiatedThreadActivationTest {
                     CAPABILITY_THREAD in HelloClientPayload(deviceName = "device", clientVersion = "version", token = "token").capabilities,
                 )
                 assertNull(host.repo().authoritativeStoreFor("h"))
-                backgroundScope.launch { host.repo().observeThreadSnapshot("c").collect {} }
+                backgroundScope.launch { host.repo().observeAuthoritativeThread("c").collect {} }
                 runCurrent()
-                assertEquals(listOf("backfill_since"), pump.content())
+                assertEquals(emptyList<String>(), pump.content())
             } finally {
                 host.coordinator.close()
             }
@@ -383,7 +380,6 @@ class NegotiatedThreadActivationTest {
                 val pump = host.connect()
                 pump.open(CAPABLE)
                 runCurrent()
-                assertLegacyRefused(host.repo())
                 pump.state.value = PumpState.Handshaking
                 runCurrent()
                 pump.open(emptySet())
@@ -739,16 +735,6 @@ class NegotiatedThreadActivationTest {
         MobileJson.decodeFromString(
             """{"id":90,"type":"tool_progress","ts":"2026-10-17T10:00:00Z","conversation_id":"c","session_id":"$session","session_state_cleared":$clear,"payload":${if (clear) "{}" else """{"conversation_id":"c","turn_id":"turn","tool_use_id":"tool","elapsed_seconds":$seconds}"""}}""",
         )
-
-    private suspend fun assertLegacyRefused(repo: RemoteConversationRepository) {
-        for (failure in listOf(
-            runCatching { repo.requestHistory("c", "", 20) }.exceptionOrNull(),
-            runCatching { repo.requestAttentionHistory("c") }.exceptionOrNull(),
-        )) {
-            assertTrue(failure is IllegalStateException)
-            assertEquals("legacy_content_request_refused", failure?.message)
-        }
-    }
 
     private fun Host.repo() = requireNotNull(coordinator.currentRepository.value) as RemoteConversationRepository
 

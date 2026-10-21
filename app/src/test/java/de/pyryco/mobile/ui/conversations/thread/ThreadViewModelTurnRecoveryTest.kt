@@ -13,7 +13,6 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ThinkingProgress
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -69,9 +68,6 @@ class ThreadViewModelTurnRecoveryTest {
         val sessions = MutableSharedFlow<LiveRefusalEvent>()
         val reading = MutableStateFlow<ThinkingProgress?>(null)
         var sends = 0
-
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-            error("legacy rows must not supply recovery evidence")
 
         override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = sessions
 

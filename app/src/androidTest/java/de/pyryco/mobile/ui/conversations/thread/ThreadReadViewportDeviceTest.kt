@@ -8,12 +8,4 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ThreadReadViewportDeviceTest : ThreadReadViewportTest() {
     @Test override fun scrolling_doesNotRecomposeProductionListHost() = super.scrolling_doesNotRecomposeProductionListHost()
-
-    @Test override fun foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat() =
-        super.foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat()
-
-    @Test override fun foregroundCheckpoint_excludesScrolledAwayRowUpdates() = super.foregroundCheckpoint_excludesScrolledAwayRowUpdates()
-
-    @Test override fun foregroundCheckpoint_excludesReplyArrivingBehindRenameDialog() =
-        super.foregroundCheckpoint_excludesReplyArrivingBehindRenameDialog()
 }

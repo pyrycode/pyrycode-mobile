@@ -37,15 +37,6 @@ interface ConversationRepository {
 
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
-    fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
-
-    /**
-     * How many rows each conversation's thread holds on this repository (#1361), keyed by conversation id.
-     * A row appended raises its count; growth of an existing row does not. Defaulted empty for a repository
-     * that has no live thread store.
-     */
-    fun observeThreadRowCounts(): Flow<Map<String, Int>> = emptyFlow()
-
     /**
      * Emits the most-recent [Message] (by [Message.timestamp]) for the
      * conversation, or `null` if the conversation has no messages or is
@@ -73,18 +64,6 @@ interface ConversationRepository {
      * Implementations without this feature inherit no error.
      */
     fun observeSessionError(conversationId: String): Flow<String?> = flowOf(null)
-
-    /**
-     * Emits [conversationId]'s ordered queued-message backlog (FIFO) — the messages waiting while
-     * claude is busy (#460). Each `queue_state` snapshot the daemon broadcasts replaces the backlog in
-     * full; the flow re-emits the new ordered list. Empty until the first snapshot lands. Cold flow;
-     * re-emits on every change. The thread layer observes this to render the backlog (#461).
-     *
-     * Default `flowOf(emptyList())` — implementations without an interactive wire (the fake, inline
-     * test doubles) inherit "never queued" and need no override, the same cascade-avoidance as
-     * [observeStall] / [delete] / [requestScreenSnapshot].
-     */
-    fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
 
     /**
      * Emits whether [conversationId]'s remote claude is currently stuck retrying an API error, and at
@@ -434,14 +413,6 @@ interface ConversationRepository {
         upTo: ULong,
     ): Result<ULong> = Result.failure(UnsupportedOperationException("Daemon read marks are unavailable"))
 
-    /** Queue already-qualified sight; process-owned facades may retain it across disconnection. */
-    suspend fun acknowledgeReadCheckpoint(
-        conversationId: String,
-        checkpoint: ULong,
-    ) {
-        markConversationRead(conversationId, checkpoint)
-    }
-
     /** Retain exact sight qualification and its connection; it cannot become a legacy retry. */
     suspend fun acknowledgeAuthoritativeReadCheckpoint(
         conversationId: String,
@@ -689,62 +660,6 @@ interface ConversationRepository {
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = error("dropQueuedMessage is not implemented for this ConversationRepository")
-
-    /**
-     * Fetches one page of [conversationId]'s stored history — the scroll-back read (#623). A client
-     * that opens an existing conversation sees only what arrived after it connected; this walks
-     * **backwards** through the daemon's on-disk log, newest-first, one page per call.
-     *
-     * **Not a reconnect backfill.** The daemon's replay ring is an in-memory catch-up across a dropped
-     * connection and is empty after a daemon restart; this log is on disk and survives one. A client
-     * uses both, and never joins their ids — see [HistoryEntry.id].
-     *
-     * @param cursor The [HistoryPage.cursor] the previous page handed back, echoed **verbatim** —
-     *   opaque, never parsed or rebuilt. Empty (the default) means "start at the newest", which is the
-     *   normal opening value of a walk and not a missing one.
-     * @param limit How many entries the caller wants. `0` (the default) asks the daemon to choose and
-     *   **never** means zero entries; a large ask is clamped rather than refused; and a page may come
-     *   back shorter than asked so the daemon's own frame fits its size cap. Read
-     *   [HistoryPage.entries]`.size`, never assume the ask was honoured — and never read a short page
-     *   as the start of the log ([HistoryPage.atStart] is the only signal for that). A negative value
-     *   is rejected by the daemon.
-     *
-     * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
-     * server's `conversation.not_found` as that type, the fake throws it directly), and
-     * [de.pyryco.mobile.data.network.RelayErrorException] for any server error — the `history.*` codes
-     * are distinguishable by its `code`, and `history.unavailable` is the only **retryable** member.
-     * Throws [IllegalStateException] when the session is not connected, and the decode exception for a
-     * malformed page. Every failure is scoped to **this ask alone**: no projection is touched and no
-     * other conversation's state changes.
-     *
-     * Default throws — implementations without a history log (inline test doubles) inherit it, the
-     * same cascade-avoidance as [delete] / [requestScreenSnapshot] / [dropQueuedMessage].
-     */
-    suspend fun requestHistory(
-        conversationId: String,
-        cursor: String = "",
-        limit: Int = 0,
-    ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
-
-    /**
-     * The history position saved for [conversationId] (#1354), or `null` when none is: never received,
-     * cleared, or unreadable. Read once when a thread opens, to resume its walk where the saved rows end.
-     *
-     * Default `null` — a repository with no cache always starts from the newest page.
-     */
-    suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = null
-
-    /**
-     * Save [position] for [conversationId] beside its cached rows (#1354), or clear it with `null`. Called
-     * when an ask settles; a failed ask never calls it. Never throws for a storage failure: losing a
-     * position costs only a re-fetched page.
-     *
-     * Default does nothing.
-     */
-    suspend fun writeHistoryPosition(
-        conversationId: String,
-        position: HistoryPosition?,
-    ) {}
 
     /**
      * Read this repository's host instructions and daemon-supplied reset text without a conversation.
