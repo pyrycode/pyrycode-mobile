@@ -3,9 +3,15 @@ package de.pyryco.mobile.recording
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -118,6 +124,149 @@ class SuiteReadReceiptsTest {
         val tape = authoritativeTape(legacyEvidence = true)
         deliverInitial(tape)
         assertThrows(IllegalStateException::class.java) { authoritativeRead(tape) }
+    }
+
+    @Test fun aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision() {
+        val tape = authoritativeTape()
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        // The phone can qualify sight on this certified window before a newer live fact arrives.
+        // Its already qualified read may reach the pump after that fact, before the next catch-up.
+        tape.delivered(
+            "phone/host0/0",
+            frame(
+                6,
+                "thread_item_changed",
+                """{"conversation_id":"chat","epoch":"e","version":16,"item_id":11,
+                    "base_rev":13,"rev":16,"changes":{"content":{"text":"new reply"}}}""",
+            ),
+        )
+        val acknowledgement = authoritativeRead(tape).deliveries.single().message!!
+        assertEquals(91L, acknowledgement.inReplyTo)
+        tape.assertComplete()
+    }
+
+    @Test fun theRecordedPermissionAnswerCannotEraseTheEarlierCertifiedReadWindow() {
+        val window = PermissionReadWindow()
+        assertEquals(13uL, window.target)
+        assertTrue("The captured pre-answer window certifies the phone's read", window.permits())
+        val notice = window.following.first { it.owner == window.owner && it.message?.type == "thread_item_added" }
+        window.receipts.delivered(window.owner, notice.message!!)
+        assertTrue("The captured answer notice cannot revoke an already qualified read", window.permits())
+    }
+
+    @Test fun aNewWatermarkStillNeedsItsOwnDeliveredCertification() {
+        val window = PermissionReadWindow()
+        val metadata = window.following.indexOfFirst { it.owner == window.owner && it.message?.type == "conversations" }
+        window.following.take(metadata + 1).forEach(window::accept)
+        assertTrue(window.permits())
+        assertFalse(window.receipts.permits(window.owner, window.conversation, 14u, false))
+        val end = window.following.indexOfFirst { it.owner.startsWith("peer/") && it.message?.type == "modal_answer" }
+        window.following.subList(metadata + 1, end).forEach(window::accept)
+        assertTrue(
+            "Only the subsequent real query terminal certifies the new notice",
+            window.receipts.permits(window.owner, window.conversation, 14u, false),
+        )
+    }
+
+    @Test fun aSameEpochResetNeedsFreshCompleteEvidenceForTheRepeatedWatermark() {
+        val window = PermissionReadWindow()
+        assertTrue(window.permits())
+        window.requery(1001)
+        val epoch =
+            window.request.message!!
+                .payload.jsonObject
+                .getValue("epoch")
+        window.receipts.delivered(
+            window.owner,
+            frame(1002, "thread_reset", """{"conversation_id":"${window.conversation}","epoch":$epoch,"version":13}""", 1001),
+        )
+        assertFalse(window.permits())
+        val replies = window.requery(1003)
+        window.receipts.delivered(window.owner, replies.first())
+        assertFalse("Receiving the batch cannot revive pre-reset certification", window.permits())
+        window.receipts.delivered(window.owner, replies.last())
+        assertTrue(window.permits())
+    }
+
+    @Test fun aQueryRepairCannotRetainOldReadEvidence() {
+        val window = PermissionReadWindow()
+        assertTrue(window.permits())
+        val broken = window.requery(1001).first()
+        window.receipts.delivered(
+            window.owner,
+            broken.copy(payload = JsonObject(broken.payload.jsonObject + ("epoch" to JsonPrimitive("foreign")))),
+        )
+        assertFalse(window.permits())
+        val replies = window.requery(1003)
+        replies.forEach { window.receipts.delivered(window.owner, it) }
+        assertTrue(window.permits())
+    }
+
+    @Test fun rememberedEvidenceCannotCrossConversationHostOrClient() {
+        val window = PermissionReadWindow()
+        assertTrue(window.permits())
+        for ((owner, conversation) in listOf(
+            window.owner to "another-conversation",
+            "phone/foreign/0" to window.conversation,
+            window.owner.replace("phone/", "peer/") to window.conversation,
+        )) {
+            assertFalse(window.receipts.permits(owner, conversation, window.target, true))
+        }
+    }
+
+    private class PermissionReadWindow {
+        private val recording =
+            java.io
+                .File("src/androidTest/assets/recorded/suite")
+                .resolve("interactiveTurn_permissionPrompts_heldPerConversation.json")
+        private val steps = RecordedSuiteDocument.parse(recording.readText()).steps
+        private val answer = steps.indexOfFirst { it.owner.startsWith("phone/") && it.message?.type == "modal_answer" }
+        val request = steps.take(answer).last { it.direction == "client" && it.message?.type == "thread_catch_up" }
+        val owner = request.owner
+        private val payload = requireNotNull(request.message).payload.jsonObject
+        val conversation = payload.getValue("conversation_id").jsonPrimitive.content
+        val target =
+            payload
+                .getValue("version")
+                .jsonPrimitive.content
+                .toULong()
+        val receipts = SuiteThreadReadReceipts(steps)
+        val following = steps.drop(answer + 1)
+
+        init {
+            steps.take(answer + 1).forEach(::accept)
+        }
+
+        fun permits() = receipts.permits(owner, conversation, target, false)
+
+        fun accept(step: SuiteStep) {
+            step.message?.let { frame ->
+                when (step.direction) {
+                    "client" -> receipts.requested(step.owner, frame)
+                    "daemon" -> receipts.delivered(step.owner, frame)
+                }
+            }
+        }
+
+        fun requery(id: Long): List<Envelope> {
+            val original =
+                steps
+                    .take(answer)
+                    .last {
+                        it.direction == "client" &&
+                            it.owner == owner &&
+                            it.message?.type == "thread_catch_up" &&
+                            it.message.payload.jsonObject["conversation_id"]
+                                ?.jsonPrimitive
+                                ?.content == conversation &&
+                            it.message.payload.jsonObject["version"] == JsonPrimitive(0)
+                    }.message!!
+            receipts.requested(owner, original.copy(id = id))
+            return steps
+                .filter { it.direction == "daemon" && it.owner == owner && it.message?.inReplyTo == original.id }
+                .map { it.message!!.copy(inReplyTo = id) }
+        }
     }
 
     @Test fun enqueuedOrPartialAuthoritativeRepliesCannotAcknowledgeARead() {
