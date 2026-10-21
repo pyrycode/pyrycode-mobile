@@ -6,7 +6,9 @@ import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -156,6 +158,8 @@ class SuiteConnectionsTest {
                 val replacement = hub.transport(next) { error("Live transport started") }
                 val pump = hub.pump(replacement) { error("Live pump started") }
                 pump.start()
+                var received: Envelope? = null
+                backgroundScope.launch { pump.inbound.collect { received = it } }
                 replacement.connect()
                 runCurrent()
                 advanceTimeBy(10)
@@ -166,6 +170,7 @@ class SuiteConnectionsTest {
                 advanceTimeBy(20)
                 runCurrent()
                 closing.await()
+                assertEquals(90L, received?.inReplyTo)
                 hub.checkpoint("scenario-complete")
                 runCurrent()
                 hub.assertComplete()
@@ -354,6 +359,8 @@ class SuiteConnectionsTest {
             val pump = hub.pump(transport) { error("Live pump started") }
             pump.start()
             runCurrent()
+            var received: Envelope? = null
+            backgroundScope.launch { pump.inbound.collect { received = it } }
             val closing = async { hub.beforeClose("phone") }
             runCurrent()
             assertFalse(closing.isCompleted)
@@ -363,7 +370,7 @@ class SuiteConnectionsTest {
             advanceTimeBy(120)
             runCurrent()
             closing.await()
-            assertEquals(90L, pump.inbound.first().inReplyTo)
+            assertEquals(90L, received?.inReplyTo)
             pump.close()
             hub.assertComplete()
             hub.close()

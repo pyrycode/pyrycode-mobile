@@ -54,6 +54,14 @@ Write the held-terminal regression first and retain its failing executed result.
 
 None. If the controlled regression contradicts the consumption-boundary diagnosis, investigate before changing admission and record the revised design here.
 
+## Revisions
+
+2026-10-21: The controlled real-repository regression confirmed the planned race: the old barrier returned and cancelled the collector after the batch, while the held terminal had not certified checkpoint 12. Both new probes failed before repair (2 executed, 0 passed, 2 failed, 0 skipped, exit 1) and passed afterwards (2 executed/passed, 0 failed/skipped, exit 0). `ReplayPump.inbound` now counts successful downstream emissions, and `beforeClose` waits for that exact pump's queued prefix. Cancellation leaves the prefix incomplete under the original timeout. Two existing close fixtures now run a collector and assert reply correlation; all their original lifecycle assertions remain.
+
+The original report lists the other-conversation attention-pill scenario immediately before the failing method, but report ordering does not establish actual shard execution order. The existing replay cleanup restores arguments, pairings and the shared preference snapshot, then rebuilds the ordinary graph. The fresh focused baseline passed, while the controlled case fails without any earlier scenario, preferences or machine load. Original machine load is not established by the retained logs. Complete configured UI execution remains pending with the dispatcher; focused proof alone is not suite-independence evidence.
+
+Raw original logs, baseline XML/phone diagnostics and failing regression XML are retained privately at `$AGENTS_REPO_PATH/logs/evidence/2348/builder-20261021-consumption/`. The public diagnosis contains structural equality and checkpoint numbers only. No production contract, capture, matcher or observation policy changed.
+
 ## Security review
 
 **Verdict:** PASS
