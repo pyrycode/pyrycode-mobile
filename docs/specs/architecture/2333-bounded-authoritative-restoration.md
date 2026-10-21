@@ -104,6 +104,16 @@ None concerning product scope. Validate display-contributor indexing against the
 
 ## Revisions
 
+### 2026-10-21: initial validation and winning descendant evidence
+
+The third review identifies three instances of the same restoration boundary. Keep an unavailable initial window pending under its captured owner/lifetime until observation validates it; no unchecked snapshot reaches delivery or the writer. Observation retries only supplemental validation with its existing bounded backoff and cancellation. Exit before validation leaves no content candidate for final flush. Reset/deletion invalidate the pending window.
+
+Resolve placement against winning descendants as well as winning roots. Add indexed per-node foreground anchor and held-tie contribution summaries through a non-destructive version 9→10 migration. A supplemental read overlays structural live winners on metadata, follows both former and new ancestor paths, and reduces each affected ancestor using one indexed unchanged-sibling candidate per contribution plus changed children. Only the resulting witness identities and parent closure cross the payload boundary; unrelated siblings and whole families are never hydrated. Accepted writes and migration maintain the summaries alongside existing placement metadata. Task-link classification uses the renderer's valid nonblank string task id, object task link and positive order predicate.
+
+`validationInvariant_coldUnavailableOpeningWithholdsReplayUntilRecovery` covers null/exception during held opening, automatic recovery, exit/final flush and cold reopen. `placementInvariant_liveWitnessEditsResolveWinningReplacement` covers hidden, moved and reparented witnesses after opening and during held opening. `placementInvariant_taskClassificationResolvesWinningFamily` covers task-link clears and invalid task ids with exact full-renderer comparisons, final saves, bounded counters and cold reopen. Existing writer, retirement, certification, storage/migration and native timing proofs remain required. This remains one repaired bounded-opening behaviour under the recorded grandchild verification-floor exception.
+
+Security review addendum: PASS after addressing [Trust boundaries] MUST FIX: initial unavailable validation remains explicit until successful application, and winning descendant/task classification determines witness sufficiency. [Concurrency] MUST FIX: pending opening and metadata overlays retain owner/epoch/incarnation/runtime-generation/lifetime checks, atomic application and observation-owned cancellation; unresolved content cannot enter final saves. [Storage] SHOULD FIX: additive derived summaries preserve raw payloads, certificates, unknown fields and unloaded content. Bounded metadata candidates and payload decoding remain counted; CPU validation/reduction remains on the processing dispatcher. No credential, cryptography, network, component, UI layout or logging surface changes.
+
 ### 2026-10-21: winning structure and witness retirement
 
 Verifier findings 1–3 expose the same partial-placement boundary. Keep paging order unchanged, but retain the renderer's nullable child order separately: explicit zero sorts before positive child orders; absent order sorts last. Compare exact selected rows against the full renderer for ordered and unordered roots, including an explicit patch clear.
