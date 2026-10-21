@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -16,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -50,22 +52,32 @@ class DeferredAuthoritativeScreenTest {
         }
         compose.onAllNodesWithText("agent-3").assertCountEquals(0)
         assertTrue(conversions.isEmpty())
-        compose.onNodeWithText("Using tools: 2").performClick()
+
+        fun toggle(
+            text: String,
+            substring: Boolean = false,
+        ) {
+            compose.onNodeWithText(text, substring = substring).performSemanticsAction(SemanticsActions.OnClick) { it() }
+            compose.waitForIdle()
+        }
+        toggle("Using tools: 2")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Using tools: 1"))
-        compose.onNodeWithText("Using tools: 1").performClick()
+        // The lazy viewport extends behind the composer; invoke the already composed header's action.
+        toggle("Using tools: 1")
+        assertEquals(listOf(6L), conversions.distinct())
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("text-6"))
         compose.onNodeWithText("text-6").assertIsDisplayed()
-        assertEquals(listOf(6L), conversions.distinct())
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("inner-five", substring = true))
-        compose.onNodeWithText("inner-five", substring = true).performClick()
+        toggle("inner-five", substring = true)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("inner-output"))
         compose.onNodeWithText("inner-output").assertIsDisplayed()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Using tools: 2"))
-        compose.onNodeWithText("Using tools: 2").performClick()
+        toggle("Using tools: 2")
         conversions.clear()
         compose.onAllNodesWithText("inner-output").assertCountEquals(0)
         compose.onAllNodesWithText("agent-3").assertCountEquals(0)
         assertTrue(conversions.isEmpty())
-        compose.onNodeWithText("Using tools: 2").performClick()
+        toggle("Using tools: 2")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("inner-output"))
         compose.onNodeWithText("inner-output").assertIsDisplayed()
     }
@@ -142,10 +154,38 @@ class DeferredAuthoritativeScreenTest {
         compose.onNodeWithText("Agent finished", substring = true).performClick()
         compose.waitForIdle()
         assertEquals(3, composed.size)
-        compose.runOnIdle { host = "replacement" }
+        compose.runOnIdle {
+            host = "replacement"
+            snapshot =
+                snapshot.copy(
+                    items =
+                        snapshot.items.map { item ->
+                            if (item.id == 2L) {
+                                authoritativeItem(
+                                    2,
+                                    "tool_call",
+                                    parent = 1,
+                                    rev = 9002,
+                                    content =
+                                        """
+                                        {"name":"Read","input":{"file_path":"replacement-file"},
+                                        "result":{"result_summary":"replacement-output"}}
+                                        """.trimIndent(),
+                                )
+                            } else {
+                                item
+                            }
+                        },
+                )
+        }
         compose.waitForIdle()
         assertEquals(3, composed.size)
         assertTrue(conversions.isEmpty())
+        compose.onAllNodesWithText("hidden-output").assertCountEquals(0)
+        compose.onNodeWithText("Using tools: 1").performClick()
+        reveal("msg:${presentation.scope}:2")
+        compose.onNodeWithText("replacement-file", substring = true).performClick()
+        compose.onNodeWithText("replacement-output").assertIsDisplayed()
         compose.onAllNodesWithText("hidden-output").assertCountEquals(0)
     }
 }
