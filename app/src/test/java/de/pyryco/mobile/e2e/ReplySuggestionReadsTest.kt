@@ -1,13 +1,17 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ReplySuggestion
-import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
+import de.pyryco.mobile.ui.conversations.thread.authoritativeItem
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,13 +19,27 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReplySuggestionReadsTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun quietAndroidLogs() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreAndroidLogs() {
+        RelayLog.sink = oldSink
+    }
+
     @Test
     fun offerArrivingOnlyOnReplacementDoesNotLeaveReadOnRetiredConnection() =
         runTest {
@@ -88,24 +106,24 @@ class ReplySuggestionReadsTest {
             runCurrent()
             live.value = replacement
             runCurrent()
-            old.messages.value = listOf(user("exact offer"))
+            old.items.value = listOf(user("exact offer"))
             old.offer.value = suggestion(3u, null)
             runCurrent()
             assertFalse("retired echo was accepted", echo.isCompleted)
             assertFalse("retired clear was accepted", clear.isCompleted)
 
-            replacement.messages.value = listOf(user("another text"))
+            replacement.items.value = listOf(user("another text"))
             replacement.offer.value = suggestion(2u, null)
             runCurrent()
             assertFalse("inexact echo was accepted", echo.isCompleted)
             assertFalse("non-newer clear was accepted", clear.isCompleted)
-            replacement.messages.value = listOf(user("exact offer"), user("exact offer", "duplicate"))
+            replacement.items.value = listOf(user("exact offer", revision = 2), user("exact offer", id = 2, revision = 2))
             replacement.offer.value = suggestion(3u, "still offered")
             runCurrent()
             assertFalse("duplicate echo was accepted", echo.isCompleted)
             assertFalse("a set was accepted as a clear", clear.isCompleted)
 
-            replacement.messages.value = listOf(user("exact offer"))
+            replacement.items.value = listOf(user("exact offer", revision = 3))
             replacement.offer.value = suggestion(4u, null, session = "other session")
             runCurrent()
             assertTrue("echo observation stayed on the retired connection", echo.isCompleted)
@@ -120,11 +138,28 @@ class ReplySuggestionReadsTest {
     private class Source : ConversationRepository by FakeConversationRepository() {
         val conversations = MutableStateFlow(listOf(conversation))
         val offer = MutableStateFlow<ReplySuggestion?>(null)
-        val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
+        val items = MutableStateFlow<List<ThreadItemDto>>(emptyList())
+        override val negotiatedThread =
+            object : NegotiatedThread() {
+                override val host = "suggestion-host"
+                override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(this@Source))
+                override val store = AuthoritativeThreadStore()
+
+                override fun observe(conversationId: String) =
+                    items.map { facts ->
+                        require(conversationId == CONVERSATION)
+                        val version = facts.maxOfOrNull { it.rev } ?: 0
+                        AuthoritativeThreadSnapshot(epoch = "fixture", items = facts, completedVersion = version, checkpoint = version)
+                    }
+
+                override suspend fun open(conversationId: String) = true
+
+                override fun older(conversationId: String) = false
+
+                override fun cancel(conversationId: String) = Unit
+            }
 
         override fun observeConversations(filter: ConversationFilter) = conversations
-
-        override fun observeMessages(conversationId: String) = messages
 
         override fun observeReplySuggestion(
             conversationId: String,
@@ -145,7 +180,15 @@ class ReplySuggestionReadsTest {
 
         fun user(
             text: String,
-            id: String = "echo",
-        ) = ThreadItem.MessageItem(Message(id, SESSION, Role.User, text, Instant.fromEpochSeconds(0), false))
+            id: Long = 1,
+            revision: Long = id,
+        ) = authoritativeItem(
+            id,
+            kind = "user_message",
+            session = SESSION,
+            status = "delivered",
+            rev = revision,
+            content = buildJsonObject { put("text", text) }.toString(),
+        )
     }
 }
