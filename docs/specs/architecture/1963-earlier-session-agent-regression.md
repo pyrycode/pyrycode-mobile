@@ -7,6 +7,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeThreadPresentation.kt`, `projectAuthoritativeThread`: daemon session/activity/revision and ended order own status, nesting and placement.
 - `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadQueries.kt`, `accept`, `dispatch`: page and catch-up replies must pass actual request correlation and certification.
 - `app/src/main/java/de/pyryco/mobile/data/cache/SavedAuthoritativeThread.kt`, `toSnapshot`: persisted authoritative facts carry lifecycle state without finish memory.
+- `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`, `ThreadWriter.schedule`, `observeAuthoritativeThread`: the reader owns a 100ms persistence timer and flushes on cancellation.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`, `negotiatedPresentation`, `onDemandOlderHistory`: production destination selects authoritative content and requests older pages.
 - `app/src/sharedTest/java/de/pyryco/mobile/di/SavedAuthoritativeDestination.kt`: reusable production registry/cache/destination fixture with controlled negotiated pumps.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeThreadFixtures.kt`: complete daemon item builders.
@@ -35,7 +36,7 @@ Keep Agent B active in session B. Obtain an actual `thread_page` request from `o
 
 ## State and concurrency model
 
-Tests use the existing production connection child scopes, cache serialization, ViewModel scope and shared Compose main dispatcher. Inject the fixture worker and immediate frame boundary for controlled publication. Clear ViewModels and close fixtures before rebuilding; no state holder or finish-memory object is reused. Connection replacement must change the admitted `ThreadSupport.Supported` owner. All test-owned scopes and databases close in cleanup.
+Tests use the existing production connection child scopes, cache serialization and ViewModel scope with an injected `StandardTestDispatcher` and ordered Main-dispatcher rule. Advance its scheduler explicitly for the cache writer's 100ms timer, idle Android's main looper for Compose, and use an immediate frame boundary for controlled publication. Clear ViewModels and close fixtures before rebuilding; no state holder or finish-memory object is reused. Connection replacement must change the admitted `ThreadSupport.Supported` owner. The initial collector belongs to the ViewModel scope; cleanup waits for its job to complete before resetting Main.
 
 ## State transitions and identity reuse
 
@@ -47,6 +48,7 @@ Tests use the existing production connection child scopes, cache serialization, 
 | Older page overlaps newer held A/child facts, adding older rows and preserving held neighbours | Same test, request/reply receipt and persisted-state assertions |
 | Replacement connection redelivers overlapping facts in another order and duplicates them | Same test, changed connection owner, latest revisions and exactly-once assertions |
 | Recollection or repeated screen checks | Same test, stable row keys/status and repeated rendered assertions |
+| Prior-session launch has no terminal fact and no legacy roster | `EarlierSessionAgentScreenTest.missingTerminalNeverInfersCompletionFromLaterSessionOrAbsentRoster`: both Agents remain active, with two spinners and the two-task badge |
 
 ## Error handling
 
@@ -63,3 +65,7 @@ None. An observed production regression will require a dated revision and scope 
 ## Documentation handoff
 
 Pending documentation stage: `docs/e2e-interactive-stream.md`, Verification status, record #1963's Linux counts/revisions, page and replacement-connection receipts, raw evidence references and retained failures, relating them to #2246's accepted evidence without extending that evidence to paging or simultaneous active Agents. Other operating systems are outside verification scope.
+
+## Revisions
+
+2026-10-21: Initial probes timed out before observing a query. Add the fixture's read-only `hostReady` barrier before `open`; structural logs then established that query work was drained only during cleanup. Polling must idle Android's main looper, and persistence must advance the reader's 100ms coroutine timer explicitly through the injected scheduler. Keep the production destination/cache selection intact and control page demand through `ThreadViewModel.onDemandOlderHistory` independently of status-inspection scrolls. The no-terminal probe preserves two active Agents. Keep one held child beyond the older page's exclusive bound and an incoming child inside it, so preservation on both sides uses a coherent captured window. No production repair was required.
