@@ -289,11 +289,9 @@ class AuthoritativeReaderPagingTest {
                     // Await settlement as well as delivery: the broken cursor reports exhaustion with 200 rows.
                     vm.state.first { it.historyTail == ThreadHistoryTail.Loading }
                     vm.state.first { it.historyTail != ThreadHistoryTail.Loading }
-                    val heldRows =
-                        repo.authoritativeThreads
-                            .current("host", "c")
-                            .items
-                            .count { it.shown }
+                    val applied = repo.authoritativeThreads.current("host", "c")
+                    val selected = requireNotNull(applied.openingRows)
+                    val heldRows = applied.items.count { it.shown && (it.id to false) in selected }
                     println("reader_retired_applied moved_order=$movedOrder rows=$heldRows counts=${cache.authoritativeReadCounts}")
                     assertEquals(400, heldRows)
                     vm.state.first { it.authoritativeThread?.rows?.size == 400 }
@@ -302,8 +300,12 @@ class AuthoritativeReaderPagingTest {
                         repo.authoritativeThreads
                             .current("host", "c")
                             .items
-                            .filter { it.shown && it.parent == 90_000L }
+                            .filter { it.shown && it.parent == 90_000L && (it.id to false) in selected }
                             .map { it.raw },
+                    )
+                    assertEquals(
+                        children.take(1),
+                        applied.items.filter { it.shown && it.parent == 90_000L && (it.id to false) !in selected }.map { it.raw },
                     )
                     val counts = cache.authoritativeReadCounts
                     println("reader_retired_boundary moved_order=$movedOrder counts=$counts")
