@@ -107,6 +107,49 @@ named probe. This full-suite result is separate from the focused runs. macOS was
 ticket's verification scope. See the [probe repair plan](../../specs/architecture/2263-held-retry-atomic-probe.md)
 and [wrapper scheduling tests](caching-conversation-repository-testing.md#testing).
 
+### Full-cap retention certification proof (#2439)
+
+`AuthoritativeOwnedUpsertTest.retentionInvariant_trimClearsCertification` seeds a fresh,
+disk-backed Room database with all 100000 retained rows. Overflow must retain exactly the
+newest rows and revisions while clearing durable checkpoint/coverage. A later revision and
+metadata-only catch-up/page completion must not reinstall that invalid certificate after
+reopen. A fresh conservative baseline must still certify a fully durable window. Keep all
+four independent full-record reads, cancellation/final-flush joins and write-work assertions;
+smaller fixtures, same-instance reads or count-only assertions would weaken this proof.
+
+Bounded writes do not imply a short full-cap read/assertion phase. The original-deadline
+diagnostic measured four independent reads/assertions at 10.357, 10.674, 10.816 and 10.467
+seconds, about 86% of the 49.146-second body. Seeding took 5.577 seconds, first observation
+114 ms and final flushes 4–41 ms. Every boundary completed. The unchanged method passed in
+51.312 seconds and the instrumented method in 50.841 seconds. These measurements justify
+only this method's finite two-minute `runTest` allowance, below the 180-second outer watchdog.
+Measure read work separately from observer cancellation and writer flush before extending
+a deadline; neither `UncompletedCoroutinesError` alone nor these measurements establishes
+deadlock or host starvation. Static phase codes use monotonic wall time, not scheduler time.
+
+The [retained Linux evidence and sibling raw XML/output](../../../app/src/test/resources/verification/retention-2439/evidence.txt)
+preserve the failed main run at `d2130e229e5ae7382cf7f6cebe790db6ae8574d5`:
+**1 executed, 0 passed, 1 failed, 0 skipped**, 68.685 seconds, after all five write checkpoints.
+The original gate path was overwritten; the committed failed XML and gate excerpt came from
+the retained #2373 verifier bundle. Keep those failures distinct from subsequent passes.
+Separate repaired focused method/class runs with `-PfullRetentionTests=true` executed/passed
+**1/1** and **17/17**, respectively, with **0 failures/errors/skips**. The method took
+51.529 seconds alone and 43.871 seconds in the class. The class source revision was
+`5643be8abb991820b06fbf80aa1b70e87d1b10c9`; the evidence records both runs' source hashes.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2443#issuecomment-6328796989)
+for candidate `75afa8d5a2c55cef6f46b1d5059938a1ba007404` confirms complete Linux JVM
+acceptance: `python3 scripts/jvm-test-gate.py --with-build-checks`, invocation `jvm-dq3to5jr`,
+**6447 executed/passed, 0 failures/errors/skips**. All **17** affected-class methods passed;
+the exact retention method passed in **45.861 seconds**. This complete-gate result supersedes
+the builder's pending-dispatcher note. macOS was outside this ticket's verification scope;
+no device or real-Claude acceptance is required for this Room-backed proof.
+
+When reconciling #2334/PR #2372, preserve this allowance, diagnostics and every assertion in
+its overlapping method hunk. Its broader paging feature and #2437/PR #2438's Retry-generation
+repair are independent of this completion repair. See the
+[repair plan](../../specs/architecture/2439-retention-certification-completion.md).
+
 ### Owned coverage snapshot acceptance (#2291)
 
 `OwnedLegacyCoverageConcurrencyTest` keeps real disk-backed Room while distinguishing history

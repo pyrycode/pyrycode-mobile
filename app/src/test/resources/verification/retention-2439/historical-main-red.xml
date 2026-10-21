@@ -1,0 +1,26 @@
+<testsuites><testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-21T21:31:38.297Z" hostname="b34a9e66d224" time="69.425">
+  <properties />
+  <testcase name="retentionInvariant_trimClearsCertification" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="68.685">
+    <failure message="kotlinx.coroutines.test.UncompletedCoroutinesError: After waiting for 1m, the test body did not run to completion" type="kotlinx.coroutines.test.UncompletedCoroutinesError">kotlinx.coroutines.test.UncompletedCoroutinesError: After waiting for 1m, the test body did not run to completion
+	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$2.invokeSuspend$lambda$0(TestBuilders.kt:353)
+	at kotlinx.coroutines.InvokeOnCancelling.invoke(JobSupport.kt:1571)
+	at kotlinx.coroutines.JobSupport.notifyCancelling(JobSupport.kt:1604)
+	at kotlinx.coroutines.JobSupport.tryMakeCancelling(JobSupport.kt:826)
+	at kotlinx.coroutines.JobSupport.makeCancelling(JobSupport.kt:786)
+	at kotlinx.coroutines.JobSupport.cancelImpl$kotlinx_coroutines_core(JobSupport.kt:702)
+	at kotlinx.coroutines.JobSupport.cancelCoroutine(JobSupport.kt:689)
+	at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+	at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+	at java.base/java.lang.Thread.run(Thread.java:1583)
+</failure>
+  </testcase>
+  <system-out>owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=1, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+</system-out>
+  <system-err />
+</testsuite></testsuites>
