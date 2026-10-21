@@ -549,6 +549,7 @@ class AuthoritativeRoomStorage internal constructor(
                         key,
                         record.id,
                         key == record.launchKey,
+                        contributions.map { (selectedKey, selected) -> selected.id to (selectedKey == selected.launchKey) },
                     )
                 },
             )
@@ -579,7 +580,33 @@ class AuthoritativeRoomStorage internal constructor(
                 val boundary = dao.indexItem(host, conversation, header.epoch, cursor.id)
                 if (boundary != null) lastReadCounts = lastReadCounts.copy(ordinalReads = lastReadCounts.ordinalReads + 1)
                 val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
-                if (!currentKey.isNullOrEmpty() && !currentKey.startsWith("!")) before = maxOf(before, currentKey)
+                var recovered = currentKey?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to cursor.launch }
+                if (recovered == null) {
+                    // Placement prefixes and preorder ranks may both change after retirement.
+                    // Resolve the captured reading seam by identity, excluding active/parent extras.
+                    for (batch in cursor.successors.chunked(200)) {
+                        val records = dao.indexItems(host, conversation, header.epoch, batch.mapTo(mutableSetOf()) { it.first })
+                        lastReadCounts =
+                            lastReadCounts.copy(
+                                queries = lastReadCounts.queries + 1,
+                                ordinalReads = lastReadCounts.ordinalReads + records.size,
+                            )
+                        val indexed = records.associateBy { it.id }
+                        recovered =
+                            batch.firstNotNullOfOrNull { (id, launch) ->
+                                val record = indexed[id]
+                                val key = if (launch) record?.launchKey else record?.displayKey
+                                key?.takeIf { it.isNotEmpty() && !it.startsWith("!") }?.let { it to launch }
+                            }
+                        if (recovered != null) break
+                    }
+                    RelayLog.d { "event=authoritative_local_boundary outcome=${if (recovered == null) "unavailable" else "recovered"}" }
+                }
+                val position = recovered ?: return@read null
+                if (position.first >= before) {
+                    before = position.first
+                    boundaryLaunch = position.second
+                }
             }
             val contributions = mutableListOf<Pair<Boolean, AuthoritativeItem>>()
             while (contributions.size < size) {
@@ -673,6 +700,7 @@ class AuthoritativeRoomStorage internal constructor(
                         if (launch) item.launchKey else item.displayKey,
                         item.id,
                         launch,
+                        contributions.map { (selectedLaunch, selected) -> selected.id to selectedLaunch } + cursor.successors,
                     )
                 }
             RelayLog.d {

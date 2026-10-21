@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.CachingConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -111,6 +112,25 @@ class AuthoritativeReaderPagingTest {
         }
     }
 
+    private fun trackingWrite(
+        disk: MigratingConversationCache,
+        raw: JsonObject,
+        committed: CompletableDeferred<Unit>,
+    ): ConversationCache =
+        object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+            override suspend fun upsertAuthoritativeThread(
+                serverId: String,
+                conversationId: String,
+                saved: SavedAuthoritativeThread,
+                reset: Boolean,
+                baseline: SavedAuthoritativeThread?,
+                orderMoves: Map<Long, Boolean>,
+            ): Result<Unit> =
+                disk.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves).also {
+                    if (it.isSuccess && raw in saved.items) committed.complete(Unit)
+                }
+        }
+
     @Test fun demandIsIndependentAndNeverWalksAtRest() =
         runTest {
             val original =
@@ -151,35 +171,182 @@ class AuthoritativeReaderPagingTest {
 
     @Test fun localWalkKeepsExactFactsAndCertificate() =
         runTest {
+            // 120 saved groups of 150 rows, separated by 250 genuinely absent daemon identities.
+            val displayed = (0 until 18_000).map { fact(1 + it + (it / 150) * 250) }
+            val hidden = (60_001..61_000).map { fact(it, false) }
+            val newestOrder = ThreadItemDto.decodeReplacement(displayed.last()).order ?: error("fixture order")
             val original =
                 SavedAuthoritativeThread(
                     "e",
-                    (1..18_000).map { fact(it) },
-                    20_000,
-                    19_000,
-                    SavedThreadCoverage(35_800, 36_000, 35_800, true),
+                    displayed + hidden,
+                    100_000,
+                    99_000,
+                    SavedThreadCoverage(newestOrder - 200, newestOrder, newestOrder - 200, true),
                 )
             disk().writeAuthoritativeThread("host", "c", original).getOrThrow()
             disk().writeAuthoritativeThread("other", "c", original.copy(items = listOf(fact(1)))).getOrThrow()
             val cache = disk()
-            destination(cache) { fixture, vm, repo ->
+            val revised = JsonObject(displayed.last() + mapOf("rev" to JsonPrimitive(110_000), "future" to JsonNull))
+            val committed = CompletableDeferred<Unit>()
+            val expected = displayed.dropLast(1) + revised
+            destination(trackingWrite(cache, revised, committed)) { fixture, vm, repo ->
                 vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                repo.authoritativeThreads.applyBatch("host", "c", "e", 110_000, listOf(ThreadItemDto.decodeReplacement(revised)), 0)
+                committed.await()
+                val requests = fixture.requests.toList()
                 repeat(89) { page ->
                     vm.onDemandOlderHistory()
                     vm.state.first { (it.authoritativeThread?.rows?.size ?: 0) >= (page + 2) * 200 }
                     val snapshot = repo.authoritativeThreads.current("host", "c")
                     assertEquals((page + 2) * 200, snapshot.items.size)
-                    assertEquals(original.items.takeLast(snapshot.items.size), snapshot.items.map { it.raw })
+                    assertEquals(expected.takeLast(snapshot.items.size), snapshot.items.map { it.raw })
+                    assertEquals(snapshot.items.size, snapshot.items.distinctBy { it.id }.size)
+                    assertEquals(
+                        snapshot.items.map { it.id to "Saved exact ${it.id}" },
+                        vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                            it.message.id
+                                .substringAfterLast(':')
+                                .toLong() to it.message.content
+                        },
+                    )
                     assertEquals(original.checkpoint, snapshot.checkpoint)
                     assertEquals(original.coverage?.toDomain(), snapshot.coverage)
                     assertEquals(0, cache.authoritativeFullReads)
-                    assertTrue(cache.authoritativeReadCounts.itemDecodes <= 200)
+                    val counts = cache.authoritativeReadCounts
+                    assertEquals(200, counts.itemReads)
+                    assertEquals(200, counts.itemDecodes)
+                    assertTrue(counts.ordinalReads in 200..201)
+                    assertTrue(counts.queries in 6..7)
+                    assertEquals(1, counts.evidenceReads)
+                    assertEquals(1, counts.evidenceDecodes)
                     println("reader_page=${page + 1} counts=${cache.authoritativeReadCounts}")
+                    advanceTimeBy(1000)
+                    runCurrent()
+                    assertEquals(
+                        (page + 2) * 200,
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items.size,
+                    )
+                    assertEquals(requests, fixture.requests)
                 }
                 assertEquals(0, fixture.requests.count { it.type in setOf("thread_page", "thread_catch_up") })
             }
-            assertEquals(original, disk().readAuthoritativeThread("host", "c"))
+            assertEquals(original.copy(items = expected + hidden, appliedVersion = 110_000), disk().readAuthoritativeThread("host", "c"))
+            val reopened = disk()
+            destination(reopened) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                vm.onDemandOlderHistory()
+                vm.state.first { it.authoritativeThread?.rows?.size == 400 }
+                assertEquals(
+                    expected.takeLast(400),
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
+                assertEquals(original.coverage?.toDomain(), repo.authoritativeThreads.current("host", "c").coverage)
+                assertEquals(original.checkpoint, repo.authoritativeThreads.current("host", "c").checkpoint)
+                assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
+            }
             assertEquals(listOf(fact(1)), disk().readAuthoritativeThread("other", "c")?.items)
+        }
+
+    @Test fun retiredBoundaryRecoversAfterAncestorPlacementRebuild() =
+        runTest {
+            for (movedOrder in listOf(20_000, 1, 10_000)) {
+                databaseName = "retired-boundary-$movedOrder.db"
+                val parent = JsonObject(fact(90_000, false) + mapOf("kind" to JsonPrimitive("agent"), "order" to JsonPrimitive(10_000)))
+                val active = JsonObject(fact(90_001) + mapOf("order" to JsonPrimitive(1), "active" to JsonPrimitive(true)))
+                val children = (1..600).map { JsonObject(fact(it) + ("parent" to JsonPrimitive(90_000))) }
+                val original = SavedAuthoritativeThread("e", listOf(active) + children + parent, 100_000, 99_000)
+                disk().writeAuthoritativeThread("host", "c", original).getOrThrow()
+                val cache = disk()
+                val moved = JsonObject(parent + mapOf("rev" to JsonPrimitive(110_000), "order" to JsonPrimitive(movedOrder)))
+                val rankInputs =
+                    if (movedOrder == 10_000) {
+                        (91_001..91_003).map {
+                            JsonObject(fact(it, false) + mapOf("parent" to JsonPrimitive(90_000), "order" to JsonPrimitive(1)))
+                        }
+                    } else {
+                        emptyList()
+                    }
+                val committed = CompletableDeferred<Unit>()
+                destination(trackingWrite(cache, moved, committed)) { fixture, vm, repo ->
+                    vm.state.first { it.authoritativeThread?.rows?.size == 201 }
+                    repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 401))).getOrThrow()
+                    vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                    repo.authoritativeThreads.applyBatch(
+                        "host",
+                        "c",
+                        "e",
+                        110_000,
+                        (listOf(moved) + rankInputs).map { ThreadItemDto.decodeReplacement(it) },
+                        0,
+                    )
+                    committed.await()
+                    vm.onDemandOlderHistory()
+                    // Await settlement as well as delivery: the broken cursor reports exhaustion with 200 rows.
+                    vm.state.first { it.historyTail == ThreadHistoryTail.Loading }
+                    vm.state.first { it.historyTail != ThreadHistoryTail.Loading }
+                    assertEquals(
+                        400,
+                        vm.state.value.authoritativeThread
+                            ?.rows
+                            ?.size,
+                    )
+                    assertEquals(
+                        children.takeLast(400).filterNot { it["id"] == JsonPrimitive(401) },
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items
+                            .filter { it.shown && it.parent == 90_000L }
+                            .map { it.raw },
+                    )
+                    val counts = cache.authoritativeReadCounts
+                    println("reader_retired_boundary moved_order=$movedOrder counts=$counts")
+                    assertTrue(counts.itemDecodes <= 203)
+                    assertTrue(counts.ordinalReads <= 800)
+                    assertTrue(counts.queries <= 12)
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.authoritativeThread?.rows?.size == 600 }
+                    assertEquals(
+                        children.filterNot { it["id"] == JsonPrimitive(401) },
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items
+                            .filter { it.shown && it.parent == 90_000L }
+                            .map { it.raw },
+                    )
+                    assertEquals(0, cache.authoritativeFullReads)
+                    assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
+                }
+                val fresh = requireNotNull(disk().readAuthoritativeThread("host", "c"))
+                assertEquals(
+                    (children.filterNot { it["id"] == JsonPrimitive(401) } + moved + active + rankInputs).toSet(),
+                    fresh.items.toSet(),
+                )
+                assertTrue(401L in fresh.retirements)
+                val reopened = disk()
+                destination(reopened) { _, vm, repo ->
+                    vm.state.first { it.authoritativeThread?.rows?.size == 201 }
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.authoritativeThread?.rows?.size == 401 }
+                    assertEquals(
+                        400,
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items
+                            .count { it.shown && it.parent == 90_000L },
+                    )
+                    assertFalse(
+                        repo.authoritativeThreads
+                            .current("host", "c")
+                            .items
+                            .any { it.id == 401L },
+                    )
+                }
+            }
         }
 
     @Test fun retryKeepsTheReaderBoundary() =

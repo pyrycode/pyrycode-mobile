@@ -28,6 +28,8 @@ internal class AuthoritativeDisplayCursor(
     val key: String,
     val id: Long,
     val launch: Boolean,
+    /** Oldest-to-newest admitted window contributions; renderer extras cannot locate this seam. */
+    val successors: List<Pair<Long, Boolean>>,
 ) {
     override fun toString(): String = "AuthoritativeDisplayCursor(redacted)"
 }
