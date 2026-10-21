@@ -106,6 +106,77 @@ class AuthoritativeRoomStorageTest {
             )
         }
 
+    @Test fun availabilityInvariant_nestedAgentsKeepBoundedKeysThroughImportUpgradeAndStructuralWrites() =
+        runTest(timeout = 5.minutes) {
+            val facts = (1..18_000).map { id ->
+                JsonObject(raw(id) + mapOf("kind" to JsonPrimitive("agent"), "parent" to JsonPrimitive(id - 1)))
+            }
+            val original = saved(facts)
+            val store = open()
+            seed(store, original)
+            seed(store, saved(listOf(raw(1))), host = "other")
+
+            suspend fun verify(expected: SavedAuthoritativeThread, order: List<Long>) {
+                val cold = open()
+                assertEquals(expected, cold.readAuthoritativeThread("Host", "thread"))
+                val db = requireNotNull(database)
+                val selected = db.authoritative().displayWindow("Host", "thread", expected.epoch, 200)
+                assertEquals(order.takeLast(200).asReversed(), selected.map { it.id })
+                db.openHelper.readableDatabase.query(
+                    "SELECT id,displayKey,launchKey,anchorId,tieId FROM authoritative_items WHERE host='Host' AND conversation='thread' ORDER BY displayKey",
+                ).use { rows ->
+                    val ids = mutableListOf<Long>()
+                    var characters = 0L
+                    var largest = 0
+                    while (rows.moveToNext()) {
+                        val id = rows.getLong(0)
+                        ids += id
+                        val content = rows.getString(1)
+                        val launch = rows.getString(2)
+                        largest = maxOf(largest, content.length, launch.length)
+                        characters += content.length + launch.length
+                        val child = if (id == 18_000L || (id == 9000L && expected != original)) 0L else id + 1
+                        assertEquals(child, rows.getLong(3))
+                        assertEquals(child, rows.getLong(4))
+                    }
+                    assertEquals(order, ids)
+                    assertTrue("largest=$largest", largest <= 62)
+                    assertTrue("characters=$characters", characters <= 18_000L * 62)
+                    println("nested_agent_keys largest=$largest characters=$characters rows=${ids.size}")
+                }
+                val bytes = db.openHelper.readableDatabase.let { sql ->
+                    val pages = sql.query("PRAGMA page_count").use { it.moveToFirst(); it.getLong(0) }
+                    val pageSize = sql.query("PRAGMA page_size").use { it.moveToFirst(); it.getLong(0) }
+                    pages * pageSize
+                }
+                assertTrue("database bytes=$bytes", bytes <= 18_000L * 4096)
+                println("nested_agent_storage bytes=$bytes")
+                assertEquals(saved(listOf(raw(1))), cold.readAuthoritativeThread("other", "thread"))
+            }
+
+            val ascending = (1L..18_000L).toList()
+            verify(original, ascending)
+            database?.close()
+            // Model an installed v10 database: its schema is unchanged and its derived keys are stale.
+            SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+                db.execSQL("UPDATE authoritative_items SET displayKey='old',anchorId=0,tieId=0 WHERE host='Host'")
+                db.version = 10
+            }
+            verify(original, ascending)
+            verify(original, ascending) // Fresh database/storage instances after the upgrade.
+
+            val root = JsonObject(facts.first() + mapOf("order" to JsonPrimitive(40_000), "rev" to JsonPrimitive(300_001)))
+            val split = JsonObject(facts[9000] + mapOf("parent" to JsonPrimitive(0), "rev" to JsonPrimitive(300_002)))
+            val changes = original.copy(items = listOf(root, split), appliedVersion = 300_002)
+            open().upsertAuthoritativeThread("Host", "thread", changes, false, original, emptyMap()).getOrThrow()
+            val expected = original.copy(
+                items = facts.map { when (it["id"]) { JsonPrimitive(1) -> root; JsonPrimitive(9001) -> split; else -> it } }
+                    .let { it.drop(1) + root },
+                appliedVersion = 300_002,
+            )
+            verify(expected, (9001L..18_000L).toList() + (1L..9000L).toList())
+        }
+
     private fun assertDeepContributions() {
         val leaf = "0000000000000018000" + "2147501647:18000"
         val sibling = "0000000000000018001" + "2147501648:18001"

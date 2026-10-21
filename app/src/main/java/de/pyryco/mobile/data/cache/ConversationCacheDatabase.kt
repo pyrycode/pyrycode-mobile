@@ -25,7 +25,7 @@ import java.io.IOException
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 10,
+    version = 11,
     autoMigrations = [
         AutoMigration(
             from = 1,
@@ -37,6 +37,7 @@ import java.io.IOException
         AutoMigration(from = 7, to = 8, spec = ConversationCacheDatabase.RenderPlacementMigration::class),
         AutoMigration(from = 8, to = 9, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
         AutoMigration(from = 9, to = 10, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
+        AutoMigration(from = 10, to = 11, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
@@ -84,10 +85,9 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                 }
             }
             for (records in owners.values) {
-                val held = records.associateBy { it.id }
-                val summaries = if (contributions) savedContributionIndex(records) else emptyMap()
+                val placement = SavedPlacementIndex(records.sortedBy { it.ordinal })
                 for (record in records) {
-                    val keys = record.savedPlacementKeys(held::get) { root -> savedUnorderedAnchor(root, held.values) }
+                    val keys = placement.keys.getValue(record.id)
                     db.execSQL(
                         "UPDATE authoritative_items SET parentId=?,agent=?,background=?,active=?,endedOrder=?,displayKey=?,launchKey=? " +
                             "WHERE host=? AND conversation=? AND epoch=? AND id=?",
@@ -106,7 +106,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                         ),
                     )
                     if (witnesses) {
-                        val anchor = if (record.agent) savedUnorderedAnchor(record.id, held.values) else null
+                        val anchor = placement.anchors[record.id]
                         db.execSQL(
                             "UPDATE authoritative_items SET rendererOrder=?,anchorId=?,tieId=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
                             arrayOf<Any>(
@@ -121,7 +121,7 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
                         )
                     }
                     if (contributions) {
-                        val keys = summaries.getValue(record.id)
+                        val keys = placement.contributions.getValue(record.id)
                         db.execSQL(
                             "UPDATE authoritative_items SET anchorContribution=?,tieContribution=? WHERE host=? AND conversation=? AND epoch=? AND id=?",
                             arrayOf<Any>(keys.first, keys.second, record.host, record.conversation, record.epoch, record.id),

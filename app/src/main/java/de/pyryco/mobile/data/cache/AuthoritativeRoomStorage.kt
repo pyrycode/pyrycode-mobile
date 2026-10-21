@@ -396,24 +396,19 @@ class AuthoritativeRoomStorage internal constructor(
         dao.deleteHeaders(serverId, conversationId)
         dao.deleteRetirements(serverId, conversationId)
         for ((id, revision) in fences) dao.retire(AuthoritativeRetirement(serverId, conversationId, id, revision))
-        val indexed = records.associateBy { it.id }
-        val contributions = savedContributionIndex(records)
-        val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
+        val placement = SavedPlacementIndex(records)
         dao.insertItems(
             records.map { record ->
-                val keys =
-                    record.savedPlacementKeys(indexed::get) { root ->
-                        anchors.getOrPut(root) { savedUnorderedAnchor(root, indexed.values) }
-                    }
-                val anchor = if (record.agent) anchors.getOrPut(record.id) { savedUnorderedAnchor(record.id, indexed.values) } else null
+                val keys = placement.keys.getValue(record.id)
+                val anchor = placement.anchors[record.id]
                 record.copy(
                     displayKey = keys.first,
                     launchKey = keys.second,
                     anchorId = anchor?.third?.id ?: 0,
                     tieId =
                         anchor?.second?.id ?: 0,
-                    anchorContribution = contributions.getValue(record.id).first,
-                    tieContribution = contributions.getValue(record.id).second,
+                    anchorContribution = placement.contributions.getValue(record.id).first,
+                    tieContribution = placement.contributions.getValue(record.id).second,
                 )
             },
         )
@@ -432,7 +427,7 @@ class AuthoritativeRoomStorage internal constructor(
         )
     }
 
-    /** Only affected descendants and their ancestor metadata need new placement keys. */
+    /** Re-rank the affected parent components using metadata only, visiting every edge once. */
     private suspend fun updatePlacements(
         host: String,
         conversation: String,
@@ -442,56 +437,23 @@ class AuthoritativeRoomStorage internal constructor(
     ) {
         val facts = linkedMapOf<Long, AuthoritativeItem>()
         val visited = mutableSetOf<Long>()
-        val pending = ArrayDeque(changed)
+        val pending = ArrayDeque(changed + formerParents)
         while (pending.isNotEmpty()) {
             val id = pending.removeFirst()
             if (!visited.add(id)) continue
-            dao.indexItem(host, conversation, epoch, id)?.let { facts[id] = it }
+            val record = facts[id] ?: dao.indexItem(host, conversation, epoch, id)?.also { facts[id] = it }
+            record?.parentId?.takeIf { it > 0 }?.let(pending::addLast)
             dao.indexChildren(host, conversation, epoch, id).forEach { child ->
                 facts[child.id] = child
                 pending.add(child.id)
             }
         }
-        val affected = facts.keys.toMutableSet()
-        for (id in formerParents) {
-            var parent = id
-            val seen = mutableSetOf<Long>()
-            while (parent > 0 && seen.add(parent)) {
-                val fact = facts[parent] ?: dao.indexItem(host, conversation, epoch, parent)?.also { facts[parent] = it } ?: break
-                parent = fact.parentId
-            }
-        }
-        for (record in facts.values.toList()) {
-            var parent = record.parentId
-            val seen = mutableSetOf(record.id)
-            while (parent > 0 && seen.add(parent)) {
-                val fact = facts[parent] ?: dao.indexItem(host, conversation, epoch, parent)?.also { facts[parent] = it } ?: break
-                parent = fact.parentId
-            }
-        }
-        // Every agent retains hypothetical unordered witnesses, including currently ordered roots.
-        for (root in facts.values.filter { it.agent }) {
-            affected.add(root.id)
-            val scan = ArrayDeque<Long>().also { it.add(root.id) }
-            val seen = mutableSetOf<Long>()
-            while (scan.isNotEmpty()) {
-                val id = scan.removeFirst()
-                if (!seen.add(id)) continue
-                dao.indexChildren(host, conversation, epoch, id).forEach { child ->
-                    facts[child.id] = child
-                    affected.add(child.id)
-                    scan.add(child.id)
-                }
-            }
-        }
-        val anchors = mutableMapOf<Long, Triple<Long, AuthoritativeItem, AuthoritativeItem>?>()
-        val contributions = savedContributionIndex(facts.values)
-        for (id in affected) {
-            val record = facts.getValue(id)
-            val keys = record.savedPlacementKeys(facts::get) { root -> anchors.getOrPut(root) { savedUnorderedAnchor(root, facts.values) } }
-            val anchor = if (record.agent) anchors.getOrPut(id) { savedUnorderedAnchor(id, facts.values) } else null
+        val placement = SavedPlacementIndex(facts.values.sortedBy { it.ordinal })
+        for (id in facts.keys) {
+            val keys = placement.keys.getValue(id)
+            val anchor = placement.anchors[id]
             dao.placement(host, conversation, epoch, id, keys.first, keys.second, anchor?.third?.id ?: 0, anchor?.second?.id ?: 0)
-            val summary = contributions.getValue(id)
+            val summary = placement.contributions.getValue(id)
             dao.contributions(host, conversation, epoch, id, summary.first, summary.second)
         }
     }
