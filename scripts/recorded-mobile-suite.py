@@ -241,7 +241,7 @@ def capture(serial, method, destination, pyry, daemon_source):
             result = subprocess.run(['bash', str(ROOT / 'scripts/e2e-emulator.sh')], cwd=ROOT, env=child,
                                     stdout=log, stderr=subprocess.STDOUT, timeout=1200)
         report_dir = ROOT / 'app/build/outputs/androidTest-results/connected/debug'
-        for filename in ['TEST-installed.xml', 'instrument-raw.txt']:
+        for filename in ['TEST-installed.xml', 'instrument-raw.txt', f'logcat-{CLASS}-{method}.txt']:
             artifact = report_dir / filename
             if artifact.is_file() and artifact.stat().st_mtime_ns >= started:
                 (evidence / filename).write_bytes(artifact.read_bytes())

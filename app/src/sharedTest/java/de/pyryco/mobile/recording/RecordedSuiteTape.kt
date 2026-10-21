@@ -835,6 +835,7 @@ internal class RecordedSuiteTape(
             when (request.type) {
                 "request_context_usage" -> "context_usage"
                 "request_model_list" -> "model_list"
+                "mcp_status_request" -> "mcp_status"
                 else -> null
             }
         if (response.type == expectedType) {
@@ -867,14 +868,33 @@ internal class RecordedSuiteTape(
         }
     }
 
-    /** Only an actually requested independent reply may pass a different conversation's query fence. */
-    private fun independentThreadReply(index: Int): Boolean {
+    /** Explicit attribution must agree across the request, envelope and catalog row. */
+    private fun frameConversation(
+        frame: Envelope,
+        correlated: String? = null,
+    ): String? {
+        val payload = frame.payload as? JsonObject
+        val identities =
+            listOfNotNull(
+                correlated?.let(::JsonPrimitive),
+                payload?.get("conversation_id"),
+                frame.conversationId,
+                if (frame.type == "conversation_updated") payload?.get("id") else null,
+            )
+        val names =
+            identities.map {
+                (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content?.takeIf(String::isNotEmpty) ?: return null
+            }
+        return names.distinct().singleOrNull()
+    }
+
+    /** Independent replies and live facts retain their own conversation's captured query and source order. */
+    private fun independentConversationDelivery(index: Int): Boolean {
         val step = steps[index]
         val frame = step.message ?: return false
         if (step.direction != "daemon") return false
-        val reply = frame.inReplyTo ?: return false
-        val key = step.owner to reply
-        if (key !in threadQueryRequests || key !in requests) return false
+        val reply = frame.inReplyTo
+        if (reply != null && (step.owner to reply !in threadQueryRequests || step.owner to reply !in requests)) return false
 
         fun requestConversation(
             owner: String,
@@ -889,7 +909,22 @@ internal class RecordedSuiteTape(
                 ?.takeIf { it.isString }
                 ?.content
                 ?.takeIf { it.isNotEmpty() }
-        val conversation = requestConversation(step.owner, reply) ?: return false
+        val correlated = reply?.let { requestConversation(step.owner, it) ?: return false }
+        val conversation = frameConversation(frame, correlated) ?: return false
+        if (reply == null &&
+            (0 until index).none { before ->
+                val earlier = steps[before]
+                before in consumed &&
+                    earlier.owner == step.owner &&
+                    earlier.direction == "client" &&
+                    earlier.accepted &&
+                    lifecycleBefore[before] == lifecycleBefore[index] &&
+                    earlier.owner to earlier.message!!.id in threadQueryRequests &&
+                    requestConversation(earlier.owner, earlier.message.id) == conversation
+            }
+        ) {
+            return false
+        }
         return (0 until index).all { before ->
             if (before in released) return@all true
             val earlier = steps[before]
@@ -907,12 +942,7 @@ internal class RecordedSuiteTape(
                     // Summary metadata does not establish a canonical thread base. Its own delivery stays fenced.
                     if (message?.type == "conversations" || matchedIndependentMetadata(before)) return@all true
                     val correlated = message?.inReplyTo?.let { requestConversation(earlier.owner, it) }
-                    val supplied =
-                        ((message?.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive)
-                            ?.takeIf { it.isString }
-                            ?.content ?: (message?.conversationId as? JsonPrimitive)?.takeIf { it.isString }?.content
-                    if (correlated != null && supplied != null && correlated != supplied) return@all false
-                    (correlated ?: supplied)?.let { it.isNotEmpty() && it != conversation } == true
+                    message?.let { frameConversation(it, correlated) }?.let { it != conversation } == true
                 }
                 else -> false
             }
@@ -946,7 +976,7 @@ internal class RecordedSuiteTape(
                 released += index
                 continue
             }
-            if (step.owner in blockedReplies && !independentThreadReply(index)) continue
+            if (step.owner in blockedReplies && !independentConversationDelivery(index)) continue
             // Android inputs affect the whole graph. They cannot cross a captured restart or unfinished request.
             if (step.direction == "external" && !precedingWorkReleased(index, allowDeferredReads = true)) continue
             if (step.direction in setOf("inbound_end", "down", "transport_down") && !precedingRequestsComplete(index, step.owner)) continue

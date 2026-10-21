@@ -638,6 +638,80 @@ class RecordedSuiteTapeTest {
         }
     }
 
+    @Test fun peerPermissionDismissalForBCanPassAHeldCatchUpWithoutSpendingIt() {
+        val owner = "phone/host/0"
+        val peer = "peer/host/0"
+        val a = frame(1, "thread_catch_up", """{"conversation_id":"a","epoch":"ea","version":13}""")
+        val b = frame(4, "thread_catch_up", """{"conversation_id":"b","epoch":"eb","version":13}""")
+        val answer = frame(1, "modal_answer", """{"request_id":"permission-b","choice":"allow_once"}""")
+        val tape =
+            RecordedSuiteTape(
+                listOf(
+                    client(owner, frame(9, "mcp_status_request", """{"conversation_id":"b"}""")),
+                    client(owner, a),
+                    daemon(owner, frame(2, "thread_item_changed", """{"conversation_id":"a"}""")),
+                    daemon(owner, frame(3, "thread_items", """{"conversation_id":"a","final":true}""", reply = 1)),
+                    daemon(owner, frame(8, "conversation_updated", """{"id":"a","read_up_to":14}""")),
+                    daemon(owner, frame(10, "mcp_status", """{"conversation_id":"b","servers":[]}""", reply = 9)),
+                    client(owner, b),
+                    daemon(owner, frame(5, "thread_items", """{"conversation_id":"b","final":true}""", reply = 4)),
+                    client(peer, answer),
+                    daemon(peer, frame(2, "modal_dismissed")),
+                    daemon(
+                        owner,
+                        frame(6, "modal_dismissed", """{"request_id":"permission-b"}""").copy(conversationId = JsonPrimitive("b")),
+                    ),
+                    daemon(owner, frame(7, "thread_item_added", """{"conversation_id":"b"}""")),
+                    SuiteStep("close", owner),
+                ),
+                literalProducerIdentities = true,
+            )
+        assertTrue(tape.initial().isEmpty())
+        assertTrue(tape.request(owner, frame(89, "mcp_status_request", """{"conversation_id":"b"}""")).isEmpty())
+        assertEquals(listOf("thread_items"), tape.request(owner, b.copy(id = 90)).map { it.message?.type })
+        val released = tape.request(peer, answer.copy(id = 90))
+        assertEquals(listOf("modal_dismissed", "modal_dismissed", "thread_item_added"), released.map { it.message?.type })
+        assertFalse(tape.closeReady(owner))
+        assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        assertEquals(
+            listOf("thread_item_changed", "thread_items", "conversation_updated", "mcp_status"),
+            tape.request(owner, a.copy(id = 91)).map { it.message?.type },
+        )
+        assertTrue(tape.closeReady(owner))
+        tape.lifecycle("close", owner)
+        tape.assertComplete()
+    }
+
+    @Test fun independentLiveDeliveryCannotCrossItsOwnQueryUnknownAttributionOrAnAndroidInput() {
+        val owner = "phone/host/0"
+        val a = frame(1, "thread_catch_up", """{"conversation_id":"a","epoch":"ea","version":13}""")
+        val b = frame(10, "thread_catch_up", """{"conversation_id":"b","epoch":"eb","version":13}""")
+        for (condition in listOf("same-conversation", "unknown", "conflicting", "android", "checkpoint", "reconnect")) {
+            val conversation = if (condition == "same-conversation") "a" else "b"
+            val live =
+                frame(3, "modal_dismissed", if (condition == "unknown") "{}" else """{"conversation_id":"$conversation"}""")
+                    .copy(conversationId = if (condition == "conflicting") JsonPrimitive("a") else null)
+            val rows =
+                mutableListOf(
+                    client(owner, b),
+                    daemon(owner, frame(11, "thread_items", """{"conversation_id":"b","final":true}""", reply = 10)),
+                    client(owner, a),
+                    daemon(owner, frame(2, "thread_items", """{"conversation_id":"a","final":true}""", reply = 1)),
+                )
+            when (condition) {
+                "android" -> rows += SuiteStep("external", "android", detail = JsonObject(mapOf("event" to JsonPrimitive("push-wake"))))
+                "checkpoint" -> rows += client("control", frame(1, "test-control:checkpoint", """{"body":"observed"}"""))
+                "reconnect" -> rows += SuiteStep("connect", owner)
+            }
+            rows += daemon(owner, live)
+            val tape = RecordedSuiteTape(rows, literalProducerIdentities = true)
+            assertTrue(tape.initial().isEmpty())
+            assertEquals(listOf("thread_items"), tape.request(owner, b.copy(id = 90)).map { it.message?.type })
+            assertTrue("must retain $condition fence", tape.initial().isEmpty())
+            assertThrows(IllegalStateException::class.java) { tape.assertComplete() }
+        }
+    }
+
     @Test fun independentQueryReplyCannotOvertakeItsOwnHeldLiveFactOrUnknownAttribution() {
         val owner = "phone/host/0"
         val a = """{"conversation_id":"a","epoch":"ea","version":4}"""
