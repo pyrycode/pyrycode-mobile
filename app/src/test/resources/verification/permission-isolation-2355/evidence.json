@@ -1,0 +1,79 @@
+{
+  "ticket": 2355,
+  "operatingSystem": "Linux",
+  "method": "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation",
+  "repairedMainRevision": "f10409c5c48e401911e16ec287894c96f0f14b0a",
+  "testedRevision": "1782cb8b65c395fc88b80f2393f9c65afd524520",
+  "evidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2355/builder-20261021-linux",
+  "manifest": "SHA256SUMS",
+  "originalSweep": {
+    "revision": "3be8ab9163640f10da40c2de0a61682028e49d4c",
+    "report": "historical/2026-10-20T23-53-58-008Z_main-sweep_3be8ab9.log",
+    "reportSha256": "c5db2493d0ed0450abab43cab96e2ce2191e000a3e490911a218c3058929056b",
+    "stderr": "historical/2026-10-20T23-53-58-008Z_main-sweep_3be8ab9.stderr.log",
+    "stderrSha256": "085bd172aca03a73626973e7e58d10cb509b4e6ed02bf73052089f47e550cfa2",
+    "exit": 1,
+    "executed": 1817, "passed": 1816, "failed": 1, "errors": 0, "skipped": 2,
+    "diagnosis": "First stored mismatch is lifecycle step 45: phone/host-2/0 closes before two required thread_catch_up requests, matched=44 remaining=16. Registry reconciliation closes the removed pairing inside scenario cleanup; activity teardown runs later. Delivery and test-end errors rethrow this mismatch. The XML failure element is empty; stderr supplies the assertion. The final activity-focus snapshot does not establish causality."
+  },
+  "laterPreRepairSweep": {
+    "revision": "0dffe4d6b723540e9ab03ae511c240975fe6074a",
+    "report": "historical/2026-10-21T03-39-57-592Z_main-sweep_0dffe4d.log",
+    "stderr": "historical/2026-10-21T03-39-57-592Z_main-sweep_0dffe4d.stderr.log",
+    "exit": 1,
+    "executed": 1817, "passed": 1815, "failed": 2, "errors": 0, "skipped": 2,
+    "permissionFailure": "Same early host-2 close, step 46, matched=45 remaining=14, with one required catch-up pending.",
+    "additionalFailure": "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile",
+    "additionalFailureOwner": "#2347 / PR #2352; this permission occurrence does not certify retrieval acceptance."
+  },
+  "repairComparison": {
+    "prerequisite": 2345,
+    "cleanupRepair": 2349,
+    "cleanupImplementation": "eaeb636274498f67d50738de3f7b6ca54db3c830",
+    "cleanupMerge": "313f151cc10e101675c717f750ca6bc56c13c502",
+    "regression": "de.pyryco.mobile.e2e.PermissionIsolationCleanupTest#hostRemovalWaitsForPhoneCatchUpAndScheduledDeliveryAfterPeerCompletion",
+    "proof": "The controlled regression holds an actual required phone catch-up after peer completion, then its delayed correlated reply. Host removal must wait for both. The accepted #2349 verifier retained an old-cleanup control: 1 executed, 1 failed, exit 1. Missing work still fails at 30000 ms; changed owner/conversation/epoch/checkpoint still fails, and earlier failures remain primary.",
+    "acceptedControlEvidence": "prerequisite-builder/prerequisite-2349/handoff/verifier-2349.md",
+    "ordering": "withPermissionIsolationCleanup closes the peer, calls RecordedSuiteNative.beforeHostLinkClose for the current phone owner, then removes the pairing. SuiteConnections.beforeClose keeps producers alive through strict close readiness and queued delivery. This covers both pending catch-ups in the original occurrence without duplicating the repair.",
+    "separateResidualRepair": "#2345 retains previously delivered/certified read eligibility. Its #2333 first failure was a checkpoint-13 read rejection, unlike this occurrence's first close mismatch. Both controlled read failures and three repaired Linux passes remain in #2345's evidence index.",
+    "fixtureSha256": "8a210181b68a1f238a203c7f2cd23c1fcdbdb19cb9b5af965972b1773d99ae77",
+    "fixtureUnchangedFromOriginal": true,
+    "assertions": "Original A/B prompt isolation across navigation, armed/confirmed phone answer resolving only A, peer answer dismissing B and ending its turn, complete payload matching, causal delivery, full tape consumption and deadlines remain unchanged."
+  },
+  "freshNative": {
+    "command": "python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_permissionPrompts_heldPerConversation'",
+    "run": "ui-zqi07wfm",
+    "report": "fresh-native/0-TEST-pixel2Api33Atd_0-_app-.xml",
+    "reportSha256": "8652eab1b195c793333311c8107887a4835e2de3b8c8446effdec014d5f3880d",
+    "logcat": "fresh-native/0-logcat-de.pyryco.mobile.recording.RecordedMobileSuiteTest-interactiveTurn_permissionPrompts_heldPerConversation.txt",
+    "exit": 0,
+    "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0,
+    "methodSeconds": 8.219,
+    "permissionStagesCompleted": 26,
+    "freshState": "One exact-method managed invocation creates a new scenario, replay session and application graph; no preceding test is selected. Admission/load phases and managed-image identity are retained."
+  },
+  "freshCleanupRegression": {
+    "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.e2e.PermissionIsolationCleanupTest' --console=plain",
+    "report": "fresh-unit/report.xml",
+    "reportSha256": "08450a1417e2700262578f8fd9b03c60799efe4709885ff295c749a30c385257",
+    "exit": 0,
+    "executed": 7, "passed": 7, "failed": 0, "errors": 0, "skipped": 0
+  },
+  "prerequisiteConfiguredUi": {
+    "revision": "b575f0e5442c3960fd4cd3adb79e5341c6079ce9",
+    "acceptedVerifierRun": "8d995441596184faafdfb199888adc264bdc0ad69b7d9134cbd56cde366129b4",
+    "bundleDigest": "1b585596d01b27551f9fb6c6690df2446557122cee5757da5331fa6f798f2dbe",
+    "report": "prerequisite-verifier/logs/verifier-gate__2345_5.log",
+    "reportSha256": "b79607dbfe24346c22ba1e7d71dbdeaae083a2fd81138fa4bd9cb646ddc9d179",
+    "exit": 0,
+    "executed": 335, "passed": 335, "failed": 0, "errors": 0, "skipped": 1,
+    "exactMethod": { "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0 },
+    "scope": "Accepted #2345 prerequisite evidence, distinct from this branch's pending configured UI gate and the in-depth sweep."
+  },
+  "pending": {
+    "configuredLinuxUiGate": "Dispatcher must execute/pass the exact method on this branch before verifier PASS.",
+    "nextInDepthMainSweep": "Dispatcher owns the next post-repair in-depth main sweep and its counted results, including any newly failing methods. Pending; no focused or configured-UI pass certifies the original 1817-test sweep.",
+    "documentation": "docs/recorded-tests.md: Scenario host-removal readiness / Counted Linux evidence; preserve original/later failed sweeps and pending complete acceptance.",
+    "macOS": "Outside this Linux ticket's verification scope."
+  }
+}
