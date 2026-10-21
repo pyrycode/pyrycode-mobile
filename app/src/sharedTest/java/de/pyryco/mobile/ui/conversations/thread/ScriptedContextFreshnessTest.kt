@@ -134,15 +134,18 @@ class ScriptedContextFreshnessTest {
                     .isNotEmpty()
             }
             harness.pushAssistantDelta("replacement-$turn", 1, "Current session reply $turn")
-            harness.pushTurnEnd("replacement-$turn")
-            harness.pushTurnState("idle")
             context(tokens, session = "s1") // Delayed predecessor pushes cannot supply the replacement's reading.
             context(150_000, session = "s1")
-            composeRule.waitUntil(5_000) { sent.count { it.type == "request_context_usage" } > asks }
+            harness.pushTurnEnd("replacement-$turn")
+            harness.pushTurnState("idle")
+            // The terminal fact is delivered after both stale readings through the same inbound collector.
+            composeRule.waitUntil(5_000) {
+                harness.authoritativeSnapshot().items.any { it.kind == "turn_end" && it.turn == "replacement-$turn" }
+            }
             composeRule.waitForIdle()
             assertEquals(
-                "completion and delayed pushes retain one current read",
-                asks + 1,
+                "completion and retired producer pushes cannot issue a legacy verification read",
+                asks,
                 sent.count { it.type == "request_context_usage" },
             )
             val previousTokens =
@@ -152,10 +155,12 @@ class ScriptedContextFreshnessTest {
                     else -> 2_000L
                 }
             assertEquals(previousTokens, runBlocking { harness.observeContextUsage().first()?.totalTokens })
-            context(tokens, sent.last { it.type == "request_context_usage" }.id)
+            // The current producer publishes the completed turn's reading; duplicate pushes need no query.
+            context(used = tokens)
+            context(used = tokens)
             val percent = (tokens / 2_000).toInt()
             awaitFooter("Context usage $percent%")
-            assertEquals(asks + 1, sent.count { it.type == "request_context_usage" })
+            assertEquals(asks, sent.count { it.type == "request_context_usage" })
             assertEquals(tokens, runBlocking { harness.observeContextUsage().first()?.totalTokens })
             openConfiguration()
             contextReading("$percent% used").assertIsDisplayed()
