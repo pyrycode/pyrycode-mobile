@@ -6058,12 +6058,27 @@ class InteractiveStreamE2ETest {
                     }
                 }.let { checkNotNull(it.renderedAgent(agentId)).agentId }
             Log.i("AgentRunProof", "event=finished_agent_identity refreshed=${finishedAgent != runningAgent}")
+            var lastFinishedIdentity = finishedAgent
             composeTestRule.assertFinishedAgentMarker(
                 finishedAgent,
                 marker,
                 string(R.string.agent_finished),
                 readinessTimeoutMillis =
                     (THREAD_TIMEOUT_MS - (android.os.SystemClock.elapsedRealtime() - laterReadinessStarted)).coerceAtLeast(1L),
+                resolveAgentId = { remaining ->
+                    val current =
+                        runBlocking {
+                            withTimeoutOrNull(minOf(1_000L, remaining)) {
+                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            }
+                        }
+                    val identity = current?.takeIf { it.settledTurnReply(laterTurn) != null }?.renderedAgent(agentId)?.agentId
+                    if (identity != null && identity != lastFinishedIdentity) {
+                        Log.i("AgentRunProof", "event=finished_agent_identity generation_changed=true")
+                        lastFinishedIdentity = identity
+                    }
+                    identity
+                },
                 evidence = { Log.i("AgentRunProof", it) },
             )
             // A late child reply can have its own turn identity. Its parent identifies

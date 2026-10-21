@@ -328,6 +328,52 @@ class BackgroundAgentBlocksScreenTest {
         )
     }
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun generationReplacementDuringFinishedRevealUsesTheCurrentOwnedKey() {
+        var currentAgent = "a"
+        val initial =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(initial, collapsed = true, compact = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var replaced = false
+        var resolvedReplacement = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = {
+                if (currentAgent == "a-next") resolvedReplacement = true
+                currentAgent
+            },
+        ) { sample ->
+            println(sample)
+            if ("stage=before" in sample && !replaced) {
+                replaced = true
+                compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                compose.waitForIdle()
+                currentAgent = "a-next"
+                val replacement =
+                    listOf(
+                        tool(currentAgent, "Agent"),
+                        launch().copy(toolCallId = currentAgent),
+                        tool("child-next", "Read", currentAgent),
+                        tool("child2-next", "Glob", currentAgent),
+                        finish(),
+                    ) + (0 until 30).map { user("Later $it") }
+                compose.runOnIdle { state = state.copy(items = replacement, hasMessages = true) }
+                compose.waitForIdle()
+                val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                assertTrue("the previous generation's marker must be gone", index("agent-start:a") < 0)
+                assertTrue("the same owned Agent must have its new rendered key", index("agent-start:$currentAgent") >= 0)
+                compose.onNode(ownedMarker).assertIsNotDisplayed()
+            }
+        }
+        assertTrue("exercise replacement during geometry measurement", replaced)
+        assertTrue("resolve the Agent from its replacement generation", resolvedReplacement)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+    }
+
     @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
         mount(
             listOf(

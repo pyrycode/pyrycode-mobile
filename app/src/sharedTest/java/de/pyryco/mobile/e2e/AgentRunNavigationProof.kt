@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
@@ -28,27 +29,44 @@ internal fun ComposeTestRule.assertFinishedAgentMarker(
     markerMatcher: SemanticsMatcher,
     finishedLabel: String,
     readinessTimeoutMillis: Long = 10_000,
+    resolveAgentId: (Long) -> String? = { agentId },
     evidence: (String) -> Unit = {},
 ) {
-    val key = "agent-start:$agentId"
+    val deadline = System.nanoTime() + readinessTimeoutMillis * 1_000_000
     var lastReadiness: String? = null
-    waitUntil(readinessTimeoutMillis) {
-        val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
-        assertTrue("finished marker needs one message list", lists.size <= 1)
-        val index =
-            lists
-                .singleOrNull()
-                ?.config
-                ?.getOrNull(SemanticsProperties.IndexForKey)
-                ?.invoke(key) ?: -1
-        val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
-        if (sample != lastReadiness) {
-            evidence(sample)
-            lastReadiness = sample
-        }
-        index >= 0
+
+    fun remainingMillis(): Long {
+        val remaining = (deadline - System.nanoTime()) / 1_000_000
+        if (remaining <= 0) throw ComposeTimeoutException("finished Agent readiness exceeded its original deadline")
+        return remaining
     }
-    val target = questionAnswerTarget(markerMatcher, lazyKey = key, evidence = evidence)
+
+    fun currentMarkerKey(): String {
+        var readyKey: String? = null
+        waitUntil(remainingMillis()) {
+            val key = resolveAgentId(remainingMillis())?.let { "agent-start:$it" }
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            val index =
+                key?.let {
+                    lists
+                        .singleOrNull()
+                        ?.config
+                        ?.getOrNull(SemanticsProperties.IndexForKey)
+                        ?.invoke(it)
+                } ?: -1
+            val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
+            if (sample != lastReadiness) {
+                evidence(sample)
+                lastReadiness = sample
+            }
+            if (index >= 0) readyKey = key
+            index >= 0
+        }
+        return requireNotNull(readyKey)
+    }
+    val target = questionAnswerTargetWithCurrentKey(markerMatcher, ::currentMarkerKey, evidence)
+    currentMarkerKey()
     target.assert(hasText(finishedLabel)).assertIsDisplayed()
 }
 
