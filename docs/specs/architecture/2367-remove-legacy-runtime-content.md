@@ -105,6 +105,16 @@ None requiring a product decision. Record implementation changes to this contrac
 
 ## Revisions
 
+### 2026-10-21 — Verifier removal-migration repair
+
+- Repair the five verifier findings as one incomplete producer/consumer migration, retaining every existing scene, viewport and recovery assertion. The split-depth exception and verification floor still apply.
+- Select queued evidence from current-owner authoritative `user_message` facts with `queued` status, binding text and device/message identity to the same fact. Delivered evidence records cannot prove queue state.
+- Supply literal rows to viewport fixtures and persist authoritative parent facts for reopened ancestry. Neither fixture may reintroduce runtime reconstruction.
+- Design overrides subscribe to authored task facts. Capture translations preserve tool status, numeric parent links, result detail and supported live progress, unrecognized fields and canonical refusal identity. Capped/unreported panel-only presentation states remain explicit component scenes where authoritative content has no such metadata.
+- Delete the unused lifecycle fold and exclusive started/updated/roster production DTOs and codec tests. Independent-peer diagnostic DTOs belong in shared test sources; supported progress decoding and dormant storage definitions remain.
+- Bound stop refusal correlations by connection-owned timeout jobs, cancelled on replacement, refusal, send failure and disconnect. Tests must prove distinct-target cleanup and stale-refusal rejection without raw roster callbacks or authoritative content mutation.
+- Security review addendum: timeout jobs inherit the connection scope, carry only local correlation identity, and never log daemon text. No new wire admission, storage or cryptographic behavior is introduced. Existing accepted live offline/reconnect observations remain unchanged; focused scripted, capture and unit evidence is required before handoff.
+
 ### 2026-10-21 — Runtime removal and evidence migration
 
 - Keep ThreadItem.mergeIdentity beside the dormant storage proof definitions until #2364; no runtime content observer reads legacy cached rows.
