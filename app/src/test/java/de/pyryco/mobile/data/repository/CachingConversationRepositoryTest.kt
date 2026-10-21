@@ -8,8 +8,6 @@ import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -85,13 +83,6 @@ class CachingConversationRepositoryTest {
         content: String = "content of $id",
     ) = ThreadItem.MessageItem(
         Message(id, "session-2", Role.Assistant, content, Instant.parse("2026-09-22T10:00:00Z"), isStreaming),
-    )
-
-    private fun tool(
-        id: String,
-        status: ToolCallStatus,
-    ) = ThreadItem.MessageItem(
-        Message(id, "session-2", Role.Tool, "", Instant.parse("2026-09-22T10:00:00Z"), false, ToolCall("Bash", "ls", "", status)),
     )
 
     private val boundary =

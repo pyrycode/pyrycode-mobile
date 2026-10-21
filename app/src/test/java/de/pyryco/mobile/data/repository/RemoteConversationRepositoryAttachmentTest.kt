@@ -20,9 +20,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -491,24 +489,6 @@ class RemoteConversationRepositoryAttachmentTest {
         RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
             setOf("interactive", "thread")
         }, authoritativeHostId = "host")
-
-    /** The daemon's live role-`user` `message` for a delivered send, as every interactive conn receives it. */
-    private fun pushedUserMessage(
-        messageId: String,
-        attachmentIds: List<String>,
-    ) = Envelope(
-        id = 96L,
-        type = "message",
-        ts = TS,
-        payload =
-            buildJsonObject {
-                put("conversation_id", "conv-1")
-                put("message_id", messageId)
-                put("role", "user")
-                put("text", "hi")
-                put("attachment_ids", JsonArray(attachmentIds.map { JsonPrimitive(it) }))
-            },
-    )
 
     private fun TestScope.startSend(
         repo: RemoteConversationRepository,

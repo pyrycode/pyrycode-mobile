@@ -1,12 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -22,45 +17,6 @@ import org.junit.Test
 class ThreadRowsTest {
     private val ts: Instant = Instant.parse("2026-09-22T10:00:00Z")
 
-    private fun userMessage(
-        id: String,
-        text: String,
-    ): ThreadItem.MessageItem =
-        ThreadItem.MessageItem(
-            Message(id = id, sessionId = "", role = Role.User, content = text, timestamp = ts, isStreaming = false),
-        )
-
-    private fun assistantMessage(
-        id: String,
-        text: String,
-    ): ThreadItem.MessageItem =
-        ThreadItem.MessageItem(
-            Message(id = id, sessionId = "", role = Role.Assistant, content = text, timestamp = ts, isStreaming = false),
-        )
-
-    private fun toolMessage(id: String): ThreadItem.MessageItem =
-        ThreadItem.MessageItem(
-            Message(
-                id = id,
-                sessionId = "",
-                role = Role.Tool,
-                content = "",
-                timestamp = ts,
-                isStreaming = false,
-                toolCall = ToolCall(toolName = "read_file", input = "a.kt", output = "ok"),
-            ),
-        )
-
-    private fun unrecognized(id: String): ThreadItem.UnrecognizedMessage =
-        ThreadItem.UnrecognizedMessage(
-            id = id,
-            site = UnrecognizedSite.LineType,
-            messageType = "mystery",
-            raw = "{}",
-            truncated = false,
-            occurredAt = ts,
-        )
-
     private fun boundary(
         previous: String = "s0",
         new: String = "s1",
@@ -75,14 +31,6 @@ class ThreadRowsTest {
         )
 
     private fun ThreadItem.key(): String = ThreadRow.Delivered(this).listKey(0)
-
-    private fun queued(
-        id: Long,
-        text: String,
-        messageId: String = "",
-    ): QueuedMessage = QueuedMessage(id = id, text = text, timestamp = ts, messageId = messageId)
-
-    private fun List<ThreadRow>.queuedRows(): List<ThreadRow.Queued> = filterIsInstance<ThreadRow.Queued>()
 
     // AC #1 — a send the daemon parked draws ONE row, at the position it was sent, carrying the queue
     // treatment's two values. Nothing is appended at the tail, which is the whole double-draw bug.

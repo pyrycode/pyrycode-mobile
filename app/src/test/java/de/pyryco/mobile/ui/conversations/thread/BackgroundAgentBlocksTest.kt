@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
-import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
@@ -54,12 +53,6 @@ class BackgroundAgentBlocksTest {
         agent: String = "a",
         type: String = "local_agent",
     ) = ThreadItem.BackgroundTaskLifecycle(task, ts, agent, "Launch description", type)
-
-    private fun finish(
-        task: String = "task-a",
-        agent: String? = null,
-        status: String = "completed",
-    ) = ThreadItem.BackgroundTaskLifecycle(task, ts, agent, terminal = BackgroundTaskUpdate("", status, "", null))
 
     private fun roster(vararg ids: String) =
         BackgroundTaskRoster(

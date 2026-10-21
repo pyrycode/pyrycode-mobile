@@ -366,12 +366,6 @@ class HostConversationSourceAttentionTest {
     ) = "conversation_updated" to
         """{"id":"$id","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$read,"last_shown_version":$shown}"""
 
-    private fun durableMessage(
-        id: String,
-        durableId: ULong,
-    ) = "message" to
-        """{"conversation_id":"$id","message_id":"m$durableId","role":"user","text":"received"}"""
-
     /** Two hosts, each over a real [RemoteConversationRepository] whose frames the pumps deliver; host `a` last. */
     private fun withRemoteSource(block: suspend TestScope.(BusyPump, BusyPump, HostConversationSource, Host) -> Unit) =
         runTest {
@@ -448,10 +442,6 @@ class HostConversationSourceAttentionTest {
         "resetting" to """{"conversation_id":"$id","active":true,"phase":"wrapping_up","handoff":"pending"}"""
 
     private fun resettingEnd(id: String) = "resetting" to """{"conversation_id":"$id","active":false,"phase":"","handoff":""}"""
-
-    private fun sessionTransition(id: String) =
-        "session_transition" to
-            """{"conversation_id":"$id","previous_session_id":"s1","new_session_id":"s2","reason":"clear","occurred_at":"$TS","workspace_cwd":null}"""
 
     private fun TestScope.collectAlerts(source: HostConversationSource): List<AttentionAlert> {
         val alerts = mutableListOf<AttentionAlert>()

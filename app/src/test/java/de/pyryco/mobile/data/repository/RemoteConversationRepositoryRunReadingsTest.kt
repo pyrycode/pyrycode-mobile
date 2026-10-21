@@ -352,17 +352,6 @@ class RemoteConversationRepositoryRunReadingsTest {
         )
     }
 
-    private fun sessionTransition(
-        conversationId: String,
-        id: Long,
-    ): Envelope =
-        probe(
-            "session_transition",
-            """{"conversation_id":"$conversationId","previous_session_id":"s1","new_session_id":"s2",""" +
-                """"reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
-            id,
-        )
-
     private fun stall(
         conversationId: String,
         id: Long,

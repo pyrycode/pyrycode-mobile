@@ -9,7 +9,6 @@ import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -31,11 +30,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -6481,24 +6478,6 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
-     * Send [text], ack it, and return the `message_id` the repository minted (#781) — the id now on the
-     * confirmed-inserted echo in the thread, and the one a `queue_state` item would carry back if the
-     * daemon parked this message. Drains the cascade, so the caller can assert immediately afterwards.
-     */
-    private fun TestScope.sendAndAck(
-        repo: RemoteConversationRepository,
-        pump: FakeSessionPump,
-        conversationId: String,
-        text: String,
-    ): String {
-        val send = startSend(repo, conversationId, text)
-        runCurrent()
-        pump.push(ackEnvelope(pump.sent.last { it.type == "send_message" }.id))
-        runCurrent()
-        return send().getOrThrow().id
-    }
-
-    /**
      * Launch [RemoteConversationRepository.createDiscussion] on [backgroundScope] (it suspends
      * awaiting the conversation_created/error reply) and return a getter for its eventual [Result].
      * Read the result only after the correlated reply has been pushed and [runCurrent] has drained
@@ -6696,21 +6675,6 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Unit>? = null
         backgroundScope.launch { outcome = runCatching { repo.cancelModal(modalId) } }
         return { requireNotNull(outcome) { "cancelModal has not completed" } }
-    }
-
-    /**
-     * Launch [RemoteConversationRepository.dropQueuedMessage] on [backgroundScope] and return a getter
-     * for its eventual [Result], mirroring [startCancelModal]. The daemon never replies to the dequeue
-     * (#859), so the call completes once the frame is sent; the getter throws if it is still suspended.
-     */
-    private fun TestScope.startDropQueuedMessage(
-        repo: RemoteConversationRepository,
-        conversationId: String,
-        queuedMessageId: Long,
-    ): () -> Result<Unit> {
-        var outcome: Result<Unit>? = null
-        backgroundScope.launch { outcome = runCatching { repo.dropQueuedMessage(conversationId, queuedMessageId) } }
-        return { requireNotNull(outcome) { "dropQueuedMessage has not completed" } }
     }
 
     private fun Envelope.withWorkspaceLabel(label: String?): Envelope =
@@ -6915,70 +6879,6 @@ class RemoteConversationRepositoryTest {
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
 
-    /**
-     * Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary →
-     * "boundary:<reason>", an unrecognized row → "unrecognized:<site>" (the row type shipped in #608;
-     * #609 wired the decode arm that folds it).
-     */
-    private fun threadShape(thread: List<ThreadItem>): List<String> =
-        thread.map {
-            when (it) {
-                is ThreadItem.MessageItem -> it.message.id
-                is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
-                is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
-                is ThreadItem.Banner -> "banner:${it.level}"
-                is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
-                is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
-                is ThreadItem.BackgroundTaskLifecycle -> "task:${it.taskId}"
-                is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
-            }
-        }
-
-    /** Every [ThreadItem.SessionBoundary] in [thread], in order (#336). */
-    private fun boundariesOf(thread: List<ThreadItem>): List<ThreadItem.SessionBoundary> =
-        thread.filterIsInstance<ThreadItem.SessionBoundary>()
-
-    /** The [ToolCall] of the [Role.Tool] thread row with [id] in [thread], or null if absent (#387). */
-    private fun toolCallOf(
-        thread: List<ThreadItem>,
-        id: String,
-    ): ToolCall? =
-        thread
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .firstOrNull { it.message.id == id && it.message.role == Role.Tool }
-            ?.message
-            ?.toolCall
-
-    /** The [Role.Assistant] thread row with [id] (the turn id) in [thread], or null if absent (#337). */
-    private fun assistantRowOf(
-        thread: List<ThreadItem>,
-        id: String,
-    ): Message? =
-        thread
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .firstOrNull { it.message.id == id && it.message.role == Role.Assistant }
-            ?.message
-
-    /** One `message_chunk` row JSON object (same shape as a `message` payload). */
-    private fun chunkRow(
-        conversationId: String,
-        messageId: String,
-        role: String,
-        text: String,
-    ): String = """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}"""
-
-    private fun messageChunkEnvelope(
-        rows: List<String>,
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "message_chunk",
-            ts = ts,
-            payload = MobileJson.parseToJsonElement("""{"messages":[${rows.joinToString(",")}]}"""),
-        )
-
     private fun messageEnvelope(
         conversationId: String,
         messageId: String,
@@ -7023,40 +6923,6 @@ class RemoteConversationRepositoryTest {
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
         )
-
-    /**
-     * One `queued` array element. [messageId] is the client-minted `message_id` pyrycode#2092 relays
-     * verbatim (#781) — defaulted to the legal `""` ("this item correlates with no echo") so a fixture
-     * says nothing about correlation unless the case under test is about it.
-     */
-    private data class QueuedFixture(
-        val queuedMsgId: Long,
-        val text: String,
-        val ts: String,
-        val messageId: String = "",
-    )
-
-    /**
-     * A `queue_state` snapshot envelope `{conversation_id, queued:[{queued_msg_id, message_id, text, ts}]}`
-     * (#460, #781). `queued_msg_id` is emitted as a JSON **number** (the wire uint64) and `message_id` as
-     * a string; both are strict-required on the wire. An empty [items] emits `"queued":[]`.
-     */
-    private fun queueStateEnvelope(
-        conversationId: String,
-        items: List<QueuedFixture>,
-        id: Long = 1L,
-    ): Envelope {
-        val queued =
-            items.joinToString(",") {
-                """{"queued_msg_id":${it.queuedMsgId},"message_id":"${it.messageId}","text":"${it.text}","ts":"${it.ts}"}"""
-            }
-        return Envelope(
-            id = id,
-            type = "queue_state",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","queued":[$queued]}"""),
-        )
-    }
 
     private fun TestScope.collectApiRetry(
         repo: RemoteConversationRepository,
@@ -7349,148 +7215,6 @@ class RemoteConversationRepositoryTest {
         )
     }
 
-    /**
-     * An `unrecognized_message` envelope `{conversation_id, site, message_type, raw, truncated}` (#609).
-     * All five fields are always present on the wire (no `omitempty`), so the helper always emits all
-     * five — including an empty [messageType] (the `undecodable` shape) and `truncated: false`. Built
-     * through [buildJsonObject] rather than string interpolation because [raw] is arbitrary JSON text
-     * whose own quotes and braces must survive into the payload intact.
-     */
-    private fun unrecognizedMessageEnvelope(
-        conversationId: String,
-        site: String,
-        messageType: String,
-        raw: String,
-        truncated: Boolean = false,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "unrecognized_message",
-            ts = TS,
-            payload =
-                buildJsonObject {
-                    put("conversation_id", conversationId)
-                    put("site", site)
-                    put("message_type", messageType)
-                    put("raw", raw)
-                    put("truncated", truncated)
-                },
-        )
-
-    /** A raw `unrecognized_message` envelope carrying [payload] verbatim — for the malformed-payload probes. */
-    private fun unrecognizedProbe(
-        id: Long,
-        payload: String,
-    ): Envelope = Envelope(id = id, type = "unrecognized_message", ts = TS, payload = MobileJson.parseToJsonElement(payload))
-
-    /** A `banner` envelope (#873); [ts] is the envelope timestamp the row takes as its identity. */
-    private fun bannerEnvelope(
-        conversationId: String,
-        level: String,
-        text: String = "Blocked by hook",
-        truncated: Boolean = false,
-        stopsTurn: Boolean = false,
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "banner",
-            ts = ts,
-            payload =
-                buildJsonObject {
-                    put("conversation_id", conversationId)
-                    put("level", level)
-                    put("text", text)
-                    put("truncated", truncated)
-                    put("stops_turn", stopsTurn)
-                },
-        )
-
-    /**
-     * A `compaction_boundary` envelope (#874). [pre] and [post] are raw JSON literals so a test can send
-     * `null`, a negative or a non-integer; the default is the observed manual shape.
-     */
-    private fun compactionEnvelope(
-        conversationId: String,
-        trigger: String = "manual",
-        pre: String = "24000",
-        post: String = "3000",
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        compactionProbe(
-            id = id,
-            ts = ts,
-            payload = """{"conversation_id":"$conversationId","trigger":"$trigger","pre_tokens":$pre,"post_tokens":$post}""",
-        )
-
-    /** A raw `compaction_boundary` envelope carrying [payload] verbatim (#874). */
-    private fun compactionProbe(
-        id: Long,
-        payload: String,
-        ts: String = TS,
-    ): Envelope = Envelope(id = id, type = "compaction_boundary", ts = ts, payload = MobileJson.parseToJsonElement(payload))
-
-    /** Every [ThreadItem.CompactionBoundary] in [thread], in order (#874). */
-    private fun compactionRowsOf(thread: List<ThreadItem>): List<ThreadItem.CompactionBoundary> =
-        thread.filterIsInstance<ThreadItem.CompactionBoundary>()
-
-    /**
-     * A model refusal envelope (#875): `model_refusal_fallback` when [fallbackModel] is non-null, else
-     * `model_refusal_no_fallback`, each carrying exactly its own wire fields. [truncatedFields] is a raw JSON
-     * literal so a test can send `null` or an array.
-     */
-    private fun refusalEnvelope(
-        conversationId: String,
-        fallbackModel: String?,
-        originalModel: String = "claude-opus-5-5",
-        banner: String = "Claude declined this request.",
-        truncatedFields: String = "null",
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope {
-        val common =
-            """"conversation_id":"$conversationId","original_model":"$originalModel","refusal_category":"cyber",""" +
-                """"banner":${JsonPrimitive(banner)},"truncated_fields":$truncatedFields,"dropped_fields":null"""
-        return if (fallbackModel != null) {
-            refusalProbe(id, "model_refusal_fallback", """{$common,"fallback_model":"$fallbackModel","scope":"session"}""", ts)
-        } else {
-            refusalProbe(id, "model_refusal_no_fallback", "{$common}", ts)
-        }
-    }
-
-    /** A raw model refusal envelope of [type] carrying [payload] verbatim (#875). */
-    private fun refusalProbe(
-        id: Long,
-        type: String,
-        payload: String,
-        ts: String = TS,
-    ): Envelope = Envelope(id = id, type = type, ts = ts, payload = MobileJson.parseToJsonElement(payload))
-
-    /** Every [ThreadItem.ModelRefusal] in [thread], in order (#875). */
-    private fun refusalRowsOf(thread: List<ThreadItem>): List<ThreadItem.ModelRefusal> = thread.filterIsInstance<ThreadItem.ModelRefusal>()
-
-    /** Every [ThreadItem.Banner] in [thread], in order (#873). */
-    private fun bannerRowsOf(thread: List<ThreadItem>): List<ThreadItem.Banner> = thread.filterIsInstance<ThreadItem.Banner>()
-
-    /** Every [ThreadItem.UnrecognizedMessage] in [thread], in order (#609). */
-    private fun unrecognizedRowsOf(thread: List<ThreadItem>): List<ThreadItem.UnrecognizedMessage> =
-        thread.filterIsInstance<ThreadItem.UnrecognizedMessage>()
-
-    /** A `resync` control marker `{conversation_id}` (#417) — no event_id; daemon's aged-out-of-ring signal. */
-    private fun resyncEnvelope(
-        conversationId: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "resync",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
-        )
-
     /** Stall `"c1"`, assert it flipped on, push [forwardEvent], assert it cleared. Fresh repo per call. */
     private fun TestScope.assertClearsStall(forwardEvent: Envelope) {
         val pump = FakeSessionPump()
@@ -7581,62 +7305,6 @@ class RemoteConversationRepositoryTest {
                 ),
         )
 
-    private fun toolUseEnvelope(
-        conversationId: String,
-        turnId: String,
-        toolUseId: String,
-        name: String,
-        inputSummary: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "tool_use",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","name":"$name","input_summary":"$inputSummary"}""",
-                ),
-        )
-
-    private fun toolResultEnvelope(
-        conversationId: String,
-        turnId: String,
-        toolUseId: String,
-        isError: Boolean,
-        resultSummary: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "tool_result",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
-                ),
-        )
-
-    private fun toolDeniedEnvelope(
-        conversationId: String,
-        toolUseId: String,
-        message: String = "denied",
-        reasonType: String = "",
-        truncated: String = "null",
-        dropped: String = "null",
-    ): Envelope =
-        Envelope(
-            id = 1L,
-            type = "tool_denied",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"t1","tool_use_id":"$toolUseId","tool_name":"Bash",""" +
-                        """"decision_reason_type":"$reasonType","decision_reason":"","message":"$message",""" +
-                        """"truncated_fields":$truncated,"dropped_fields":$dropped}""",
-                ),
-        )
-
     private fun turnEndEnvelope(
         conversationId: String,
         turnId: String,
@@ -7678,20 +7346,6 @@ class RemoteConversationRepositoryTest {
             type = "workspace_updated",
             ts = TS,
             payload = MobileJson.parseToJsonElement(rawPayload),
-            inReplyTo = inReplyTo,
-        )
-
-    /** A correlated `history_page` reply carrying [raw] verbatim, so a test can push a malformed one. */
-    private fun historyPageEnvelope(
-        inReplyTo: Long,
-        raw: String,
-        id: Long = 98L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "history_page",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement(raw),
             inReplyTo = inReplyTo,
         )
 

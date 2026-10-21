@@ -20,12 +20,6 @@ import org.junit.Test
  * response echo is also inbound), so there is no encode round-trip test.
  */
 class MessagePayloadTest {
-    // Only `ts` is read by the mapper; the rest is a minimal valid envelope wrapping the payload.
-    private fun envelopeFor(
-        payload: JsonElement,
-        ts: String = "2026-05-20T10:00:00Z",
-    ): Envelope = Envelope(id = 1, type = "message", ts = ts, payload = payload)
-
     @Test
     fun sendMessage_withoutIds_omitsTheAttachmentIdsKey() {
         val element =

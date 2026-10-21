@@ -21,8 +21,6 @@ class ThreadRowIdentityTest {
 
     private fun keys(rows: List<ThreadRow>) = rows.mapIndexed { index, row -> row.listKey(index) }
 
-    private fun queuedKeys(rows: List<ThreadRow>) = rows.mapIndexedNotNull { index, row -> (row as? ThreadRow.Queued)?.listKey(index) }
-
     private fun assertUnique(rows: List<ThreadRow>) {
         assertEquals(keys(rows).size, keys(rows).toSet().size)
     }

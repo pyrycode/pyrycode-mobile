@@ -75,7 +75,7 @@ interface ConversationRepository {
      *
      * Default `flowOf(NotRetrying)` — implementations without an interactive wire (the fake, inline
      * test doubles) inherit "never retrying" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [delete].
+     * [observeStall] / [delete].
      */
     fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = flowOf(ApiRetryStatus.NotRetrying)
 
@@ -89,13 +89,13 @@ interface ConversationRepository {
      *
      * Default `flowOf(false)` — implementations without an interactive wire (the fake, inline test
      * doubles) inherit "never compacting" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [observeApiRetry].
+     * [observeStall] / [observeApiRetry].
      */
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
-     * Emits [conversationId]'s current turn phase (#1313): the latest `turn_state`, back to
-     * [LiveSessionEvent.TurnState.Phase.Idle] on `turn_end`. Held per conversation for the connection, so a
+     * Emits [conversationId]'s current accepted producing-session turn phase. The producer explicitly
+     * supplies [LiveSessionEvent.TurnState.Phase.Idle]. Held per conversation for the connection, so a
      * collector that subscribes mid-turn reads the running phase at once, and a new connection starts every
      * conversation idle. Cold flow; re-emits on every change.
      *
@@ -286,7 +286,7 @@ interface ConversationRepository {
      *
      * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test
      * doubles) inherit "nothing reported" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [observeApiRetry] / [observeCompacting].
+     * [observeStall] / [observeApiRetry] / [observeCompacting].
      */
     fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = flowOf(null)
 
@@ -328,7 +328,7 @@ interface ConversationRepository {
      *
      * Default `true` — implementations that support every mutation (the fake, inline test doubles)
      * inherit "supported" and need no override, the same cascade-avoidance as [observeStall] /
-     * [observeQueue] / [delete]. [RemoteConversationRepository] overrides it to `false` alongside its
+     * [delete]. [RemoteConversationRepository] overrides it to `false` alongside its
      * throwing mutation methods (relay has no v2 wire message for these mutations yet).
      */
     val mutationsSupported: Boolean get() = true
@@ -624,36 +624,15 @@ interface ConversationRepository {
     ): Unit = error("sendQueuedNow is not implemented for this ConversationRepository")
 
     /**
-     * Drops a not-yet-drained message from [conversationId]'s queued backlog by sending a
-     * `dequeue_message` frame carrying the conversation id and the message's [queuedMessageId] (#466,
-     * ADR 025). [queuedMessageId] is the [QueuedMessage.id] the caller received from [observeQueue],
-     * passed back **verbatim**; it is the daemon's per-conversation `queued_msg_id` — a wire `uint64`,
-     * so a [Long] (not a `String`; the pyrycode#720 trap), the same width [observeQueue] decodes.
+     * Sends the retained `dequeue_message` control for [conversationId] and its supplied
+     * [queuedMessageId]. The daemon queue identifier is passed verbatim as a [Long].
      *
-     * **Fire-and-forget: the daemon never replies (#859).** An implementation returns once the frame is
-     * sent. The daemon owns the backlog, so the queued row is removed only by a subsequent `queue_state`
-     * on [observeQueue] (#460) and never optimistically, and that snapshot is also the drop's only
-     * confirmation. A request the daemon cannot apply (unknown, already delivered or in-flight) is
-     * silent too.
+     * Returns once the control frame is sent. The negotiated authoritative route owns the queue
+     * target, content retirement and pending acceptance. This method does not reconstruct queue
+     * state or infer settlement from raw queue snapshots.
      *
-     * **The sender's own echo leaves with the item (#781).** The daemon never authored the thread echo —
-     * the sender posted it locally after its `send_message` ack, because interactive mode streams no
-     * user-message event back — so leaving it behind after a drop shows a message claude was never
-     * given. When a `queue_state` for [conversationId] arrives without the dropped [queuedMessageId], an
-     * implementation removes the one thread row it minted for that item, correlating on
-     * [QueuedMessage.messageId] and **only** against ids it minted itself; an item carrying `""`, or one
-     * another device queued, correlates with nothing and its drop touches no thread row. Text never
-     * matches. Removal is keyed on the id this device asked to drop, never on the backlog shrinking, so
-     * an item that drains normally keeps its echo. The one ambiguity — the head item draining just
-     * before the dequeue lands, so the daemon ignores the dequeue and the next snapshot looks exactly
-     * like a drop — resolves as a drop.
-     *
-     * Throws [IllegalStateException] when the session is not connected; the drop was never sent, so the
-     * backlog and the echo stay unchanged and there is nothing to roll back.
-     *
-     * Default throws — implementations without an interactive wire (the fake, inline test doubles)
-     * inherit it, so no test double needs to override it (the same cascade-avoidance as [delete] /
-     * [createWorkspaceFolder] / [requestScreenSnapshot]).
+     * Throws [IllegalStateException] when the session cannot send. Implementations without this
+     * control inherit the throwing default.
      */
     suspend fun dropQueuedMessage(
         conversationId: String,
@@ -1116,26 +1095,12 @@ enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable, CodexMethod, CodexItem }
 
 /**
- * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type
- * of [ConversationRepository.observeQueue], co-located with the contract it serves (like [ThreadItem]).
+ * Serialized legacy queue value retained for dormant storage and mixed fixtures.
+ * Runtime queue rows and actions use supplied authoritative items and [AuthoritativeQueueTarget].
  *
- * [id] is the daemon's per-conversation `queued_msg_id` counter (a wire `uint64`, so [Long]); it is a
- * monotonic ordinal, not a secret. [timestamp] is enqueue time.
- *
- * @param messageId The `message_id` the *sending client* minted for this message, relayed verbatim by
- *   the daemon (pyrycode#2092, #781). It lets a client recognise a queued item as one of its own sends
- *   — in interactive mode the daemon streams no user-message event back, so a client's optimistic echo
- *   is its only record of its own message, and without a shared key dropping the queued item leaves
- *   that echo reading as a message claude received.
- *
- *   **Compared for equality only. Never render it, never key a list on it, never log it.** It is
- *   client-chosen and unique **nowhere**: two items may legally carry the same value, so keying a
- *   `LazyColumn` on it crashes the thread on duplicate keys (the hazard
- *   [ThreadItem.UnrecognizedMessage.id] documents for its own id). It addresses nothing on the wire —
- *   [ConversationRepository.dropQueuedMessage] still resolves `conversation_id` + [id].
- *
- *   `""` is a legal value meaning "this item correlates with nothing", and it is the default so a
- *   caller that has no correlation to express says so by omission.
+ * [id] is the daemon's per-conversation queue ordinal. [timestamp] records enqueue time.
+ * [messageId] is client-chosen correlation data. Compare it for equality only. Never render it,
+ * log it or use it alone as a list key. Empty means that no client correlation was retained.
  */
 data class QueuedMessage(
     val id: Long,

@@ -22,8 +22,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * connection and no longer. That matches the wire: the offer is live-only, with no replay and no list verb,
  * so the offers held here are the ones this connection happened to receive, not the conversation's files.
  *
- * The first offer of each attachment id is also appended to [threadProjection] as an [attachmentOfferRow]
- * (#983), so the thread and its disk cache keep what the wire will not replay.
+ * These offers remain transient readings. Durable attachment content and its persistence come from
+ * daemon-authored thread items.
  */
 internal class AttachmentOfferProjection {
     /**

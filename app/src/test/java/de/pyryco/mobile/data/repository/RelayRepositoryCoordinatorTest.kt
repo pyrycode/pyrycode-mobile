@@ -1877,46 +1877,12 @@ class RelayRepositoryCoordinatorTest {
 
     private fun FakeManagedPump.modelListAsks(): List<Envelope> = sent.filter { it.type == "request_model_list" }
 
-    private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
-
-    private fun chunkRow(
-        conversationId: String,
-        messageId: String,
-        role: String,
-        text: String,
-    ): String = """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}"""
-
     private fun conversationsEnvelope(rawConversationsPayload: String): Envelope =
         Envelope(
             id = 1L,
             type = "conversations",
             ts = TS,
             payload = MobileJson.parseToJsonElement(rawConversationsPayload),
-        )
-
-    private fun messageChunkEnvelope(rows: List<String>): Envelope =
-        Envelope(
-            id = 1L,
-            type = "message_chunk",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement("""{"messages":[${rows.joinToString(",")}]}"""),
-        )
-
-    private fun messageEnvelope(
-        conversationId: String,
-        messageId: String,
-        role: String,
-        text: String,
-        ts: String,
-    ): Envelope =
-        Envelope(
-            id = 1L,
-            type = "message",
-            ts = ts,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
-                ),
         )
 
     private fun turnStateEnvelope(

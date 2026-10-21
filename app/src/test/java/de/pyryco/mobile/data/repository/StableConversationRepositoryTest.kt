@@ -1084,7 +1084,6 @@ class StableConversationRepositoryTest {
     private class RecordingConversationRepository : ConversationRepository {
         private val conversations = MutableStateFlow<List<Conversation>?>(null)
         private val stalled = MutableStateFlow(false)
-        private val queued = MutableStateFlow<List<QueuedMessage>>(emptyList())
         private val apiRetry = MutableStateFlow<ApiRetryStatus>(ApiRetryStatus.NotRetrying)
         private val compacting = MutableStateFlow(false)
         private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
@@ -1114,10 +1113,6 @@ class StableConversationRepositoryTest {
 
         fun pushStall(value: Boolean) {
             stalled.value = value
-        }
-
-        fun pushQueue(value: List<QueuedMessage>) {
-            queued.value = value
         }
 
         fun pushApiRetry(value: ApiRetryStatus) {

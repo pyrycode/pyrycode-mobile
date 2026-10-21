@@ -3950,18 +3950,6 @@ class ThreadViewModelTest {
 
     // --- #1354: the walk resumes from the position saved beside the cached rows ------------------------
 
-    private fun messageItem(id: String) =
-        ThreadItem.MessageItem(
-            Message(
-                id = id,
-                sessionId = "s1",
-                role = Role.Assistant,
-                content = "hi",
-                timestamp = Instant.parse("2026-09-22T00:00:00Z"),
-                isStreaming = false,
-            ),
-        )
-
     /**
      * A thread destination's handle (#789): both route arguments, as `Routes.hostArguments` supplies
      * them. The ViewModel keys its draft on the pair, so a host-less handle would not exercise it.
@@ -4243,49 +4231,6 @@ class ThreadViewModelTest {
     ): LiveSessionEvent = LiveSessionEvent.TurnState(conversationId, phase)
 
     private fun activeHandle(): SavedStateHandle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-
-    private fun assistantMessage(
-        id: String,
-        content: String,
-    ): ThreadItem.MessageItem =
-        ThreadItem.MessageItem(
-            Message(
-                id = id,
-                sessionId = "s1",
-                role = Role.Assistant,
-                content = content,
-                timestamp = Instant.parse("2026-06-17T00:00:00Z"),
-                isStreaming = false,
-            ),
-        )
-
-    private fun userMessage(
-        id: String,
-        content: String,
-    ): ThreadItem.MessageItem =
-        ThreadItem.MessageItem(
-            Message(
-                id = id,
-                sessionId = "s1",
-                role = Role.User,
-                content = content,
-                timestamp = Instant.parse("2026-06-17T00:00:00Z"),
-                isStreaming = false,
-            ),
-        )
-
-    /** Ids of every [ThreadItem.MessageItem] in the VM's items, in order. */
-    private fun messageIds(vm: ThreadViewModel): List<String> =
-        vm.state.value.items
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .map { it.message.id }
-
-    /** Content of every currently-streaming assistant message in the VM's items, in order. */
-    private fun streamingContents(vm: ThreadViewModel): List<String> =
-        vm.state.value.items
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .filter { it.message.isStreaming }
-            .map { it.message.content }
 
     /**
      * One conversation for Save as channel (#957), recording each write in call order. The first

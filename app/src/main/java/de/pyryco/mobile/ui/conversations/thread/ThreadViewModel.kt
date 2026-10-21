@@ -2645,11 +2645,9 @@ class ThreadViewModel(
      * constructor lambda. Always passes the VM's own [conversationId] (never a caller-supplied id; the
      * screen forwards only the row's [Long] queued-message id).
      *
-     * **No optimistic removal** (AC #3): the row leaves only on the next `queue_state` ([observeQueue]),
-     * so this holds no state to roll back and a failed drop is inert (AC #4). The daemon never replies to
-     * the dequeue (#859), so the call returns once the frame is sent; the repository removes the drop's
-     * own echo from the thread when that snapshot arrives. The remote throws only when not connected;
-     * the [RelayErrorException] catch covers the interface contract's other implementations.
+     * This forwards the supplied daemon queue identifier. Current queue presentation and retirement
+     * follow authoritative item state. The call creates no reconstructed user row and does not infer
+     * acceptance from a raw queue snapshot. A failed send remains inert.
      *
      * The catch contract mirrors [sendInterrupt] exactly: the [CancellationException] rethrow **MUST
      * precede** the typed catches (`j.u.c.CancellationException` extends `IllegalStateException` on the

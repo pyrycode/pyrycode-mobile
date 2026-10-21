@@ -393,38 +393,6 @@ class ConversationReadMarksTest {
             assertEquals(ConversationReadMarks(0uL, null, 0uL, true), fake.observeReadMarks(empty.id).first())
         }
 
-    private fun TestScope.interactiveRepo(pump: Pump) =
-        RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-
-    private fun content(id: ULong) =
-        Envelope(
-            901,
-            "message",
-            TS,
-            MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m$id","role":"user","text":"received"}"""),
-            eventId = 5001,
-            historyEntryId = id,
-        )
-
-    private fun status(
-        id: ULong,
-        type: String,
-    ): Envelope {
-        val fields =
-            when (type) {
-                "turn_state" -> "\"state\":\"idle\""
-                "api_retry" -> "\"active\":false,\"current\":2,\"total\":10"
-                "compacting" -> "\"active\":true"
-                "session_transition" ->
-                    "\"previous_session_id\":\"s1\",\"new_session_id\":\"s2\",\"reason\":\"clear\"," +
-                        "\"occurred_at\":\"$TS\",\"workspace_cwd\":null"
-                else -> "\"unused\":false"
-            }
-        return content(id).copy(type = type, payload = MobileJson.parseToJsonElement("""{"conversation_id":"a",$fields}"""))
-    }
-
-    private val excludedTypes = listOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
-
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(
