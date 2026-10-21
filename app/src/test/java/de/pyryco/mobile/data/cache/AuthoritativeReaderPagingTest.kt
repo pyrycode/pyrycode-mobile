@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
@@ -585,6 +586,81 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(2, attempts)
                 assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
             }
+        }
+
+    @Test fun resetInvalidatesSettledLocalRetryBeforeDaemonCompletion() =
+        runTest {
+            val original = SavedAuthoritativeThread("e", (1..600).map { fact(it) }, 1000, 900)
+            disk().writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val disk = disk()
+            var attempts = 0
+            val cache =
+                object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                    override suspend fun beforeAuthoritativeWindow(
+                        serverId: String,
+                        conversationId: String,
+                        cursor: AuthoritativeDisplayCursor,
+                        admitted: Set<Pair<Long, Boolean>>,
+                        size: Int,
+                    ): AuthoritativeThreadWindow? {
+                        attempts++
+                        return null
+                    }
+                }
+            destination(cache, online = true) { fixture, vm, repo ->
+                val route = requireNotNull(repo.negotiatedThread)
+                fun requests() = fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") }
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                vm.onDemandOlderHistory()
+                vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                assertEquals(AuthoritativeHistoryLoad.Retry, route.localHistory("c").first())
+                assertEquals(1, attempts)
+                val beforeReset = requests().size
+                advanceTimeBy(1000)
+                runCurrent()
+                assertEquals(beforeReset, requests().size)
+
+                fixture.resetNewest() // The daemon deliberately reuses epoch "e".
+                runCurrent()
+                assertEquals(1L, repo.authoritativeThreads.current("host", "c").generation)
+                assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
+                assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
+                assertEquals(beforeReset + 1, requests().size)
+                fixture.reply(
+                    requests().last(),
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(600)}],"final":true,
+                    "lower_order":1200,"upper_order":1201,"continuation":1200,"older_exists":true}""",
+                )
+                vm.state.first { it.authoritativeThread?.sourceSnapshot?.checkpoint == 1000L }
+                runCurrent()
+                assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+                assertEquals(listOf(fact(600)), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                advanceTimeBy(1000)
+                runCurrent()
+                assertEquals(beforeReset + 1, requests().size)
+
+                vm.onDemandOlderHistory()
+                runCurrent()
+                assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
+                assertEquals(beforeReset + 2, requests().size)
+                assertEquals(JsonPrimitive(1200), requests().last().payload.jsonObject["before_order"])
+                fixture.reply(
+                    requests().last(),
+                    """{"conversation_id":"c","epoch":"e","version":1000,"items":[${fact(599)}],"final":true,
+                    "lower_order":0,"upper_order":1200,"continuation":0,"older_exists":false}""",
+                )
+                vm.state.first { it.authoritativeThread?.sourceSnapshot?.coverage?.olderExists == false }
+                runCurrent()
+                assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+                assertEquals(listOf(fact(599), fact(600)), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                vm.onDemandOlderHistory()
+                advanceTimeBy(1000)
+                runCurrent()
+                assertEquals(beforeReset + 2, requests().size)
+                assertEquals(1, attempts)
+                assertEquals(0, disk.authoritativeFullReads)
+            }
+            assertEquals(listOf(fact(599), fact(600)), disk().readAuthoritativeThread("host", "c")?.items)
         }
 
     @Test fun localExhaustionPreservesDaemonCoverage() =
