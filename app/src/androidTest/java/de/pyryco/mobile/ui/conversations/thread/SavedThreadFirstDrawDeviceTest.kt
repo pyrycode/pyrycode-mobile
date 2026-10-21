@@ -23,7 +23,16 @@ import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
@@ -31,6 +40,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
 import de.pyryco.mobile.data.cache.AuthoritativeThreadWindow
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
@@ -87,6 +97,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 
@@ -417,6 +428,157 @@ class SavedThreadFirstDrawDeviceTest {
         }
     }
 
+    @Test fun databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen() {
+        installHost()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.noBackupFilesDir, "database-pages-${SystemClock.elapsedRealtimeNanos()}")
+        check(root.mkdirs())
+
+        fun database() = Room.databaseBuilder(context, ConversationCacheDatabase::class.java, File(root, "cache.db").absolutePath).build()
+        val facts =
+            (1..18_000).map { id ->
+                MobileJson
+                    .parseToJsonElement(
+                        """{"id":$id,"rev":$id,"order":$id,"kind":"assistant_message",
+                "status":"done","active":false,"shown":true,"summary":"","content":{"text":"Saved $id."}}""",
+                    ).jsonObject
+            }
+        try {
+            val seed = database()
+            try {
+                runBlocking {
+                    MigratingConversationCache(File(root, "files"), seed)
+                        .writeAuthoritativeThread(
+                            "host",
+                            "c",
+                            SavedAuthoritativeThread("e", facts, 20_000, 19_000, SavedThreadCoverage(17_900, 18_000, 17_900, true)),
+                        ).getOrThrow()
+                }
+            } finally {
+                seed.close()
+            }
+            for (online in listOf(false, true)) {
+                repeat(2) { opening ->
+                    awaitDeviceReadiness("database-pages online=$online opening=$opening")
+                    val probe = Probe("database-pages online=$online opening=$opening", "Saved 18000.")
+                    activeProbe = probe
+                    val db = database()
+                    val disk = MigratingConversationCache(File(root, "files"), db)
+                    val attempts = AtomicInteger()
+                    val release = CompletableDeferred<Unit>()
+                    var fail = true
+                    val cache =
+                        object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                            override suspend fun beforeAuthoritativeWindow(
+                                serverId: String,
+                                conversationId: String,
+                                cursor: AuthoritativeDisplayCursor,
+                                admitted: Set<Pair<Long, Boolean>>,
+                                size: Int,
+                            ): AuthoritativeThreadWindow? {
+                                attempts.incrementAndGet()
+                                val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                                release.await()
+                                return if (fail) null else page
+                            }
+                        }
+                    val owner = ViewModelStore()
+                    lateinit var destination: SavedAuthoritativeDestination
+                    lateinit var vm: ThreadViewModel
+                    composeRule.runOnUiThread {
+                        destination = SavedAuthoritativeDestination(cache)
+                        if (online) destination.connect()
+                        vm = destination.open()
+                        owner.put("thread", vm)
+                        selected.value = Opening(vm, probe, online)
+                    }
+                    try {
+                        composeRule.waitUntil(15_000) { probe.drawn.get() > 0 }
+                        probe.assertBound()
+                        composeRule.waitUntil(15_000) {
+                            vm.state.value.authoritativeThread
+                                ?.rows
+                                ?.size == 200
+                        }
+                        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(199)
+                        composeRule.waitForIdle()
+                        assertEquals(0, attempts.get())
+                        composeRule.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown() }
+                        composeRule.waitUntil(15_000) { attempts.get() == 1 }
+                        assertEquals(
+                            200,
+                            vm.state.value.authoritativeThread
+                                ?.rows
+                                ?.size,
+                        )
+                        release.complete(Unit)
+                        composeRule.waitUntil(15_000) { vm.state.value.historyTail == ThreadHistoryTail.Retry }
+                        fail = false
+                        composeRule
+                            .onNodeWithContentDescription(
+                                context.getString(de.pyryco.mobile.R.string.cd_thread_history_retry),
+                            ).performClick()
+                        composeRule.waitUntil(15_000) {
+                            vm.state.value.authoritativeThread
+                                ?.rows
+                                ?.size == 400
+                        }
+                        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(399)
+                        composeRule.onNodeWithText("Saved 17601.").assertIsDisplayed()
+                        val olderBounds = composeRule.onNodeWithText("Saved 17601.").fetchSemanticsNode().boundsInRoot
+                        val viewport = composeRule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
+                        assertTrue(
+                            olderBounds.left >= viewport.left && olderBounds.right <= viewport.right &&
+                                olderBounds.top >= viewport.top && olderBounds.bottom <= viewport.bottom,
+                        )
+                        runBlocking { delay(300) }
+                        composeRule.runOnIdle {
+                            assertEquals(2, attempts.get())
+                            assertEquals(
+                                400,
+                                vm.state.value.authoritativeThread
+                                    ?.rows
+                                    ?.size,
+                            )
+                            assertEquals(
+                                if (online) 1 else 0,
+                                destination.requests.count {
+                                    it.type in
+                                        setOf("thread_page", "thread_catch_up")
+                                },
+                            )
+                            assertEquals(
+                                facts.takeLast(400),
+                                vm.state.value.authoritativeThread
+                                    ?.sourceSnapshot
+                                    ?.items
+                                    ?.map { it.raw },
+                            )
+                            assertEquals(0, disk.authoritativeFullReads)
+                            assertEquals(200, disk.authoritativeReadCounts.itemDecodes)
+                        }
+                        Log.i(
+                            "SavedThreadPaging",
+                            "case=${probe.name} attempts=${attempts.get()} rows=400 " +
+                                "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())}",
+                        )
+                    } finally {
+                        composeRule.runOnUiThread {
+                            selected.value = null
+                            owner.clear()
+                            destination.close()
+                        }
+                        runBlocking { vm.viewModelScope.coroutineContext[Job]?.join() }
+                        composeRule.waitForIdle()
+                        db.close()
+                    }
+                }
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {
         measureSavedThreads(projectionDelayMs = firstDrawBoundMs + 100)
     }
@@ -621,10 +783,19 @@ class SavedThreadFirstDrawDeviceTest {
                         )
                     }
                     PyrycodeMobileTheme(darkTheme = true) {
-                        ThreadScreen(state, {
-                        }, {
-                        }, if (online) ConnectionState.Connected else ConnectionState.Offline, {
-                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onDemandUnsignedHistoryGap = vm::onDemandUnsignedHistoryGap)
+                        ThreadScreen(
+                            state,
+                            {
+                            },
+                            {
+                            },
+                            if (online) ConnectionState.Connected else ConnectionState.Offline,
+                            {
+                            },
+                            onDemandOlderHistory = vm::onDemandOlderHistory,
+                            onDemandUnsignedHistoryGap = vm::onDemandUnsignedHistoryGap,
+                            onRetryOlderHistory = vm::onRetryOlderHistory,
+                        )
                     }
                 }
             }

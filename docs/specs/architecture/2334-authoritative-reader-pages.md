@@ -96,3 +96,13 @@ None concerning product scope. Record any change to boundary recovery or supplem
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-21
+
+## Revisions
+
+### 2026-10-21: concrete display continuation and retry contract
+
+The display continuation is separate from the unchanged raw-fact `AuthoritativeThreadPage.Continuation`. Before-key metadata seeks skip already admitted content/launch identities in bounded chunks; only selected payloads cross the codec boundary. Owned mutations resolve the boundary identity under the same epoch/incarnation, retaining the preceding key if the identity retired and avoiding a backwards jump when its placement moved. Runtime generation and cache retirement fences still reject reset/deletion.
+
+The original regression first read state before disk delivery; after awaiting delivered rows it failed because compatibility hydration cleared `openingRows` instead of extending it. Retain both red XML results. Unavailable local reads now retain the demand for explicit retry instead of forwarding it to the daemon: otherwise a failed local read could download already saved content. Update that temporary prerequisite expectation while preserving opening/file compatibility checks. Later pages combine their committed facts with the existing successful baseline before supplemental validation; only changed live identities need new retirement evidence. This avoids rereading every hydrated payload as a new live fact.
+
+`savedTieOrderSurvivesPageOverlap` failed on equal-order disk peers: the general restoration merge appends saved identities behind held facts. Local paging now inserts new older peers before their next committed held peer, preserving the relative order and winning revisions of already held/live facts. The committed baseline retains this same disk ordering; full opening and file restoration keep their existing merge. A reconnect may cancel the old observation's held page; it cannot replay that demand in its replacement. The probe demands again explicitly. Retiring an observation clears only its own in-flight loading state, never a newer reader's slot.

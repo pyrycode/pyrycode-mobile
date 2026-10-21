@@ -425,6 +425,38 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
         @Query(
             "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
+                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND displayKey>'/' AND displayKey<:before ORDER BY displayKey DESC LIMIT :limit",
+        )
+        suspend fun displayBefore(
+            host: String,
+            conversation: String,
+            epoch: String,
+            before: String,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
+                " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND launchKey>'' AND launchKey<:before ORDER BY launchKey DESC LIMIT :limit",
+        )
+        suspend fun launchBefore(
+            host: String,
+            conversation: String,
+            epoch: String,
+            before: String,
+            limit: Int,
+        ): List<AuthoritativeItem>
+
+        @Query("SELECT * FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id IN (:ids)")
+        suspend fun selectedItems(
+            host: String,
+            conversation: String,
+            epoch: String,
+            ids: Set<Long>,
+        ): List<AuthoritativeItem>
+
+        @Query(
+            "SELECT " + AUTHORITATIVE_INDEX_FIELDS +
                 " FROM authoritative_items WHERE host=:host AND conversation=:conversation AND epoch=:epoch AND id=:id",
         )
         suspend fun indexItem(

@@ -13,8 +13,23 @@ internal class AuthoritativeThreadWindow(
     val conversationId: String,
     val saved: SavedAuthoritativeThread,
     val rows: Set<Pair<Long, Boolean>> = emptySet(),
+    val cursor: AuthoritativeDisplayCursor? = null,
 ) {
     override fun toString(): String = "AuthoritativeThreadWindow(redacted)"
+}
+
+/** A local display boundary, including which contribution of a fact was admitted. */
+internal class AuthoritativeDisplayCursor(
+    val host: String,
+    val conversation: String,
+    val epoch: String,
+    val incarnation: String,
+    val generation: String,
+    val key: String,
+    val id: Long,
+    val launch: Boolean,
+) {
+    override fun toString(): String = "AuthoritativeDisplayCursor(redacted)"
 }
 
 /** Opening projections remain distinct from full compatibility reads and daemon continuations. */
@@ -27,6 +42,14 @@ internal interface AuthoritativeWindowCache {
     suspend fun newestAuthoritativeWindow(
         serverId: String,
         conversationId: String,
+        size: Int,
+    ): AuthoritativeThreadWindow?
+
+    suspend fun beforeAuthoritativeWindow(
+        serverId: String,
+        conversationId: String,
+        cursor: AuthoritativeDisplayCursor,
+        admitted: Set<Pair<Long, Boolean>>,
         size: Int,
     ): AuthoritativeThreadWindow?
 

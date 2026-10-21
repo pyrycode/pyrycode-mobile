@@ -1,7 +1,9 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.AttachmentStore
+import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
 import de.pyryco.mobile.data.cache.AuthoritativeRemovalRejected
+import de.pyryco.mobile.data.cache.AuthoritativeThreadWindow
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
 import de.pyryco.mobile.data.cache.ConversationCache
@@ -31,6 +33,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -124,6 +127,9 @@ class CachingConversationRepository(
 
                 override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> = observeAuthoritativeThread(conversationId)
 
+                override fun localHistory(conversationId: String): Flow<AuthoritativeHistoryLoad> =
+                    localAuthoritativeHistory(conversationId)
+
                 override fun progress(
                     conversationId: String,
                     connection: Any,
@@ -153,40 +159,89 @@ class CachingConversationRepository(
     private val authoritativeLifetimes = ConcurrentHashMap<String, Pair<Long, Long>>()
     private val authoritativeReaders = ConcurrentHashMap<String, CoroutineScope>()
     private val authoritativeHydrations = ConcurrentHashMap<CoroutineScope, Job>()
-    private val authoritativeHydrated = ConcurrentHashMap.newKeySet<String>()
+    private val authoritativeCursors = ConcurrentHashMap<String, AuthoritativeDisplayCursor>()
+    private val authoritativeLoads = ConcurrentHashMap<String, MutableStateFlow<AuthoritativeHistoryLoad>>()
+
+    private fun localAuthoritativeHistory(conversationId: String) =
+        authoritativeLoads.computeIfAbsent(conversationId) { MutableStateFlow(AuthoritativeHistoryLoad.Idle) }
 
     private fun authoritativeCurrent(conversationId: String): Boolean =
         authoritativeLifetimes[conversationId]?.let {
             (cache as? AuthoritativeWindowCache)?.authoritativeLifetime(serverId, conversationId) == it
         } != false
 
-    /** The compatibility read belongs to this observation and is triggered only by reader demand. */
+    /** One local page owns this demand independently of the coordinator's newest/catch-up slot. */
     private fun hydrateOlderAuthoritative(conversationId: String): Boolean {
         if (cache !is AuthoritativeWindowCache ||
-            conversationId in authoritativeHydrated ||
             authoritativeThreads.current(serverId, conversationId).generation != 0L ||
             !authoritativeCurrent(conversationId)
         ) {
             return false
         }
         val reader = authoritativeReaders[conversationId]?.takeIf { it.isActive } ?: return false
+        val cursor = authoritativeCursors[conversationId] ?: return false
         authoritativeHydrations.compute(reader) { _, held ->
             held?.takeIf { it.isActive } ?: reader.launch {
-                val restored =
-                    try {
-                        restoreAuthoritative(conversationId, full = true)
-                    } catch (_: java.io.IOException) {
-                        null
-                    } catch (_: SecurityException) {
-                        null
+                val loading = localAuthoritativeHistory(conversationId)
+                loading.value = AuthoritativeHistoryLoad.Loading
+                var page: AuthoritativeThreadWindow? = null
+                try {
+                    val result =
+                        try {
+                            applyAuthoritativeRestore(
+                                conversationId,
+                                extendBaseline = true,
+                                localPage = true,
+                                windowRows = { page?.rows },
+                            ) {
+                                val captured = authoritativeThreads.current(serverId, conversationId)
+                                page =
+                                    cache.beforeAuthoritativeWindow(
+                                        serverId,
+                                        conversationId,
+                                        cursor,
+                                        captured.openingRows.orEmpty(),
+                                        200,
+                                    )
+                                page
+                                    ?.takeIf { it.serverId == serverId && it.conversationId == conversationId && it.cursor != null }
+                                    ?.saved
+                                    ?.copy(checkpoint = 0, coverage = null)
+                            }
+                        } catch (_: java.io.IOException) {
+                            AuthoritativeRestore.Unavailable
+                        } catch (_: SecurityException) {
+                            AuthoritativeRestore.Unavailable
+                        }
+                    if (!isActive ||
+                        authoritativeReaders[conversationId] !== reader ||
+                        conversationId in deleted ||
+                        !authoritativeCurrent(conversationId) ||
+                        authoritativeThreads.current(serverId, conversationId).generation != 0L
+                    ) {
+                        return@launch
                     }
-                if (restored != null) {
-                    authoritativeHydrated += conversationId
-                    RelayLog.d { "event=authoritative_restore code=reader_hydrated" }
-                } else if (isActive && conversationId !in deleted && authoritativeCurrent(conversationId)) {
-                    // The asynchronous local attempt owns this demand only when it actually applies.
-                    hostThread?.older(conversationId)
-                    RelayLog.d { "event=authoritative_restore code=reader_forwarded" }
+                    when {
+                        result is AuthoritativeRestore.Validated -> {
+                            page?.cursor?.let { authoritativeCursors[conversationId] = it }
+                            loading.value = AuthoritativeHistoryLoad.Idle
+                            RelayLog.d { "event=authoritative_restore code=reader_page" }
+                        }
+                        page?.cursor == null && page != null -> {
+                            loading.value = AuthoritativeHistoryLoad.Idle
+                            hostThread?.older(conversationId)
+                            RelayLog.d { "event=authoritative_restore code=local_exhausted" }
+                        }
+                        result == AuthoritativeRestore.Unavailable -> {
+                            loading.value = AuthoritativeHistoryLoad.Retry
+                            RelayLog.d { "event=authoritative_restore code=local_unavailable" }
+                        }
+                        else -> loading.value = AuthoritativeHistoryLoad.Idle
+                    }
+                } finally {
+                    if (authoritativeReaders[conversationId] === reader && loading.value == AuthoritativeHistoryLoad.Loading) {
+                        loading.value = AuthoritativeHistoryLoad.Idle
+                    }
                 }
             }
         }
@@ -654,10 +709,7 @@ class CachingConversationRepository(
         )
     }
 
-    private suspend fun restoreAuthoritative(
-        conversationId: String,
-        full: Boolean = false,
-    ): SavedAuthoritativeThread? {
+    private suspend fun restoreAuthoritative(conversationId: String): SavedAuthoritativeThread? {
         val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
         if (indexed == null) {
             val restored = applyAuthoritativeRestore(conversationId) { cache.readAuthoritativeThread(serverId, conversationId) }
@@ -665,26 +717,23 @@ class CachingConversationRepository(
         }
         return authoritativeOpeningLocks.computeIfAbsent(conversationId) { Mutex() }.withLock {
             if (!authoritativeCurrent(conversationId)) return@withLock null
-            if (!full) authoritativeOpenings[conversationId]?.let { return@withLock it }
+            authoritativeOpenings[conversationId]?.let { return@withLock it }
             authoritativeLifetimes.putIfAbsent(conversationId, indexed.authoritativeLifetime(serverId, conversationId))
             var openingRows: Set<Pair<Long, Boolean>>? = null
             val restored =
-                applyAuthoritativeRestore(conversationId, extendBaseline = full, windowRows = { openingRows }) {
-                    if (full) {
-                        cache.readAuthoritativeThread(serverId, conversationId)
-                    } else {
-                        (
-                            pendingAuthoritativeOpenings[conversationId] ?: indexed
-                                .newestAuthoritativeWindow(serverId, conversationId, 200)
-                        )?.takeIf { it.serverId == serverId && it.conversationId == conversationId }
-                            ?.also {
-                                pendingAuthoritativeOpenings[conversationId] = it
-                                openingRows = it.rows
-                            }?.saved
-                    }
+                applyAuthoritativeRestore(conversationId, windowRows = { openingRows }) {
+                    (
+                        pendingAuthoritativeOpenings[conversationId] ?: indexed
+                            .newestAuthoritativeWindow(serverId, conversationId, 200)
+                    )?.takeIf { it.serverId == serverId && it.conversationId == conversationId }
+                        ?.also {
+                            pendingAuthoritativeOpenings[conversationId] = it
+                            openingRows = it.rows
+                            it.cursor?.let { cursor -> authoritativeCursors[conversationId] = cursor }
+                        }?.saved
                 }
             val saved = (restored as? AuthoritativeRestore.Validated)?.saved
-            if (saved != null && !full) authoritativeOpenings[conversationId] = saved
+            if (saved != null) authoritativeOpenings[conversationId] = saved
             if (saved != null || restored == AuthoritativeRestore.Stale) pendingAuthoritativeOpenings.remove(conversationId)
             saved
         }
@@ -705,6 +754,7 @@ class CachingConversationRepository(
         conversationId: String,
         extendBaseline: Boolean = false,
         preserveOpeningRows: Boolean = false,
+        localPage: Boolean = false,
         windowRows: () -> Set<Pair<Long, Boolean>>? = { null },
         read: suspend () -> SavedAuthoritativeThread?,
     ): AuthoritativeRestore {
@@ -713,6 +763,27 @@ class CachingConversationRepository(
         val initial = read() ?: return AuthoritativeRestore.Unavailable
         return withContext(processingDispatcher) {
             var saved = initial
+            if (extendBaseline) {
+                val baseline = persistedAuthoritative[conversationId]?.authoritative
+                if (baseline?.epoch == saved.epoch && baseline.incarnation == saved.incarnation) {
+                    val facts = (if (localPage) saved.items else baseline.items).associateByTo(LinkedHashMap()) { it.getValue("id") }
+                    (if (localPage) baseline.items else saved.items).forEach { raw ->
+                        val old = facts[raw.getValue("id")]
+                        if (old == null || raw.getValue("rev").toString().toLong() > old.getValue("rev").toString().toLong()) {
+                            facts[raw.getValue("id")] = raw
+                        }
+                    }
+                    val fences = baseline.retirements + saved.retirements
+                    saved =
+                        saved.copy(
+                            items = facts.values.filterNot { it.getValue("id").toString().toLong() in fences },
+                            appliedVersion = maxOf(saved.appliedVersion, baseline.appliedVersion),
+                            retirements = fences,
+                            checkpoint = saved.checkpoint.takeIf { fences.isEmpty() } ?: 0,
+                            coverage = saved.coverage.takeIf { fences.isEmpty() },
+                        )
+                }
+            }
             val indexed = (cache as? AuthoritativeWindowCache)?.takeIf { hostThread != null }
             var applied: AuthoritativeThreadSnapshot? = null
             do {
@@ -734,6 +805,7 @@ class CachingConversationRepository(
                                         generation,
                                         captured.takeIf { indexed != null },
                                         if (preserveOpeningRows) captured.openingRows else windowRows(),
+                                        olderSaved = localPage,
                                     )
                                 val restored = authoritativeThreads.current(serverId, conversationId)
                                 restored.takeIf { outcome == AuthoritativeThreadOutcome.Applied }
@@ -757,8 +829,10 @@ class CachingConversationRepository(
                                     baseline?.epoch == saved.epoch &&
                                     baseline.incarnation == saved.incarnation
                                 ) {
-                                    val facts = baseline.items.associateByTo(LinkedHashMap()) { it.getValue("id") }
-                                    saved.items.forEach { raw ->
+                                    val facts =
+                                        (if (localPage) saved.items else baseline.items)
+                                            .associateByTo(LinkedHashMap()) { it.getValue("id") }
+                                    (if (localPage) baseline.items else saved.items).forEach { raw ->
                                         val id = raw.getValue("id")
                                         val held = facts[id]
                                         val revision = raw.getValue("rev").toString().toLong()
@@ -828,7 +902,7 @@ class CachingConversationRepository(
                 }
             captured.items.forEach { item -> if ((winners[item.id]?.rev ?: -1) <= item.rev) winners[item.id] = item }
             val parents = winners.values.mapNotNull { it.parent?.takeIf { id -> id > 0 && id !in winners } }.toSet()
-            val evidence = captured.items.mapTo(mutableSetOf()) { it.id }
+            val evidence = changed
             val placementRoots = winners.values.filter { it.kind == "agent" && (it.order ?: 0) <= 0 }.mapTo(mutableSetOf()) { it.id }
             if (parents.isNotEmpty() || evidence.isNotEmpty()) {
                 val closure =
@@ -962,7 +1036,15 @@ class CachingConversationRepository(
                         if (!reset) withContext(processingDispatcher) { writer.accept(snapshot, capture) }
                     }
                 } finally {
-                    authoritativeReaders.remove(conversationId, reader)
+                    authoritativeReaders.computeIfPresent(conversationId) { _, active ->
+                        if (active === reader) {
+                            val loading = localAuthoritativeHistory(conversationId)
+                            if (loading.value == AuthoritativeHistoryLoad.Loading) loading.value = AuthoritativeHistoryLoad.Idle
+                            null
+                        } else {
+                            active
+                        }
+                    }
                     authoritativeHydrations.remove(reader)?.cancel()
                     writer.finish(authoritative = true)
                 }

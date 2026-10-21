@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import java.io.Closeable
 
+internal enum class AuthoritativeHistoryLoad { Idle, Loading, Retry }
+
 /**
  * The production thread route of one exact host (#2175). Decorators forward it, as they forward
  * [ConversationRepository.runConfigurationReadings]; a repository without it is the legacy route.
@@ -16,6 +18,8 @@ abstract class NegotiatedThread {
 
     /** Observation only: never opens a query. */
     internal abstract fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot>
+
+    internal open fun localHistory(conversationId: String): Flow<AuthoritativeHistoryLoad> = flowOf(AuthoritativeHistoryLoad.Idle)
 
     /** Transient readings belong only to the supported connection captured by the caller. */
     internal open fun progress(

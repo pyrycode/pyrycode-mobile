@@ -534,7 +534,156 @@ class AuthoritativeRoomStorage internal constructor(
                 if (record.display) rows += record.id to false
                 if (record.launchKey.isNotEmpty()) rows += record.id to true
             }
-            AuthoritativeThreadWindow(host, conversation, window, rows)
+            AuthoritativeThreadWindow(
+                host,
+                conversation,
+                window,
+                rows,
+                contributions.firstOrNull()?.let { (key, record) ->
+                    AuthoritativeDisplayCursor(
+                        host,
+                        conversation,
+                        header.epoch,
+                        header.incarnation,
+                        header.generation,
+                        key,
+                        record.id,
+                        key == record.launchKey,
+                    )
+                },
+            )
+        }
+
+    /** Seek from the reader, not from newest, even after an owned save invalidated its generation. */
+    internal suspend fun beforeDisplayWindow(
+        host: String,
+        conversation: String,
+        cursor: AuthoritativeDisplayCursor,
+        admitted: Set<Pair<Long, Boolean>>,
+        size: Int,
+    ): AuthoritativeThreadWindow? =
+        read("read_older_display_window") {
+            require(size in 1..200)
+            val header = header(host, conversation) ?: return@read null
+            if (cursor.host != host ||
+                cursor.conversation != conversation ||
+                cursor.epoch != header.epoch ||
+                cursor.incarnation != header.incarnation
+            ) {
+                return@read null
+            }
+            var before = cursor.key
+            var boundaryLaunch = cursor.launch
+            if (cursor.generation != header.generation) {
+                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                val boundary = dao.indexItem(host, conversation, header.epoch, cursor.id)
+                val currentKey = if (cursor.launch) boundary?.launchKey else boundary?.displayKey
+                if (!currentKey.isNullOrEmpty() && !currentKey.startsWith("!")) before = maxOf(before, currentKey)
+            }
+            val contributions = mutableListOf<Pair<Boolean, AuthoritativeItem>>()
+            while (contributions.size < size) {
+                val content = dao.displayBefore(host, conversation, header.epoch, before + if (boundaryLaunch) "~" else "", size)
+                val launches = dao.launchBefore(host, conversation, header.epoch, before, size)
+                lastReadCounts =
+                    lastReadCounts.copy(
+                        queries = lastReadCounts.queries + 2,
+                        ordinalReads = lastReadCounts.ordinalReads + content.size + launches.size,
+                    )
+                val candidates =
+                    (content.map { false to it } + launches.map { true to it })
+                        .sortedWith(
+                            compareBy<Pair<Boolean, AuthoritativeItem>> { if (it.first) it.second.launchKey else it.second.displayKey }
+                                .thenBy { it.first },
+                        ).takeLast(size)
+                if (candidates.isEmpty()) break
+                val unseen = candidates.filter { (launch, item) -> (item.id to launch) !in admitted }
+                contributions.addAll(0, unseen.takeLast(size - contributions.size))
+                val oldest = candidates.first()
+                before = if (oldest.first) oldest.second.launchKey else oldest.second.displayKey
+                boundaryLaunch = oldest.first
+            }
+            val saved = metadata(header, includeRetirements = false)
+            val selected = contributions.mapTo(mutableSetOf()) { it.second.id }
+            val records = linkedMapOf<Long, AuthoritativeItem>()
+            if (selected.isNotEmpty()) {
+                dao.selectedItems(host, conversation, header.epoch, selected).forEach { records[it.id] = it }
+                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                require(records.keys == selected)
+            }
+            val extras = dao.rendererExtras(host, conversation, header.epoch)
+            var payloadResults = selected.size + extras.size
+            lastReadCounts =
+                lastReadCounts.copy(
+                    queries = lastReadCounts.queries + 1,
+                    itemReads = selected.size + extras.size,
+                )
+            extras.forEach { records[it.id] = it }
+            val pending = ArrayDeque(records.values)
+            val lookedUp = records.keys.toMutableSet()
+            val witnessed = mutableSetOf<String>()
+            val decoded = linkedMapOf<Long, JsonObject>()
+            while (pending.isNotEmpty()) {
+                val record = pending.removeFirst()
+                val raw = decode(listOf(record), saved).single()
+                val item = ThreadItemDto.decodeReplacement(raw)
+                require(record.display == item.savedDisplayRow() && record.extra == item.savedRendererExtra())
+                require(
+                    record.parentId == (item.parent ?: 0L) &&
+                        record.agent == (item.kind == "agent") &&
+                        record.background == item.savedBackgroundAgent() &&
+                        record.active == item.active &&
+                        record.endedOrder == (item.endedOrder ?: 0L) &&
+                        record.rendererOrder == (item.order ?: Long.MAX_VALUE),
+                )
+                decoded[item.id] = raw
+                val parents = placementWitnesses(host, conversation, header.epoch, record, witnessed).toMutableList()
+                payloadResults += parents.size
+                item.parent?.takeIf { it > 0 && lookedUp.add(it) }?.let { parent ->
+                    lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                    dao.item(host, conversation, header.epoch, parent)?.let {
+                        parents.add(it)
+                        payloadResults++
+                    }
+                }
+                for (parent in parents) {
+                    if (parent.id !in records) {
+                        lookedUp += parent.id
+                        records[parent.id] = parent
+                        pending.addLast(parent)
+                    }
+                }
+            }
+            val fences = relevantRetirements(host, conversation, records.keys)
+            lastReadCounts = lastReadCounts.copy(itemReads = payloadResults)
+            val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
+            val rows = contributions.mapTo(mutableSetOf()) { (launch, item) -> item.id to launch }
+            extras.filter { it.active }.forEach { item ->
+                if (item.display) rows += item.id to false
+                if (item.launchKey.isNotEmpty()) rows += item.id to true
+            }
+            val next =
+                contributions.firstOrNull()?.let { (launch, item) ->
+                    AuthoritativeDisplayCursor(
+                        host,
+                        conversation,
+                        header.epoch,
+                        header.incarnation,
+                        header.generation,
+                        if (launch) item.launchKey else item.displayKey,
+                        item.id,
+                        launch,
+                    )
+                }
+            RelayLog.d {
+                "event=authoritative_local_page rows=${contributions.size} queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+            }
+            AuthoritativeThreadWindow(
+                host,
+                conversation,
+                saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences),
+                rows,
+                next,
+            )
         }
 
     /** Required winning-live parents and overlapping retirement evidence, under the same disk owner. */
