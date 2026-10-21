@@ -41,6 +41,19 @@ scripts/with-claude-login.sh python3 scripts/recorded-exchanges.py verify \
   --serial "$TEST_SERIAL" --pyry "$PYRY_BIN"
 ```
 
+Managed recording commands acquire host test admission before taking device custody
+or building/installing APKs. An inherited admission descriptor must validate against
+the original lock and retain its exclusive hold. Pass that same descriptor through
+nested harness processes and owned cleanup; a foreign or invalid descriptor fails
+rather than creating replacement admission. Scope selection precedes delegation.
+This ordering avoids holding a device while waiting for a host lock held by another
+worker waiting for that device.
+
+Retain per-method XML, instrumentation output and private phone logs before another
+method can replace them. Cleanup runs all release actions while preserving the original
+scenario failure as primary. A failed phone-log collection cannot replace that native
+result or print private exception text. Failed captures remain diagnostic artifacts.
+
 Capture records only decoded application messages, with a 2 MB and 5000-frame limit.
 Handshake frames, keys and pairing credentials do not enter the recorder. Sensitive
 fields, known credential patterns and the actual configured Claude credentials are
@@ -111,6 +124,40 @@ Already matched replies for the explicitly recognised metadata requests may also
 crossed. Their own delivery stays fenced. Earlier unreleased canonical facts for the
 same conversation, unknown attribution, lifecycle changes and Android inputs still
 fence the thread reply. The other query remains required.
+
+Canonical live progress may cross its own pending catch-up only when an actually
+delivered, fully decoded earlier query certifies that exact connection lifecycle,
+conversation, epoch and requested checkpoint. Re-drain eligibility after actual daemon
+delivery; waiting for another phone request can deadlock progress. Partial or unconfirmed
+replies, foreign bases, resets and initial queries cannot supply this certificate.
+The pending catch-up and its correlated reply remain required.
+
+Independently attributed live B frames may pass an unrelated A query fence only after
+B has an accepted earlier thread query on that same connection lifecycle. Explicit
+request, envelope and catalog-row conversation identities must agree. Unknown or
+contradictory attribution, earlier same-conversation work, Android input, checkpoints,
+read/observation boundaries and physical close still fence release. Recognized metadata
+replies can be crossed without releasing their own fence. No sibling query is omitted.
+
+Automatic peer `allow_once` approval in replay waits for the captured action boundary
+of that exact peer owner and mapped modal. Readiness is non-consuming: a checkpoint
+alone cannot replace the required phone command, and another modal or owner cannot
+borrow its approval. Polling can observe independent target facts while the answer
+waits. An asynchronous pre-Send approval must leave the actual phone send able to run.
+Complete payload, answer-token binding and exactly-once consumption remain mandatory.
+Live capture does not defer approvals this way.
+
+For graph/cache restart, freeze the complete family actually persisted after session
+rotation. An inactive Agent can still gain final `task_report`/`task_update` fields;
+preserve all earlier root key/value pairs and exact complete child content before
+freezing, with nondecreasing revisions and unchanged identity/session/turn/parent/order,
+`endedOrder`, activity and finished state. Compare the frozen complete content exactly
+through restoration and reconnect. Preserve saved checkpoint/coverage separately from
+newer held facts; Unverified pre-launch data cannot establish negotiated support.
+Check finished placement after a phone message between Agent launch and finish, then
+before the recovered new-session message, in both production projection and actual
+reversed UI list keys. Launch order and identical text alone miss lost lifecycle order.
+See [restart evidence](e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246).
 
 Replay proves the recorded permission behaviour. Current-daemon compatibility requires
 the explicit live command. Timing, encrypted transport, reconnect, other permissions,

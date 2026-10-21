@@ -2,6 +2,25 @@
 
 Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Thread screen](thread-screen.md); see that document for what it does, its edge cases and its links.
 
+## Restarted finished-Agent evidence (#2246)
+
+An inactive Agent can receive final report fields before the graph is destroyed.
+Freeze its complete persisted family after rotation, preserving earlier root fields
+and exact child content, then compare that baseline across cache reconstruction and
+reconnect. Keep saved certification separate from newer item revisions; pre-launch
+Unverified rows prove persistence only. Finished placement uses `endedOrder`, so
+preserving launch order and text can still hide a relocated family. Bracket it with
+stable phone-message anchors in both the production projection and actual reversed
+UI list. Negative probes must reject missing/changed lifecycle order and missing or
+reversed anchors.
+
+Reveal tools by canonical child key when necessary, then require visible `TOOL_ROW_TAG`
+semantics beneath the exact restored Agent child container in the unmerged tree.
+A scroll target alone proves neither ownership nor display. Held prose establishes
+ownership only; strict settlement still needs its own inactive done/finished facts.
+See [live, scripted and recorded restart evidence](../../e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246)
+and [restart replay contracts](../../recorded-tests.md#what-replay-proves).
+
 ## Passive reopen evidence (#2317)
 
 Thread retention assertions can themselves collect cold repository flows and send
