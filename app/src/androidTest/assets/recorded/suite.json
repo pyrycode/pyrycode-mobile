@@ -81,7 +81,52 @@
   "scenarios": [
     {
       "method": "interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect",
-      "live": true
+      "ticket": 2246,
+      "fixture": "suite/interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect.json",
+      "retainedLive": [],
+      "evidence": {
+        "fixtureSha256": "beda5b07c7d1628fe48a3319b9f09bfd2ec25536dd66533f7cf9c84fb3d16b55",
+        "capture": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 38.144,
+          "nativeSeconds": 32.391,
+          "fixtureSha256": "beda5b07c7d1628fe48a3319b9f09bfd2ec25536dd66533f7cf9c84fb3d16b55",
+          "source": {
+            "mobileRevision": "d50c03a1d9aba27d825ee66c880c4bc2e8616e3b",
+            "daemonRevision": "f90990dd142f206422bfd4a24a8feedcc94f8274",
+            "daemonBinarySha256": "5995bdf31703853bce1981d738ef57f390eb38b35dd7335edefdc73b0fef7a38",
+            "appApkSha256": "bc5b5710dfd5a86a28856eed9b0b77472079633f37bc1865b0d0be221ba527a1",
+            "testApkSha256": "1969c3c54016057165410e3c9e4127acabbdf3853d597f1d878c4ea5ae201202",
+            "claudeVersion": "2.1.280 (Claude Code)",
+            "capturedAt": "2026-10-20T21:30:03Z",
+            "presentation": "current-production",
+            "androidApi": "33"
+          }
+        },
+        "replay": {
+          "executed": 1,
+          "failed": 0,
+          "skipped": 0,
+          "seconds": 14.098,
+          "nativeSeconds": 12.963,
+          "fixtureSha256": "beda5b07c7d1628fe48a3319b9f09bfd2ec25536dd66533f7cf9c84fb3d16b55",
+          "appApkSha256": "bc5b5710dfd5a86a28856eed9b0b77472079633f37bc1865b0d0be221ba527a1",
+          "testApkSha256": "1969c3c54016057165410e3c9e4127acabbdf3853d597f1d878c4ea5ae201202"
+        },
+        "replaySource": {
+          "mobileRevision": "d50c03a1d9aba27d825ee66c880c4bc2e8616e3b",
+          "daemonRevision": "f90990dd142f206422bfd4a24a8feedcc94f8274",
+          "daemonBinarySha256": "5995bdf31703853bce1981d738ef57f390eb38b35dd7335edefdc73b0fef7a38",
+          "appApkSha256": "bc5b5710dfd5a86a28856eed9b0b77472079633f37bc1865b0d0be221ba527a1",
+          "testApkSha256": "1969c3c54016057165410e3c9e4127acabbdf3853d597f1d878c4ea5ae201202",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-20T21:30:03Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      }
     },
     {
       "method": "interactiveTurn_archiveRestore_roundTripsListMembership",
