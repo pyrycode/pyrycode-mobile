@@ -35,7 +35,12 @@ internal fun ComposeTestRule.assertFinishedAgentMarker(
     waitUntil(readinessTimeoutMillis) {
         val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
         assertTrue("finished marker needs one message list", lists.size <= 1)
-        val index = lists.singleOrNull()?.config?.getOrNull(SemanticsProperties.IndexForKey)?.invoke(key) ?: -1
+        val index =
+            lists
+                .singleOrNull()
+                ?.config
+                ?.getOrNull(SemanticsProperties.IndexForKey)
+                ?.invoke(key) ?: -1
         val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
         if (sample != lastReadiness) {
             evidence(sample)

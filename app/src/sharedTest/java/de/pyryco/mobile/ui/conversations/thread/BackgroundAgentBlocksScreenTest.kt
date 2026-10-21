@@ -301,8 +301,8 @@ class BackgroundAgentBlocksScreenTest {
         )
         compose.onNodeWithText("Agent finished").assertIsDisplayed()
         assertThrows(ComposeTimeoutException::class.java) {
-                compose.assertFinishedAgentMarker("a", hasText("Go to agent ↓") and hasText("Launch description"), "Agent finished")
-            }
+            compose.assertFinishedAgentMarker("a", hasText("Go to agent ↓") and hasText("Launch description"), "Agent finished")
+        }
     }
 
     @Test fun resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily() {
