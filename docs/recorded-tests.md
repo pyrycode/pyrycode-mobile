@@ -118,6 +118,82 @@ session grants and other live scenarios retain their existing tests and requirem
 Android startup and UI costs remain, so report measured Android times rather than using
 Desktop's replay timing as an Android forecast.
 
+### Attention destination acquisition (#2350)
+
+The Waiting pill can appear before destination metadata makes B's initial attention
+query eligible. Waiting for its certificate before tapping the pill can therefore
+prevent the very query being awaited. Acquiring while that query is active instead
+coalesces with it; acquiring after completion sends the second captured query. A
+missing second query correctly holds the phone's dismissal/completion frames even
+when the independent peer has already observed dismissal. Peer progress alone does
+not establish a product completion or expiry defect.
+
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`,
+also called by `RecordedMobileSuiteTest`, arms the test-only `InitialAttentionQueryGate`
+for freshly created B. The original Waiting-pill tap lets destination list/metadata
+setup proceed; only `NegotiatedThread.acquire` waits. Readiness observes
+`NegotiatedThread.store.observe(host, conversation)` directly: the cached provider's
+`observe` also restores and persists data, so collecting it would introduce extra
+provider work. Readiness requires a nonempty epoch, positive certified checkpoint,
+certified coverage and no repair/reset flag. Batch receipt alone is insufficient.
+
+The gate pins the host, conversation, connection identity and store generation when
+armed, filters readiness to that generation and rechecks scope, connection and
+generation before delegating real acquisition. Other targets and unarmed scenarios
+retain normal provider admission. Timeout/cancellation fails the wait; closing the
+scope clears the gate and cancels its acknowledgement. The scenario pumps Compose
+within its existing thread deadline until actual delegated acquisition is acknowledged,
+before Back can cancel it. The real query controller remains responsible for both
+exact captured requests, including the second request at checkpoint 13; the gate
+neither sends queries nor releases frames.
+
+`InitialAttentionQueryTest` controls initial send, batch receipt, terminal certification
+and navigation through real query controllers and a strict tape. The active-query and
+completed-query cases require both exact sends; the unfenced control leaves the second
+query and phone completion pending. Other probes retain full payload/owner/count
+matching, observation fences, conversation and generation attribution, cancellation,
+scope closure and default provider admission. Production coalescing, recordings and
+reconnect admission are unchanged. The native scenario still requires the original
+Waiting display and tap, the same outstanding permission after tap and Back, return
+to A, peer-only answer/dismissal, actual Finished display, five-second virtual expiry
+(clock advanced 5,100 ms), absence after reopening A and complete tape consumption.
+Original deadlines remain in force.
+
+#### Counted macOS replay evidence, 2026-10-21
+
+The exact native method was
+`de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished`.
+Focused attempts used `python3 scripts/android-test-gate.py ui --tests` with that method;
+the configured full gate used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`.
+
+| Attempt | Revision | Executed | Passed | Failed | Skipped | Exit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Pre-tap wait, `ui-gomdojl7` | `ae336abd89b4c03f41ad5ad98d9467c0cf407966` | 1 | 0 | 1 | 0 | 1 |
+| Acquisition gate, `ui-mu_hiccu` | `9598c1f6f451aba5b6e21125c1cef1c899aebe29` | 1 | 1 | 0 | 0 | 0 |
+| Configured UI gate, `ui-qoysu3xi` | `9598c1f6f451aba5b6e21125c1cef1c899aebe29` | 335 | 332 | 3 | 1 | 1 |
+
+The first attempt timed out before B's initial query was sent. The repaired focused
+method passed in 6.82 seconds; its retained logcat contains all eight captured thread-query
+sends. The same method passed within the full UI gate (5.233 seconds), with no failure
+or skip in its case. The overall gate retained its failures: permission isolation
+[#2349](https://github.com/pyrycode/pyrycode-mobile/issues/2349), model selection
+[#2351](https://github.com/pyrycode/pyrycode-mobile/issues/2351), and the unrelated offscreen
+reply flake. The dispatcher reproduced the first two on main and the flake passed its
+focused rerun. The [accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2358#issuecomment-6306475597)
+records these dispositions. Dispatcher JVM/build checks passed 6368/6368, with zero
+failed/skipped; the final focused acquisition class passed 11/11. The unfenced boundary
+control retained 9 executed, 7 passed, 2 failed, 0 skipped.
+
+Raw focused XML, logcat, source identities, exit statuses and manifests were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2350/builder-20261021-macos/native-first-fail/` and
+`native-final-pass/` under the same root. The accepted verifier evidence bundle is run
+`b9f310c06228aa022ca8dd886eb5adeeb1fd9c6176c0a6e2caf3ff6b1ba2dde1`; its
+`logs/verifier-gate__2350_5.log` retains the counted dispatcher XML. These references
+identify evidence retained at review time; the counts above survive raw-file pruning.
+No daemon or Claude launch, replacement recording or current-provider compatibility
+claim was needed. Linux was outside this ticket's verification scope.
+
 ## Verified evidence, 2026-10-16
 
 The device was the owned, read-only `claude955` Android ATD emulator, Android 13,
