@@ -1,0 +1,78 @@
+{
+  "implementationOs": "linux",
+  "source": {
+    "mobileRevision": "40c36bace3031d376ad7e136bb6ea13e2adec83e",
+    "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+    "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+    "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+    "testApkSha256": "9c1bdbc510834a48a84295c5ea5117c18678598c37899ded3eef22fe1794e25a",
+    "claudeVersion": "2.1.280 (Claude Code)",
+    "capturedAt": "2026-10-21T13:02:52Z",
+    "presentation": "current-production",
+    "androidApi": "33"
+  },
+  "originalFullUi": {
+    "candidate": "bce55074fc40033374927827a4c3c52adbdb1fab",
+    "selected": 338,
+    "executed": 337,
+    "passed": 336,
+    "failed": 1,
+    "skipped": 1,
+    "failedMethod": "interactiveTurn_backgroundAgent_followsBottomUntilFinished"
+  },
+  "originalIsolatedRerun": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "meaning": "intermittent failure; not a repair or a replacement for the failed full batch"
+  },
+  "renderedResetRegression": {
+    "red": {
+      "executed": 5,
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0
+    },
+    "green": {
+      "executed": 5,
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "freshFollowing": {
+    "scenario": "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+    "capture": {
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 35.724,
+      "nativeSeconds": 30.917,
+      "fixtureSha256": "e58e1c594fdcd1ff31c76bc3d130034198bdef1136bd1a10da0cc37c4ee2afc0",
+      "source": {
+        "mobileRevision": "40c36bace3031d376ad7e136bb6ea13e2adec83e",
+        "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+        "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "9c1bdbc510834a48a84295c5ea5117c18678598c37899ded3eef22fe1794e25a",
+        "claudeVersion": "2.1.280 (Claude Code)",
+        "capturedAt": "2026-10-21T13:02:52Z",
+        "presentation": "current-production",
+        "androidApi": "33"
+      }
+    },
+    "replay": {
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 14.475,
+      "nativeSeconds": 13.386,
+      "fixtureSha256": "e58e1c594fdcd1ff31c76bc3d130034198bdef1136bd1a10da0cc37c4ee2afc0",
+      "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+      "testApkSha256": "9c1bdbc510834a48a84295c5ea5117c18678598c37899ded3eef22fe1794e25a"
+    }
+  },
+  "recordings": "committed fixtures unchanged; fresh capture is supplemental, not a replacement or strict compatibility pass",
+  "remaining": "exact committed replay and complete configured verifier gates on the repaired final candidate"
+}
