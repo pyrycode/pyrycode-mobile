@@ -2,12 +2,76 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.toolHeadline
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeferredAuthoritativePresentationTest {
+    @Test fun deepClosedChainRetainsOnlyParentLinksAndConvertsOnlyDemandedBodies() {
+        val facts =
+            (1L..8333L).map { id ->
+                authoritativeItem(
+                    id,
+                    "tool_call",
+                    parent = (id - 1).takeIf { it > 0 },
+                    content = """{"name":"Read","input":{"file_path":"file-$id"},"result":{"result_summary":"body-$id"}}""",
+                )
+            }
+        val converted = mutableListOf<Long>()
+        val p =
+            projectDeferredAuthoritativeThread(
+                "host",
+                "conversation",
+                authoritativeSnapshot(*facts.toTypedArray()),
+                onFullConversion = { converted += it },
+            )
+        val first = p.rows.first()
+        val last = p.rows.last()
+        assertEquals(listOf(first), p.demandRows(listOf(first, last), setOf("${p.scope}:8333")))
+        assertTrue(converted.isEmpty())
+        assertEquals(8333, p.demandRows(p.rows, emptySet()).size)
+        assertTrue(converted.isEmpty())
+        p.demandRows(p.rows, setOf("${p.scope}:8333"))
+        assertEquals(listOf(8333L), converted)
+        converted.clear()
+        assertEquals(listOf(first), p.demandRows(listOf(first, last), emptySet()))
+        assertTrue(converted.isEmpty())
+    }
+
+    @Test fun deferredAndExpandedHeadlinesShareFieldSelection() {
+        val inputs =
+            listOf(
+                """{"file_path":"a/b/c/d/e","description":"describe","command":"echo hi"}""",
+                """{"description":"describe","command":"echo hi"}""",
+                """{"description":"","command":"echo hi"}""",
+                """{"query":" ","body":"hidden"}""",
+                """{"body":"hidden"}""",
+                "{}",
+            )
+        for (name in listOf("Bash", "BashOutput", "Read", "Agent")) {
+            for (input in inputs) {
+                val snapshot =
+                    authoritativeSnapshot(
+                        authoritativeItem(
+                            1,
+                            "tool_call",
+                            content = """{"name":"$name","input_summary":"summary","input":$input}""",
+                        ),
+                    )
+                val deferred = projectDeferredAuthoritativeThread("host", "conversation", snapshot)
+                val complete = projectAuthoritativeThread("host", "conversation", snapshot)
+
+                fun headline(p: AuthoritativeThreadPresentation) =
+                    requireNotNull((p.items.single() as ThreadItem.MessageItem).message.toolCall).let {
+                        toolHeadline(it.toolName, it.inputFields, it.input)
+                    }
+                assertEquals("$name $input", headline(complete), headline(deferred))
+            }
+        }
+    }
+
     @Test fun closureInvariantDefersAll8333HeldContentsUntilDemanded() {
         val snapshot = deferredLargeSnapshot()
         val converted = mutableListOf<Long>()

@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.authoritativeQueueTarget
+import de.pyryco.mobile.ui.conversations.components.toolSubjectField
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -43,7 +44,8 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
     internal val sourceSnapshot: AuthoritativeThreadSnapshot,
-    private val ancestors: Map<String, Set<String>>,
+    private val parents: Map<String, String?>,
+    private val expandable: Set<String>,
     private val resolveContents: ((String) -> ThreadRow.Delivered?)?,
 ) {
     internal val defersContents = resolveContents != null
@@ -57,7 +59,27 @@ class AuthoritativeThreadPresentation internal constructor(
         val displayed = folded.filterIsInstance<ThreadRow.Delivered>().mapTo(HashSet()) { it.listKey(0).removePrefix("msg:") }
         val available = rows.filterIsInstance<ThreadRow.Delivered>().mapTo(HashSet()) { it.listKey(0).removePrefix("msg:") }
 
-        fun visible(id: String) = ancestors[id].orEmpty().all { it !in available || it in displayed }
+        val visibility = mutableMapOf<String, Boolean>()
+
+        fun visible(id: String): Boolean {
+            val path = mutableSetOf<String>()
+            var parent = parents[id]
+            var result = true
+            while (parent != null && path.add(parent)) {
+                val known = visibility[parent]
+                if (known != null) {
+                    result = known
+                    break
+                }
+                if (parent in expandable && parent in available && parent !in displayed) {
+                    result = false
+                    break
+                }
+                parent = parents[parent]
+            }
+            path.forEach { visibility[it] = result }
+            return result
+        }
         return folded
             .filter { row ->
                 when (row) {
@@ -75,6 +97,20 @@ class AuthoritativeThreadPresentation internal constructor(
         row: ThreadRow.Delivered,
         expandedTools: Set<String>,
     ): Boolean = resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools
+
+    /** Summaries are never proof of rendered contents. Resolve only the carried, exact current revision. */
+    internal fun matchesReadContents(
+        key: String?,
+        item: ThreadItem,
+        revision: Long?,
+    ): Boolean {
+        if (key == null || revision == null || shownRowRevisions[key] != revision) return false
+        return if (resolveContents != null) {
+            resolveContents.invoke(key)?.item == item
+        } else {
+            rows.any { it is ThreadRow.Delivered && it.listKey(0) == key && it.item == item }
+        }
+    }
 
     /** Latest certified estimate from this session's root terminals. Outcomes do not change cost ownership. */
     internal fun reportedSessionCost(session: String): Double? {
@@ -175,34 +211,40 @@ private fun projectThread(
     // Parent chains are facts, not raw-event nesting. Hidden/unordered ancestors remain in this map.
     val owners = mutableMapOf<Long, Long?>()
     val depths = mutableMapOf<String, Int>()
-    val ancestors = mutableMapOf<String, Set<String>>()
+    val identities = held.keys.associateWith(::identity)
+    val parents = held.values.associate { identities.getValue(it.id) to identities[it.parent] }
+    val expandable =
+        held.values
+            .filter {
+                it.shown && (it.order ?: 0) > 0 && it.kind in setOf("agent", "tool_call") && it.toolName() != null
+            }.mapTo(HashSet()) { identities.getValue(it.id) }
+    // Inclusive nearest-agent/depth summaries let shared parent chains be walked once.
+    val lineage = mutableMapOf<Long, Pair<Long?, Int>>()
+    val cyclic = mutableSetOf<Long>()
     for (item in held.values) {
-        val path = mutableSetOf(item.id)
-        var parent = item.parent
-        var owner: Long? = null
-        var depth = 0
-        var cyclic = false
-        val expandableParents = mutableSetOf<String>()
-        while (parent != null && parent > 0) {
-            if (!path.add(parent)) {
-                cyclic = true
-                break
-            }
-            val fact = held[parent] ?: break
-            if (fact.shown && (fact.order ?: 0) > 0 && fact.kind in setOf("agent", "tool_call") && fact.toolName() != null) {
-                expandableParents += identity(parent)
-            }
-            if (fact.kind == "agent") {
-                if (owner == null) owner = parent
-                depth++
-            }
-            parent = fact.parent
+        if (item.id in lineage || item.id in cyclic) continue
+        val path = mutableSetOf<Long>()
+        var cursor: Long? = item.id
+        while (cursor != null && cursor > 0 && cursor in held && cursor !in lineage && cursor !in cyclic && cursor !in path) {
+            path += cursor
+            cursor = held.getValue(cursor).parent
         }
-        // Cyclic attribution never creates a self-owning block.
-        if (cyclic) owner = null
-        if (!cyclic && expandableParents.isNotEmpty()) ancestors[identity(item.id)] = expandableParents
-        owners[item.id] = owner
-        if (owner != null) depths[identity(item.id)] = depth
+        if (cursor in cyclic || cursor in path) {
+            // Cyclic attribution never creates a self-owning block, including its incoming paths.
+            cyclic += path
+            path.forEach { owners[it] = null }
+        } else {
+            var (owner, depth) = lineage[cursor] ?: (null to 0)
+            for (id in path.toList().asReversed()) {
+                owners[id] = owner
+                if (owner != null) depths[identities.getValue(id)] = depth
+                if (held.getValue(id).kind == "agent") {
+                    owner = id
+                    depth++
+                }
+                lineage[id] = owner to depth
+            }
+        }
     }
     val background =
         agents.values
@@ -398,7 +440,8 @@ private fun projectThread(
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
         visible.mapNotNull { item -> adapted[item.id]?.takeIf(::selected)?.let { it.listKey(0) to item.rev } }.toMap(),
         snapshot,
-        ancestors,
+        parents,
+        expandable,
         resolver,
     )
 }
@@ -413,17 +456,14 @@ private fun ThreadItemDto.summaryRow(
     val fields = content as? JsonObject
     val name = toolName()?.takeIf { kind in setOf("agent", "tool_call") && status in knownStatuses }
     val input = fields?.obj("input")
-    val headlineKeys = if (name?.displayText() == "Bash") listOf("description", "command") + headlineInputFields else headlineInputFields
     val headline =
         if (name == null) {
             null
         } else {
-            headlineKeys.firstNotNullOfOrNull { key ->
+            toolSubjectField(name.displayText()) { key ->
                 (input?.get(key) as? JsonPrimitive)
                     ?.content
                     ?.displayText()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { key to it }
             }
         }
     val headlineFields =
@@ -474,8 +514,6 @@ private fun ThreadItemDto.summaryRow(
 }
 
 private val displayEpoch = Instant.fromEpochMilliseconds(0)
-private val headlineInputFields =
-    listOf("file_path", "path", "notebook_path", "command", "pattern", "url", "query", "description", "skill")
 private const val DISPLAY_TEXT_LIMIT = 65_536
 private val knownStatuses =
     setOf(

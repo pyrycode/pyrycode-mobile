@@ -3639,7 +3639,7 @@ class ThreadViewModel(
             presentation.host == serverId &&
             presentation.conversation == conversationId &&
             state.value.hostAvailable &&
-            presentation.rows.any { row -> row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row } &&
+            presentation.matchesReadContents(event.rowKey, event.row, event.seenRowRevisions[event.rowKey]) &&
             presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) == event.checkpoint
     }
 
