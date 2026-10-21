@@ -39,3 +39,20 @@ Write the controlled regression against the extracted old cleanup first and obse
 
 ## Open Questions
 None. Scope forecast: approximately 400 written lines, three acceptance criteria, zero exported production types or migrated consumers, one scenario integration. Below the numeric ceilings; no independently useful second deliverable.
+
+## Revisions
+
+### 2026-10-21: investigate the attention-pill gate finding
+
+The verifier found no independent source defect in this repair, but its configured UI gate and three-method comparison failed `interactiveTurn_otherConversationAttentionPills_waitingAndFinished`. That comparison selected model, offscreen-reply and attention together; the passing merged-main comparison selected attention alone. Those results do not establish a causal regression or an inherited-failure exemption.
+
+The parent investigation already retained a failing unchanged-main attention execution at `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`, with verified raw XML/logcat and load metadata under agents `logs/evidence/2343/builder-20261021-macos/current-main-fail-2/`. B's initial catch-up starts before destination acquisition and finishes afterwards. `AuthoritativeThreadQueries.acquire` calls `open`, whose `enqueue` coalesces the active query. The recorded second query remains missing, holding phone dismissal/completion; the finished-pill timeout precedes the secondary cleanup close mismatch. Production query/attention code, tape, connection/native replay code and the attention recording match that main revision. The scenario diff changes only permission isolation.
+
+This is the independently useful acquisition-timing repair assigned to open sibling #2350. Do not extend this permission cleanup wrapper to hide the attention scenario's earlier failure or relax its matching/deadlines. Link #2350 as the acceptance blocker and request recovery assessment of the retained model/offscreen/attention sequence before any wider diagnostic. A queued assessment and any focused pass do not establish complete acceptance. The configured UI and scripted gates remain dispatcher-owned and pending after the blocker lands. The permission cleanup design and elevated risk assessment remain unchanged.
+
+Focused attention replay on the unchanged reviewed source `ee784e3bce152366b6efefdaaedb082e1caf5cf5` passed: `ui-btxiaay9`, exit 0, one executed/passed, zero failed/errors/skipped. This is baseline evidence, not a repair. Recovery assessment `0b17a700adf962af43cb1e8edc2380ddb5a31c0f6de829adce72678f7774ac3b` is queued with zero executions for the retained three-method sequence; it grants no wider-run authority. The open #2350 blocker link was read back successfully. Rework raw native, parent-baseline and verifier evidence, source comparisons, request/acknowledgement and hashes are retained under agents `logs/evidence/2349/rework-20261021-macos/`.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/recorded-tests.md`, replay lifecycle/close readiness, and `docs/knowledge/features/development-verification-gates.md`, Device gate: explain why scenario host removal needs its own fence after peer close and how earlier failures remain primary.
+- Pending for the documentation stage: carry forward the controlled red, focused permission replay and eventual complete dispatcher gate evidence, preserving failed attempts and exact revisions. Documentation does not supply pending acceptance.
