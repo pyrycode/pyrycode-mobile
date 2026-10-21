@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-21T22:24:35.020Z" hostname="0eeeba6d2d09" time="54.029">
+  <properties/>
+  <testcase name="retentionInvariant_trimClearsCertification" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="51.312"/>
+  <system-out><![CDATA[owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=1, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

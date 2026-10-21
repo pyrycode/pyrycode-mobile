@@ -1,0 +1,24 @@
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2373/app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadFrameCaptureTest.kt:104:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+
+> Task :app:testDebugUnitTest
+
+AuthoritativeOwnedUpsertTest > retentionInvariant_trimClearsCertification FAILED
+    kotlinx.coroutines.test.UncompletedCoroutinesError at TestBuilders.kt:353
+
+6443 tests completed, 2 failed
+
+> Task :app:testDebugUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2373/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+BUILD FAILED in 19m 23s
+71 actionable tasks: 39 executed, 31 from cache, 1 up-to-date
+Configuration cache entry stored.
+JVM gate: 6443 executed in report; fresh execution; artifacts: /work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2373/build/dispatcher-tests/jvm-p23b_665

@@ -1,0 +1,30 @@
+#2439 Linux retention-certification completion evidence
+
+Historical evidence
+- #2373 verifier run e5eba22d4c5739ad10d084895ccb7b724dee3e17332f0e4485b00c54ec786b7e
+- Bundle SHA256 585086e9e81b8c69118d27002e1875600f2dd0d84f423d2f77c738aab759eea5
+- Machine build-fractal-2; dispatcher revision 52f2e5796283b44f12dca24b453aca12c5ee50ab
+- historical-main-red.xml is the raw retained logs/2026-10-21T21-28-17-998Z_verifier-gate-base__2373.log.
+- Main source d2130e229e5ae7382cf7f6cebe790db6ae8574d5: 1 executed, 0 passed, 1 failed, 0 errors, 0 skipped; method time 68.685 s.
+- The error is the one-minute runTest deadline. All five bounded-write checkpoints printed before failure.
+- historical-gate-stderr-excerpt.txt is an excerpt of retained logs/verifier-gate__2373_4.stderr.log.failure-1792617824566.log.
+- Gate source 75bed5e5eaf1969e48a13dcbe191e69e65b194be: 6443 executed, 2 failed. One failure is this method; the other is outside this repair.
+- The original absolute gate path now contains later passing output; it is not the failed evidence.
+
+Fresh builder runs
+- Operating system Linux; 12 online CPUs. Initial load average 4.66/2.76/2.01, about 25 GiB memory available. No host starvation is inferred from these samples.
+- Base main cf2d7c7b7b891b170a23b100155b466fd2a60fa8; plan-first commit 8eb0e54338157146030bc23fe128deed5914c0f4.
+- Each run uses JUnit TemporaryFolder and a new real cache.db with MAX_CACHED_THREAD_ROWS=100000.
+- Command prefix: python3 scripts/gradle-gate.py testDebugUnitTest -PfullRetentionTests=true
+- Method selector: --tests de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest.retentionInvariant_trimClearsCertification --console=plain
+- unchanged-method.xml: test source SHA256 1cec313523037c32cf45e944007414f80b40034e299bca9cf86e1e3361ca8710 at the plan-first commit; 1 executed/passed, 0 failed/errors/skipped, 51.312 s.
+- unchanged-method-output.txt retains the raw terminal tail (initial configuration output omitted).
+- original-deadline-phases.xml: same parent plus diagnostic markers; test source SHA256 910c3a81f6dd791dfee54e55ceade3f47e031a296e914e2d875553037a9280a5; 1 executed/passed, 0 failed/errors/skipped, 50.841 s.
+- original-deadline-output-tail.txt retains raw final task/result output; unrelated compiler warnings omitted.
+- Phase markers record wall-clock durations, not virtual time. Four independent reads take 10.357/10.674/10.816/10.467 s; flushes take 4-41 ms. The 49.146 s measured body completes every existing assertion.
+- Repair: method-local two-minute runTest deadline. All rows, independent reads, exact record and bounded-write assertions remain unchanged. This finite bound stays below the existing 180-second outer test watchdog.
+- repaired-method.xml: plan-first parent plus the repair; test source SHA256 25360c23d8b2e1b02e10ac8b7bf40d5131153b2a23300fd868fb9676973566a1; 1 executed/passed, 0 failed/errors/skipped, 51.529 s. Four independent reads again completed in 10.582-10.845 s; flushes completed in 3-43 ms.
+- repaired-method-output-tail.txt retains raw final task/result output; unrelated compiler warnings omitted.
+
+Complete configured JVM acceptance belongs to the dispatcher/verifier and is pending.
+No emulator, daemon, real-Claude observation or second-operating-system check applies.

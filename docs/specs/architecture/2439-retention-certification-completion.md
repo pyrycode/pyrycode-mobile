@@ -38,3 +38,11 @@ Run the unchanged named method first and retain its outcome, supplementing histo
 ## Open Questions
 
 - Which phase consumes the deadline, and does a finite longer allowance permit all existing assertions to complete? Resolve with focused timings before committing the repair.
+
+## Revisions
+
+### 2026-10-21: measured full-cap read cost
+
+Resolved the open question using the original-deadline diagnostic: fixture construction 364 ms, seed 5577 ms, first observation 114 ms, trim flush 41 ms, revision flush 7 ms, completion flushes 4 ms each and recovery flush 5 ms. Four independent full-cap reads and their assertions cost 10357, 10674, 10816 and 10467 ms, approximately 86% of the 49146 ms measured body. No observation or final-flush wait failed to progress. The unchanged method passed in 51.312 seconds and the instrumented method in 50.841 seconds, while retained main evidence failed at 68.685 seconds after all five writes. The default one-minute deadline is too close to the real synchronous storage/decoding work; this is not evidence of a deadlock or a defective collector.
+
+Set only this method's timeout to two minutes: less than 2.5 times the observed body cost and approximately 1.75 times the historical failed duration. Keep all four independent reads, the full 100000-row fixture, every exact-row/certification and work-bound assertion, and phase markers. The longer allowance still bounds an actual hang. No production change is justified. Preserve fresh repaired-method and class reports before final handoff; complete configured JVM acceptance remains pending for the dispatcher.
