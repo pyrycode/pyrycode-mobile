@@ -217,14 +217,26 @@ class RunConfigurationWaitTest {
             if (open) PyrycodeMobileTheme { content(modelLabel = model, modelNote = "Observed confirmation") }
         }
         var confirmations = 0
-        val failure = runCatching {
-            rule.awaitRunConfiguration("Model", "Expected model", 50, confirmed = { confirmations++; true })
-        }.exceptionOrNull()
-        rule.runOnIdle { open = false; model = "Restored model" }
+        val retained = mutableListOf<String>()
+        val failure =
+            runCatching {
+                rule.awaitRunConfiguration("Model", "Expected model", 50, confirmed = {
+                    confirmations++
+                    true
+                }, observe = {
+                    assertTrue("retain before sheet closure", open)
+                    retained += it
+                })
+            }.exceptionOrNull()
+        rule.runOnIdle {
+            open = false
+            model = "Restored model"
+        }
         rule.waitForIdle()
         assertTrue("the mismatch must still fail", failure is ComposeTimeoutException)
         assertTrue("the original timeout is retained", failure?.cause is ComposeTimeoutException)
         val evidence = failure?.message.orEmpty()
+        assertEquals(listOf(evidence), retained)
         assertTrue(evidence, "expected_label=Expected model" in evidence)
         assertTrue(evidence, "Observed model" in evidence)
         assertTrue(evidence, "Observed confirmation" in evidence)
@@ -232,6 +244,41 @@ class RunConfigurationWaitTest {
         assertTrue(evidence, "confirmation_matches=false" in evidence)
         assertTrue(evidence, "Restored model" !in evidence)
         assertEquals("diagnostics must not invoke a short-circuited predicate", 0, confirmations)
+    }
+
+    @Test
+    fun diagnosticSinkFailureCannotReplaceModelMismatch() {
+        sheet(modelLabel = "Observed model", selectedEffort = "high")
+        val sinkFailure = IllegalStateException("controlled evidence sink failure")
+        val failure =
+            runCatching {
+                rule.awaitRunConfiguration("Model", "Expected model", 50, observe = { throw sinkFailure })
+            }.exceptionOrNull()
+        assertTrue(failure is ComposeTimeoutException)
+        assertTrue(failure?.cause is ComposeTimeoutException)
+        assertEquals(listOf(sinkFailure), failure?.suppressed?.toList())
+        assertTrue(failure?.message.orEmpty(), "Observed model" in failure?.message.orEmpty())
+    }
+
+    @Test
+    fun successfulObservationRetainsOriginalConfirmationAndRunsOnce() {
+        sheet(modelLabel = "Expected model", selectedEffort = "high")
+        val retained = mutableListOf<String>()
+        var confirmations = 0
+        rule.awaitRunConfiguration(
+            "Model",
+            "Expected model",
+            5_000,
+            confirmed = {
+                confirmations++
+                true
+            },
+            observe = retained::add,
+        )
+        assertEquals(1, confirmations)
+        assertEquals(1, retained.size)
+        assertTrue(retained.single(), "confirmation_matches=true" in retained.single())
+        assertTrue(retained.single(), "confirmation_evaluated=true" in retained.single())
     }
 
     private fun assertBlocked(

@@ -52,3 +52,6 @@ If cause remains unresolved, publish a linked open repair ticket preserving feat
 
 ## Scope measurement
 One diagnostic deliverable, four acceptance criteria, approximately 550–750 written lines including this plan, tests and checked evidence summary; zero production declarations or simultaneous consumer migrations. No new reject branch in a production state machine. Below all numeric ceilings on both sketch and written plan.
+
+## Revisions
+- 2026-10-21: The controlled mismatch exposed that Model selection notes are untagged, unlike Effort notes. Retain all text from the already-inspected Model section as well as its radio rows; leave the original tagged-note predicate unchanged. The failed intermediate class run (9 executed, 8 passed, 1 failed) is retained privately with its source patch. This changes diagnostic completeness, not selection or confirmation admission.
