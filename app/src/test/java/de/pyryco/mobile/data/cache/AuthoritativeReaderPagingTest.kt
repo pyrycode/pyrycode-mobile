@@ -442,7 +442,7 @@ class AuthoritativeReaderPagingTest {
         runTest {
             // With 220 standalones, the nearest 20 predecessors also belong to an unmoved
             // component. Recovery must inspect the whole bounded older frontier.
-            for (standaloneCount in listOf(200, 220)) {
+            for (standaloneCount in listOf(420, 200, 220)) {
                 databaseName = "surviving-boundary-$standaloneCount.db"
                 val parent = JsonObject(fact(90_000, false) + mapOf("kind" to JsonPrimitive("agent"), "order" to JsonPrimitive(10_000)))
                 val children = (1..600).map { JsonObject(fact(it) + ("parent" to JsonPrimitive(90_000))) }
@@ -488,9 +488,11 @@ class AuthoritativeReaderPagingTest {
                         assertEquals(requests, fixture.requests)
                         assertEquals(expected.size + 200, vm.state.value.authoritativeThread?.rows?.size)
                     }
-                    if (standaloneCount > 200) {
+                    var count = 800
+                    while (count < children.size + standaloneCount) {
+                        count = minOf(count + 200, children.size + standaloneCount)
                         vm.onDemandOlderHistory()
-                        vm.state.first { it.authoritativeThread?.rows?.size == children.size + standaloneCount }
+                        vm.state.first { it.authoritativeThread?.rows?.size == count }
                     }
                 }
                 val fresh = requireNotNull(disk().readAuthoritativeThread("host", "c"))
