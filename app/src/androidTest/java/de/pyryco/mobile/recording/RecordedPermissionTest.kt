@@ -43,6 +43,7 @@ import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.PeerDeviceKeyStore
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
@@ -160,14 +161,19 @@ class RecordedPermissionTest {
         val viewModels = ViewModelStore()
         try {
             coordinator.start()
-            val repository =
-                runBlocking {
-                    withTimeout(20000) {
-                        check(pump.state.first { it !is PumpState.Handshaking } is PumpState.Open)
-                        check(CAPABILITY_THREAD in (pump.state.value as PumpState.Open).capabilities)
-                        coordinator.currentRepository.filterNotNull().first()
-                    }
+            runBlocking {
+                withTimeout(20000) {
+                    check(pump.state.first { it !is PumpState.Handshaking } is PumpState.Open)
+                    check(CAPABILITY_THREAD in (pump.state.value as PumpState.Open).capabilities)
+                    coordinator.currentRepository.filterNotNull().first()
                 }
+            }
+            val repository =
+                StableConversationRepository(
+                    coordinator.currentRepository,
+                    coordinator.hostReadings,
+                    negotiatedThread = coordinator.negotiatedThread,
+                )
             val conversation = runBlocking { withTimeout(20000) { repository.createDiscussion(null) } }
             val vm =
                 ThreadViewModel(
@@ -186,6 +192,7 @@ class RecordedPermissionTest {
                 val modal by vm.currentModal.collectAsState()
                 val armed by vm.armedOptionId.collectAsState()
                 val draft by vm.draft.collectAsState()
+                val busy by vm.isBusy.collectAsState()
                 PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state = state,
@@ -195,6 +202,7 @@ class RecordedPermissionTest {
                         onDraftChange = vm::onDraftChange,
                         connectionState = de.pyryco.mobile.data.model.ConnectionState.Connected,
                         onRetry = {},
+                        isBusy = busy,
                         modalState = modal,
                         armedOptionId = armed,
                         onModalOption = { modalId, optionId ->
