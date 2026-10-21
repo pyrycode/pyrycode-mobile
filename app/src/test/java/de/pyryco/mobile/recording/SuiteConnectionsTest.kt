@@ -3,6 +3,7 @@ package de.pyryco.mobile.recording
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -11,10 +12,12 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -23,6 +26,17 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    private var savedLogSink = RelayLog.sink
+
+    @Before fun muteDecoderLogs() {
+        savedLogSink = RelayLog.sink
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreDecoderLogs() {
+        RelayLog.sink = savedLogSink
+    }
+
     @Test fun phoneTeardownRetainsRequiredWorkBeforeTestEnd() =
         runTest {
             val owner = "phone/host/1"
