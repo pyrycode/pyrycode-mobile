@@ -498,6 +498,7 @@ internal class SuiteConnections private constructor(
                     val frame = checkNotNull(step.message)
                     check(frames.trySend(frame).isSuccess)
                     tape!!.delivered(connection.owner, frame)
+                    enqueue(tape.initial())
                 }
                 "inbound_end" -> {
                     tape!!.connectionEnded(connection.owner)

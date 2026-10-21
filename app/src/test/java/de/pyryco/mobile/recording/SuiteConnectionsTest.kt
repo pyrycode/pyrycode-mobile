@@ -3,6 +3,7 @@ package de.pyryco.mobile.recording
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -23,6 +24,78 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    @Test fun deliveredQueryCertificateReschedulesLiveProgressWithoutAnotherPhoneRequest() =
+        runTest {
+            val owner = "phone/host/0"
+            val initial = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":0}""")
+            val tail = frame(3, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, initial),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                2,
+                                "thread_items",
+                                """{"conversation_id":"chat","epoch":"epoch","version":20,"items":[],"final":true,"lower_order":0,"upper_order":0,"continuation":0,"older_exists":false}""",
+                                reply = 1,
+                            ),
+                        ),
+                        SuiteStep("client", owner, tail),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                4,
+                                "thread_item_added",
+                                """{"conversation_id":"chat","epoch":"epoch","version":21,"item":{"id":1,"order":1,"rev":21,"kind":"assistant_message","session":"session","turn":"turn","status":"done","active":false,"shown":true,"summary":"reply","content":{"text":"controlled reply"}}}""",
+                            ),
+                        ),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                5,
+                                "thread_items",
+                                """{"conversation_id":"chat","epoch":"epoch","version":21,"items":[],"final":true,"from_version":20}""",
+                                reply = 3,
+                            ),
+                        ),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val savedLogSink = RelayLog.sink
+            RelayLog.sink = { _, _, _ -> }
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                val live = backgroundScope.async { pump.inbound.first { it.type == "thread_item_added" } }
+                runCurrent()
+                assertTrue(pump.send(initial.copy(id = 90)))
+                runCurrent()
+                hub.awaitIdle()
+                assertTrue("delivered certificate must release live progress without another request; ${tape.progress()}", live.isCompleted)
+                assertFalse("the catch-up remains required", tape.closeReady(owner))
+                assertTrue(pump.send(tail.copy(id = 91)))
+                runCurrent()
+                transport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+                RelayLog.sink = savedLogSink
+            }
+        }
+
     @Test fun phoneRestartWaitsForCurrentQueriesWithoutWaitingForFuturePhonesOrPeers() =
         runTest {
             val old = "phone/host/0"

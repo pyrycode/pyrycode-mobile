@@ -899,14 +899,18 @@ internal class RecordedSuiteTape(
         if (frame.inReplyTo != null || step.direction != "daemon") return false
         val update = ThreadUpdateDto.decode(frame.type, frame.payload as? JsonObject ?: return false) ?: return false
         val request = catchUp(query) ?: return false
-        if (request.version == 0uL || request.epoch.isEmpty() ||
-            update.conversationId != request.conversationId || update.epoch != request.epoch ||
-            update.version.toULong() <= request.version || frameConversation(frame) != update.conversationId
+        if (request.version == 0uL ||
+            request.epoch.isEmpty() ||
+            update.conversationId != request.conversationId ||
+            update.epoch != request.epoch ||
+            update.version.toULong() <= request.version ||
+            frameConversation(frame) != update.conversationId
         ) {
             return false
         }
         return (0 until query).reversed().any { prior ->
-            if (prior !in consumed || steps[prior].owner != step.owner ||
+            if (prior !in consumed ||
+                steps[prior].owner != step.owner ||
                 lifecycleBefore[prior] != lifecycleBefore[index]
             ) {
                 return@any false
@@ -920,18 +924,21 @@ internal class RecordedSuiteTape(
                 certificate.terminal.checkpoint.version == request.version &&
                 (replies.last() + 1 until index).none { between ->
                     val event = steps[between]
-                    if (event.owner != step.owner || event.direction != "daemon" ||
+                    if (event.owner != step.owner ||
+                        event.direction != "daemon" ||
                         event.message?.type?.startsWith("thread_") != true
                     ) {
                         return@none false
                     }
                     val original = checkNotNull(event.message)
-                    val correlated = original.inReplyTo?.let { reply ->
-                        val request = steps.firstOrNull {
-                            it.direction == "client" && it.owner == event.owner && it.message?.id == reply
-                        } ?: return@none true
-                        (request.message?.payload as? JsonObject)?.get("conversation_id") ?: return@none true
-                    }
+                    val correlated =
+                        original.inReplyTo?.let { reply ->
+                            val request =
+                                steps.firstOrNull {
+                                    it.direction == "client" && it.owner == event.owner && it.message?.id == reply
+                                } ?: return@none true
+                            (request.message?.payload as? JsonObject)?.get("conversation_id") ?: return@none true
+                        }
                     if (correlated != null && correlated != (original.payload as? JsonObject)?.get("conversation_id")) return@none true
                     val message = mappedFrame(original)
                     val attribution = frameConversation(message) ?: return@none true
