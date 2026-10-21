@@ -162,4 +162,11 @@ None requiring a product decision. Record implementation changes to this contrac
 
 - Independent source review identified two supported prompt-preview tests deleted with the obsolete history-preview class. Their production path remains in `HostConversationSource`.
 - Restore the original permission title/text, first-question wire order, blank prompt, blank first question and other-modal fallback assertions in the retained host-attention test class. Retain the original privacy assertions. Do not restore history APIs or alter production behavior.
+- Remove the unused denial, queue and notice reconstruction helpers from shared producer diagnostics. Retain the DTOs used by independent peers and the used session-boundary mapper. Remove the exclusive unused compaction DTO and private mapper helpers.
 - Run the focused host-attention class through normal test admission. Keep the in-flight verifier candidate unchanged until its verdict is recorded. Independent verification remains required for the resulting test-only repair.
+
+### 2026-10-21, complete unit gate follow-through
+
+- The first complete unit run executed 5326 methods and failed 62. Preserve its raw report and the same-candidate rerun. The verifier is comparing the failing selection against main.
+- Group the remaining migration work by retained presentation scenes, session-owned connection fixtures, and supported notification/diagnostic assertions. Supply prepared presentation rows and authoritative session facts where removed inputs previously supplied them. Retire only assertions dedicated to removed behavior. Preserve viewport, ownership, privacy, cancellation and supported control assertions.
+- Use focused classes to validate each observed failure group. Do not publish over the in-flight verifier candidate. After its result, publish the checked manual repair and require fresh independent acceptance of the new candidate.
