@@ -370,6 +370,40 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Explicit graph-restart readiness (#2347)
+
+An explicit `restartApp` destroys the Activity and rebuilds the graph inside the
+scenario, before final Activity teardown. Call
+`RecordedSuiteNative.beforePhoneRestart` before Activity destruction, while the
+old graph's request producers and replay delivery workers remain alive. In replay,
+`SuiteConnections.beforePhoneRestart` snapshots currently registered, unclosed
+`phone/` transport owners under the hub monitor, then calls `beforeClose` for each
+outside that monitor. It drains required requests and queued delivery under the
+existing 30-second bound. Capture and ordinary execution keep a no-op fence.
+
+The snapshot excludes peers, closed owners and future phone generations. Final
+`beforePhoneTeardown` instead follows the tape's phone closes before scenario
+completion and can wait for replacement owners. Reusing that final fence during
+restart could wait for a graph that cannot exist until relaunch. Keep these two
+boundaries separate; neither synthesizes queries, changes payload matching or
+waives complete tape consumption.
+
+Peer completion alone does not certify phone catch-up. The interrupted-retrieval
+tape records peer `turn_end`, the phone's version-0 query and replies establishing
+version 20, then a required version-20 query and reply before generation 0 closes.
+An earlier version-0 query cannot stand in for that later checkpoint. The original
+failure closed at this restart boundary, before the retrieval-triggered cut; later
+reconnect and cleanup timeouts propagated the first sticky mismatch, rather than
+identifying another attachment failure or the later [#2219 close race](#atomic-transport-close-2219).
+
+`SuiteConnectionsTest` covers current owners, queued replies, successive restarts
+and exclusion of independent peers/future generations with
+`phoneRestartWaitsForCurrentQueriesWithoutWaitingForFuturePhonesOrPeers`.
+`phoneRestartCannotOmitARequiredQuery` and
+`phoneRestartStillRejectsAChangedQuery` retain missing-work and changed-checkpoint
+failures. See [counted restart evidence](knowledge/features/development-verification-gates.md#graph-restart-replay-evidence-2347)
+and [attachment recovery assertions](knowledge/features/attachment-retrieval.md#interrupted-retrieval-restart-replay-2347).
+
 ### Scenario host-removal readiness (#2349)
 
 Peer turn completion does not establish phone completion: permission isolation can
