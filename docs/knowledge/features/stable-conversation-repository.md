@@ -417,6 +417,17 @@ repositories and shared `HostReadings`: disconnect, direct delegate replacement,
 old-pump updates, an empty new delegate, a lower new revision and a reconciled clear.
 See the [remote invariant probes](remote-conversation-repository-testing.md#testing).
 
+Native suggestion assertions must follow the same connection boundary (#2436).
+The UI can keep working through this facade while a test holding one concrete
+repository waits on its retired source until the deadline. `ReplySuggestionReads` accepts the
+owning host's `currentRepository` holder: conversation/session selection and offer
+collection run together inside `firstOnLive`; delivered echo and newer explicit
+clear reads also switch with it. Equal conversation/session IDs do not establish
+connection identity, and held settings cannot select an offer's session.
+`ReplySuggestionReadsTest` drives replacement, null gaps and retired-source updates
+for offer/echo/clear, plus session selection on an unchanged connection. See the
+[controlled regression and native evidence](../../e2e-interactive-stream.md#reply-suggestion-live-connection-observation-2436).
+
 ## Related
 
 - Ticket: [#352](../codebase/352.md) — implementation record (files, line refs, patterns, lessons).
