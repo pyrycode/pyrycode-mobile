@@ -55,3 +55,4 @@ One diagnostic deliverable, four acceptance criteria, approximately 550–750 wr
 
 ## Revisions
 - 2026-10-21: The controlled mismatch exposed that Model selection notes are untagged, unlike Effort notes. Retain all text from the already-inspected Model section as well as its radio rows; leave the original tagged-note predicate unchanged. The failed intermediate class run (9 executed, 8 passed, 1 failed) is retained privately with its source patch. This changes diagnostic completeness, not selection or confirmation admission.
+- 2026-10-21: The first counted native pass exposed `SessionProvenance.toString`'s deliberate redaction. Emit its raw controlled test-session identifier in the private ownership record, so the current binding can be compared with the correlated saved-settings receipt. Rerun only the named recorded method to verify that diagnostic field; retain the earlier pass as evidence, not repair proof.

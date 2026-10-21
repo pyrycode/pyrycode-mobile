@@ -8550,7 +8550,7 @@ class InteractiveStreamE2ETest {
         return "host=$serverId conversation=$conversationId selected_host=$selectedHost " +
             "bundle=${bundle?.let(System::identityHashCode)} repository=${repository?.let(System::identityHashCode)} " +
             "transport=${transport?.let(System::identityHashCode)} relay=${bundle?.supervisor?.relayStatus?.value} " +
-            "session_binding=${bundle?.coordinator?.hostReadings?.liveSessionBindings?.get(conversationId)} " +
+            "session_binding=${bundle?.coordinator?.hostReadings?.liveSessionBindings?.get(conversationId)?.raw} " +
             "published_menu=${bundle?.coordinator?.hostReadings?.modelMenus?.value?.get(conversationId)}"
     }
 
