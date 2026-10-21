@@ -3,12 +3,10 @@ package de.pyryco.mobile.e2e
 import android.util.Log
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -139,10 +137,10 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             it.fact?.parent == rootId
         },
     )
-    // Retire session A before rebuilding the graph: the reopened Agent is already historical.
-    onNode(hasContentDescription("More actions")).performClick()
-    onAllNodesWithText("Reset session").onFirst().performClick()
-    awaitDisplayedSessionBoundary(120_000)
+    // Retire the destination before reset so its transient metadata collectors cannot race teardown.
+    onNodeWithContentDescription(InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_back)).performClick()
+    waitForIdle()
+    runBlocking { source().startNewSession(conversation) }
 
     fun boundaries(reading: ThreadEvidence) =
         projectAuthoritativeThread(
@@ -152,6 +150,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         ).items.filterIsInstance<ThreadItem.SessionBoundary>()
     val rotated = evidence { reading -> boundaries(reading).any { it.previousSessionId == session && it.newSessionId != session } }
     val nextSession = boundaries(rotated).single { it.previousSessionId == session }.newSessionId
+    openThread()
+    awaitDisplayedSessionBoundary(120_000)
     receipt("rotated_session_b", rotated)
     val oldGraph = GlobalContext.get()
     val oldCache = oldGraph.get<ConversationCache>()

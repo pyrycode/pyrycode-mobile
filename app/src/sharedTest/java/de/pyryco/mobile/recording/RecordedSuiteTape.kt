@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.ThreadQueryDecoder
 import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ThreadQueryRequest
+import de.pyryco.mobile.data.network.ThreadUpdateDto
 import de.pyryco.mobile.data.network.threadUnsigned
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -888,6 +889,59 @@ internal class RecordedSuiteTape(
         return names.distinct().singleOrNull()
     }
 
+    /** A delivered certificate permits live progress to trigger, but never spend, a later catch-up. */
+    private fun liveProgressHasDeliveredBase(
+        index: Int,
+        query: Int,
+    ): Boolean {
+        val step = steps[index]
+        val frame = step.message?.let(::mappedFrame) ?: return false
+        if (frame.inReplyTo != null || step.direction != "daemon") return false
+        val update = ThreadUpdateDto.decode(frame.type, frame.payload as? JsonObject ?: return false) ?: return false
+        val request = catchUp(query) ?: return false
+        if (request.version == 0uL || request.epoch.isEmpty() ||
+            update.conversationId != request.conversationId || update.epoch != request.epoch ||
+            update.version.toULong() <= request.version || frameConversation(frame) != update.conversationId
+        ) {
+            return false
+        }
+        return (0 until query).reversed().any { prior ->
+            if (prior !in consumed || steps[prior].owner != step.owner ||
+                lifecycleBefore[prior] != lifecycleBefore[index]
+            ) {
+                return@any false
+            }
+            val previous = catchUp(prior) ?: return@any false
+            if (previous.conversationId != request.conversationId) return@any false
+            val replies = replyIndices(prior)
+            if (replies.isEmpty() || replies.any { it >= query || it !in deliveredThreadReplies }) return@any false
+            val certificate = decodedQuery(prior, replies.map { checkNotNull(deliveredThreadReplies[it]) }) ?: return@any false
+            certificate.terminal.checkpoint.epoch == request.epoch &&
+                certificate.terminal.checkpoint.version == request.version &&
+                (replies.last() + 1 until index).none { between ->
+                    val event = steps[between]
+                    if (event.owner != step.owner || event.direction != "daemon" ||
+                        event.message?.type?.startsWith("thread_") != true
+                    ) {
+                        return@none false
+                    }
+                    val original = checkNotNull(event.message)
+                    val correlated = original.inReplyTo?.let { reply ->
+                        val request = steps.firstOrNull {
+                            it.direction == "client" && it.owner == event.owner && it.message?.id == reply
+                        } ?: return@none true
+                        (request.message?.payload as? JsonObject)?.get("conversation_id") ?: return@none true
+                    }
+                    if (correlated != null && correlated != (original.payload as? JsonObject)?.get("conversation_id")) return@none true
+                    val message = mappedFrame(original)
+                    val attribution = frameConversation(message) ?: return@none true
+                    if (attribution != request.conversationId) return@none false
+                    val progress = ThreadUpdateDto.decode(message.type, message.payload as? JsonObject ?: return@none true)
+                    between !in released || progress == null || progress.epoch != request.epoch
+                }
+        }
+    }
+
     /** Independent replies and live facts retain their own conversation's captured query and source order. */
     private fun independentConversationDelivery(index: Int): Boolean {
         val step = steps[index]
@@ -936,7 +990,9 @@ internal class RecordedSuiteTape(
                     before in consumed ||
                         message?.let {
                             earlier.owner to it.id in threadQueryRequests &&
-                                requestConversation(earlier.owner, it.id)?.let { other -> other != conversation } == true
+                                requestConversation(earlier.owner, it.id)?.let { other ->
+                                    other != conversation || liveProgressHasDeliveredBase(index, before)
+                                } == true
                         } == true
                 "daemon" -> {
                     // Summary metadata does not establish a canonical thread base. Its own delivery stays fenced.

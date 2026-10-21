@@ -122,11 +122,21 @@ class RecordedSuiteTapeTest {
                     )
             "intervening-command" -> rows += client("peer/host/0", frame(1, "modal_answer"))
             "intervening-lifecycle" -> rows += SuiteStep("close", "peer/host/0")
-            "intervening-reset" -> rows += daemon(owner, frame(13, "thread_reset", """{"conversation_id":"chat","epoch":"new","version":0}"""))
+            "intervening-reset" ->
+                rows +=
+                    daemon(owner, frame(13, "thread_reset", """{"conversation_id":"chat","epoch":"new","version":0}"""))
         }
         rows += client(owner, tail).copy(accepted = condition != "refused-tail")
         if (liveProgress) {
-            rows += daemon(owner, frame(12, "thread_item_added", """{"conversation_id":"chat","epoch":"epoch","version":18,"item":${fact(2, rev = 18)}}"""))
+            rows +=
+                daemon(
+                    owner,
+                    frame(
+                        12,
+                        "thread_item_added",
+                        """{"conversation_id":"chat","epoch":"epoch","version":18,"item":${fact(2, rev = 18)}}""",
+                    ),
+                )
         }
         val replyConversation = if (condition == "wrong-reply-conversation") "other" else "chat"
         val version = if (condition == "higher-checkpoint" || liveProgress) 18 else 17
@@ -219,22 +229,36 @@ class RecordedSuiteTapeTest {
     }
 
     @Test fun deliveredCertifiedBaseLetsLiveProgressTriggerItsStillRequiredCatchUp() {
-        val case = tailCase("valid", "close", liveProgress = true)
-        startTail(case)
-        assertEquals(listOf("thread_item_added"), case.tape.initial().map { it.message?.type })
-        assertFalse(case.tape.closeReady(case.owner))
-        assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
-        val replies = case.tape.request(case.owner, case.tail.copy(id = 91))
-        assertEquals(listOf("thread_items", "thread_items"), replies.map { it.message?.type })
-        assertEquals(listOf(91L, 91L), replies.map { it.message?.inReplyTo })
-        replies.forEach { case.tape.delivered(it.owner, checkNotNull(it.message)) }
-        assertTrue(case.tape.closeReady(case.owner))
-        finishTail(case)
+        for (condition in listOf("valid", "intervening-live")) {
+            val case = tailCase(condition, "close", liveProgress = true)
+            startTail(case)
+            assertEquals(listOf("thread_item_added"), case.tape.initial().map { it.message?.type })
+            assertFalse(case.tape.closeReady(case.owner))
+            assertThrows(IllegalStateException::class.java) { case.tape.assertComplete() }
+            val replies = case.tape.request(case.owner, case.tail.copy(id = 91))
+            assertEquals(listOf("thread_items", "thread_items"), replies.map { it.message?.type })
+            assertEquals(listOf(91L, 91L), replies.map { it.message?.inReplyTo })
+            replies.forEach { case.tape.delivered(it.owner, checkNotNull(it.message)) }
+            assertTrue(case.tape.closeReady(case.owner))
+            finishTail(case)
+        }
     }
 
     @Test fun liveProgressCannotBorrowAnUnconfirmedForeignOrResetBase() {
-        for (condition in listOf("undelivered-prior", "partial-prior", "foreign-owner", "foreign-conversation", "foreign-epoch",
-                                "refused-prior", "refused-tail", "extra-argument", "page", "intervening-reset")) {
+        for (condition in listOf(
+            "unrequested-prior",
+            "undelivered-prior",
+            "undelivered-final",
+            "partial-prior",
+            "foreign-owner",
+            "foreign-conversation",
+            "foreign-epoch",
+            "refused-prior",
+            "refused-tail",
+            "extra-argument",
+            "page",
+            "intervening-reset",
+        )) {
             val case = tailCase(condition, "close", liveProgress = true)
             startTail(case, condition)
             assertTrue("live progress must retain $condition fence", case.tape.initial().isEmpty())
