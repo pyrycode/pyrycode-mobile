@@ -109,14 +109,13 @@ and it must never infer daemon support from cached or empty data. `ThreadEvidenc
 authoritative factory exists and is exercised by fixtures now, ahead of that activation,
 precisely so the later seam change carries no risk of its own.
 
-**Where this plugged in.** `awaitFinishedSelectionReply` and
-`assertReplySuggestionLongPress` (`ReplySuggestionE2EAssertions.kt`) now observe through
-`harnessThreadEvidence(repository).observe(conversationId)` instead of calling
-`observeMessages` directly, but kept their existing signatures and callers unchanged.
-`awaitFinishedSelectionReply` still means "a loaded main reply appeared"; the suggestion
-helper's echo check still means "exactly one delivered copy of this exact text exists," and
-its revisioned-clear check is untouched. `holdsSettledAssistantReply` itself was not
-changed — legacy settlement still delegates to it unmodified.
+**Consumer reads.** `awaitFinishedSelectionReply` still means "a loaded main reply
+appeared." `assertReplySuggestionLongPress` now takes the owning host's current
+repository holder (#2436). `ReplySuggestionReads` selects conversation/session and
+offer together inside `firstOnLive`, then follows that holder for exactly one
+verbatim delivered echo and a newer session-scoped clear. Capturing one repository
+can strand the offer wait after reconnect while the UI follows its replacement.
+See [replacement regression and counted evidence](../../e2e-interactive-stream.md#reply-suggestion-live-connection-observation-2436).
 
 **Lesson for later migrations.** When moving a stream-suite consumer off raw
 `observeMessages` or a raw `AuthoritativeThreadSnapshot` read, reach for `ThreadEvidence`
