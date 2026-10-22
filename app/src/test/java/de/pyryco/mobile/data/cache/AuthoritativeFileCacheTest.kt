@@ -92,12 +92,12 @@ class AuthoritativeFileCacheTest {
             fields["rev"] = JsonPrimitive(2)
             cache.writeAuthoritativeThread("host", "c", ordinary).getOrThrow()
             val owned = requireNotNull(cache.readAuthoritativeThread("host", "c"))
-            assertThrows(UnsupportedOperationException::class.java) { (owned.items as MutableList).clear() }
+            assertThrows(UnsupportedOperationException::class.java) { (owned.items as MutableList<*>).clear() }
             val extension = owned.items.single()["extension"] as JsonObject
             @Suppress("UNCHECKED_CAST")
             val entry = extension.entries.single() as MutableMap.MutableEntry<String, kotlinx.serialization.json.JsonElement>
             assertThrows(UnsupportedOperationException::class.java) { entry.setValue(JsonPrimitive("changed")) }
-            assertThrows(UnsupportedOperationException::class.java) { (owned.toSnapshot().items as MutableList).clear() }
+            assertThrows(UnsupportedOperationException::class.java) { (owned.toSnapshot().items as MutableList<*>).clear() }
             assertEquals(ordinary, cache.readAuthoritativeThread("host", "c"))
         }
 
