@@ -301,3 +301,11 @@ and documentation repairs; it changes none of this repair's production or saved-
 code. Final pre-verification and independent complete configured acceptance must bind the
 resulting candidate. These manual passes do not replace either child's review or parent's
 current-candidate acceptance, documentation stage and final merged/Done workflow.
+
+### Authoritative-only main integration: acceptance still blocked
+
+The ordinary merge of reviewed main b6845bf5d into the manual ownership repair produced 4256ef355499. Its configured JVM/build check (jvm-sks0j84x) executed 5354 methods: 5353 passed, one failed, zero errors/skips. Native compilation failed before device execution because the retained paging probe lacked its assertIsDisplayed import. The sole JVM failure expected the retired legacy Offline tail after local state became Idle; authoritative-only presentation returns None. Both idle-boundary expectations and the import were corrected without changing production code or Loading/Retry, content, reader ownership or request assertions.
+
+Repaired source 897ddbff4c514efb065bb9ca3ab86647b14e318b passed the single selected replacementReaderOwnsLocalRetryAndCleanup method (1 executed/passed, zero failed/errors/skips), forced Spotless (six tasks), and compileDebugAndroidTestKotlin. Native executed count remains zero for this integration. Retained raw reports, source and receipts are under logs/evidence/2437/manual-reader-apply-20261022/main-b684-integration/: failed-4256 manifest fb1723e1cde245782bb13821a28fc9185d1d77778c19f58b374636e2e98616d8; green-897d manifest 13b723c23395af59f24528c6932c7c00e83327a8a69761c0fc1d774937d6cb93. The original failure remains evidence; this focused rerun does not establish complete configured acceptance.
+
+Main's reviewed runtime retirement removed three former native methods, the optional legacy projection consumer and multi-span legacy coverage. Current projectionDispatcher is unused, and SavedThreadCoverage represents one interval. A delayed unused dispatcher or a logged span count cannot substitute for the binding native proof. Manually held blocker #2447 requires an approved compatibility mapping before fixture implementation; all six methods, current independent gates, actual documentation and final workflow completion remain outstanding.
