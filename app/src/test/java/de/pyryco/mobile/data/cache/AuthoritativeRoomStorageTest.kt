@@ -161,9 +161,22 @@ class AuthoritativeRoomStorageTest {
             val ascending = (1L..18_000L).toList()
             verify(original, ascending)
             database?.close()
-            // Model an installed v10 database: its schema is unchanged and its derived keys are stale.
+            // Restore the historical v10 legacy DDL; current databases no longer contain those tables.
             SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
                 db.execSQL("UPDATE authoritative_items SET displayKey='old',anchorId=0,tieId=0 WHERE host='Host'")
+                val schema =
+                    MobileJson.parseToJsonElement(
+                        File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/10.json").readText(),
+                    ).jsonObject.getValue("database").jsonObject
+                for (entry in schema.getValue("entities").jsonArray) {
+                    val entity = entry.jsonObject
+                    val table = entity.getValue("tableName").jsonPrimitive.content
+                    if (!table.startsWith("legacy_")) continue
+                    db.execSQL(entity.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
+                    entity.getValue("indices").jsonArray.forEach { index ->
+                        db.execSQL(index.jsonObject.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
+                    }
+                }
                 db.version = 10
             }
             verify(original, ascending)
