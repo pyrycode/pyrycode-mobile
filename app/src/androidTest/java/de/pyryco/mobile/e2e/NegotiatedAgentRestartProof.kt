@@ -278,8 +278,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         screen?.checkpoint,
                         screen?.openingRows?.size,
                         screen?.items?.size,
-                    current.generation,
-                    screen?.generation,
+                        current.generation,
+                        screen?.generation,
                     )
             if (mark != previousProbe) {
                 previousProbe = mark
@@ -302,7 +302,9 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 )
             }
             // A reset or connection switch during key lookup cannot certify the retired reading.
-            screenReading != null && screenEvidence != null && indexes.all { it >= 0 } &&
+            screenReading != null &&
+                screenEvidence != null &&
+                indexes.all { it >= 0 } &&
                 observation.evidence(screenReading) === screenEvidence
         }
         // The lazy list is reversed: a newer row has a smaller index.
