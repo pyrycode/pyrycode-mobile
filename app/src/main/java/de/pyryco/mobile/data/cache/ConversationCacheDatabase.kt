@@ -4,6 +4,7 @@ import androidx.room.AutoMigration
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.DeleteTable
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
@@ -20,12 +21,11 @@ import java.io.IOException
 /** Shared database shell. Legacy evidence cannot certify the authoritative storage family. */
 @Database(
     entities = [
-        ConversationCacheDatabase.Header::class, ConversationCacheDatabase.Row::class, ConversationCacheDatabase.Evidence::class,
         ConversationCacheDatabase.AuthoritativeHeader::class, ConversationCacheDatabase.AuthoritativeItem::class,
         ConversationCacheDatabase.FileImport::class,
         ConversationCacheDatabase.AuthoritativeRetirement::class,
     ],
-    version = 11,
+    version = 12,
     autoMigrations = [
         AutoMigration(
             from = 1,
@@ -38,9 +38,15 @@ import java.io.IOException
         AutoMigration(from = 8, to = 9, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
         AutoMigration(from = 9, to = 10, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
         AutoMigration(from = 10, to = 11, spec = ConversationCacheDatabase.PlacementWitnessMigration::class),
+        AutoMigration(from = 11, to = 12, spec = ConversationCacheDatabase.DiscardLegacyMigration::class),
     ],
 )
 abstract class ConversationCacheDatabase : RoomDatabase() {
+    @DeleteTable(tableName = "legacy_headers")
+    @DeleteTable(tableName = "legacy_rows")
+    @DeleteTable(tableName = "legacy_evidence")
+    class DiscardLegacyMigration : AutoMigrationSpec
+
     class RenderPlacementMigration : AutoMigrationSpec {
         override fun onPostMigrate(db: SupportSQLiteDatabase) = backfill(db, false)
 
@@ -211,8 +217,6 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         }
     }
 
-    internal abstract fun legacy(): LegacyDao
-
     internal abstract fun authoritative(): AuthoritativeDao
 
     internal abstract fun imports(): FileImportDao
@@ -222,9 +226,6 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         host: String,
         conversation: String?,
     ) = withTransaction {
-        legacy().deleteEvidence(host, conversation)
-        legacy().deleteRows(host, conversation)
-        legacy().deleteHeaders(host, conversation)
         authoritative().deleteItems(host, conversation)
         authoritative().deleteRetirements(host, conversation)
         authoritative().deleteHeaders(host, conversation)
@@ -632,290 +633,6 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
 
         @Query("DELETE FROM authoritative_headers WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
         suspend fun deleteHeaders(
-            host: String,
-            conversation: String?,
-        )
-    }
-
-    @Entity(tableName = "legacy_headers", primaryKeys = ["host", "conversation"])
-    internal data class Header(
-        val host: String,
-        val conversation: String,
-        val generation: String,
-        val cursor: String?,
-        val atStart: Boolean,
-        val coverageHeader: String?,
-        @ColumnInfo(defaultValue = "0") val rowCount: Int = 0,
-    ) {
-        override fun toString(): String = "LegacyHeader(redacted)"
-    }
-
-    @Entity(
-        tableName = "legacy_rows",
-        primaryKeys = ["host", "conversation", "ordinal"],
-        indices = [Index(value = ["host", "conversation", "identity"], unique = true)],
-    )
-    internal data class Row(
-        val host: String,
-        val conversation: String,
-        val ordinal: Long,
-        val payload: String,
-        @ColumnInfo(defaultValue = "NULL") val identity: String? = null,
-    ) {
-        override fun toString(): String = "LegacyRow(redacted)"
-    }
-
-    @Entity(
-        tableName = "legacy_evidence",
-        primaryKeys = ["host", "conversation", "kind", "key", "part"],
-        indices = [
-            Index(
-                "host",
-                "conversation",
-                "ordinal",
-            ), Index("host", "conversation", "kind", "low", "high"), Index("host", "conversation", "kind", "high"),
-        ],
-    )
-    internal data class Evidence(
-        val host: String,
-        val conversation: String,
-        val kind: String,
-        val key: String,
-        val part: Int,
-        val ordinal: Long,
-        val low: String,
-        val high: String,
-        val payload: String,
-    ) {
-        override fun toString(): String = "LegacyEvidence(redacted)"
-    }
-
-    @Dao
-    internal interface LegacyDao {
-        @Query("SELECT EXISTS(SELECT 1 FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='losses')")
-        suspend fun hasLoss(
-            host: String,
-            conversation: String,
-        ): Boolean
-
-        @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND key=:key")
-        suspend fun evidenceCells(
-            host: String,
-            conversation: String,
-            kind: String,
-            key: String,
-        ): List<Evidence>
-
-        @Insert(onConflict = OnConflictStrategy.REPLACE)
-        suspend fun upsertEvidence(evidence: List<Evidence>)
-
-        @Query("SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity=:identity")
-        suspend fun ownedRow(
-            host: String,
-            conversation: String,
-            identity: String,
-        ): Row?
-
-        @Query("SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND identity=:identity")
-        suspend fun ownedOrdinal(
-            host: String,
-            conversation: String,
-            identity: String,
-        ): Long?
-
-        @Query(
-            "SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal>:after ORDER BY ordinal LIMIT 1",
-        )
-        suspend fun nextOrdinal(
-            host: String,
-            conversation: String,
-            after: Long,
-        ): Long?
-
-        @Query("SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation ORDER BY ordinal LIMIT :limit")
-        suspend fun oldestRows(
-            host: String,
-            conversation: String,
-            limit: Int,
-        ): List<Row>
-
-        @Query("UPDATE legacy_rows SET payload=:payload WHERE host=:host AND conversation=:conversation AND ordinal=:ordinal")
-        suspend fun updateRow(
-            host: String,
-            conversation: String,
-            ordinal: Long,
-            payload: String,
-        )
-
-        @Query("DELETE FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal=:ordinal")
-        suspend fun removeRow(
-            host: String,
-            conversation: String,
-            ordinal: Long,
-        )
-
-        @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='rowEntries' AND low=:entry")
-        suspend fun producingClaims(
-            host: String,
-            conversation: String,
-            entry: String,
-        ): List<Evidence>
-
-        @Query(
-            "DELETE FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND key=:key AND kind IN ('rowOrder','rowEntries','proofs','legacyKeys','legacyOffsets','deltaLengths','deltaHashes','deltaText')",
-        )
-        suspend fun removeClaim(
-            host: String,
-            conversation: String,
-            key: String,
-        )
-
-        @Query("DELETE FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND key=:key AND part=:part")
-        suspend fun removeCell(
-            host: String,
-            conversation: String,
-            kind: String,
-            key: String,
-            part: Int,
-        )
-
-        @Insert(onConflict = OnConflictStrategy.REPLACE)
-        suspend fun updateHeader(header: Header)
-
-        @Query("SELECT * FROM legacy_headers WHERE host=:host AND conversation=:conversation")
-        suspend fun header(
-            host: String,
-            conversation: String,
-        ): Header?
-
-        @Query(
-            "SELECT * FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal<:before ORDER BY ordinal DESC LIMIT :limit",
-        )
-        suspend fun rows(
-            host: String,
-            conversation: String,
-            before: Long,
-            limit: Int,
-        ): List<Row>
-
-        @Query(
-            "SELECT ordinal FROM legacy_rows WHERE host=:host AND conversation=:conversation AND ordinal<:before ORDER BY ordinal DESC LIMIT 1",
-        )
-        suspend fun probe(
-            host: String,
-            conversation: String,
-            before: Long,
-        ): List<Long>
-
-        @Query("SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation ORDER BY kind, key, part")
-        suspend fun allEvidence(
-            host: String,
-            conversation: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND ordinal BETWEEN :first AND :last ORDER BY kind,key,part",
-        )
-        suspend fun rowEvidence(
-            host: String,
-            conversation: String,
-            first: Long,
-            last: Long,
-        ): List<Evidence>
-
-        // Closed intervals need the strict predecessor as well as intervals starting at first.
-        // Keep the same intersection rule in gapWalks and gapCursors.
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind=:kind AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first ORDER BY low",
-        )
-        suspend fun intervals(
-            host: String,
-            conversation: String,
-            kind: String,
-            first: String,
-            last: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='spans' AND high<:edge ORDER BY high DESC LIMIT 1",
-        )
-        suspend fun olderSpan(
-            host: String,
-            conversation: String,
-            edge: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='spans' AND low>:edge ORDER BY low LIMIT 1",
-        )
-        suspend fun newerSpan(
-            host: String,
-            conversation: String,
-            edge: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind IN ('cursors','walks') AND low BETWEEN :first AND :last UNION ALL SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='walks' AND low='00000000000000000000' AND low NOT BETWEEN :first AND :last ORDER BY kind,low",
-        )
-        suspend fun cursors(
-            host: String,
-            conversation: String,
-            first: String,
-            last: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='cursors' AND low>=:edge ORDER BY low LIMIT 1",
-        )
-        suspend fun edgeCursor(
-            host: String,
-            conversation: String,
-            edge: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='cursors' AND low IN (SELECT (SELECT MIN(c.low) FROM legacy_evidence c WHERE c.host=:host AND c.conversation=:conversation AND c.kind='cursors' AND c.low>=g.high) FROM legacy_evidence g WHERE g.host=:host AND g.conversation=:conversation AND g.kind='gaps' AND g.low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND g.high>=:first)",
-        )
-        suspend fun gapCursors(
-            host: String,
-            conversation: String,
-            first: String,
-            last: String,
-        ): List<Evidence>
-
-        @Query(
-            "SELECT * FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='walks' AND low IN (SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low BETWEEN COALESCE((SELECT low FROM legacy_evidence WHERE host=:host AND conversation=:conversation AND kind='gaps' AND low<:first ORDER BY low DESC LIMIT 1),:first) AND :last AND high>=:first)",
-        )
-        suspend fun gapWalks(
-            host: String,
-            conversation: String,
-            first: String,
-            last: String,
-        ): List<Evidence>
-
-        @Insert
-        suspend fun insertHeader(header: Header)
-
-        @Insert
-        suspend fun insertRows(rows: List<Row>)
-
-        @Insert
-        suspend fun insertEvidence(evidence: List<Evidence>)
-
-        @Query("DELETE FROM legacy_headers WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
-        suspend fun deleteHeaders(
-            host: String,
-            conversation: String?,
-        )
-
-        @Query("DELETE FROM legacy_rows WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
-        suspend fun deleteRows(
-            host: String,
-            conversation: String?,
-        )
-
-        @Query("DELETE FROM legacy_evidence WHERE host=:host AND (:conversation IS NULL OR conversation=:conversation)")
-        suspend fun deleteEvidence(
             host: String,
             conversation: String?,
         )

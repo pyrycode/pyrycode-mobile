@@ -4,13 +4,105 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Testing
 
+### Legacy-discard upgrades and reopen proof (#2386)
+
+`LegacyDiscardMigrationTest.preservationInvariant_allShippedSchemasUpgradeAndReopen`
+constructs on-disk databases from every exported schema 1–11, opens through
+`openConversationCacheDatabase`, then closes and reopens fresh database/cache instances twice.
+`preservationInvariant_freshCreationAndReopen` checks the same supported schema on fresh
+creation. Each source includes colliding ids under case-distinct `Host`/`host` owners and two
+conversations per host, obsolete content/evidence and every supported authoritative/import/
+retirement field. Compare original columns exactly, including raw unknown fields, revisions,
+order, epoch/incarnation, progress and header/certification values; check newly introduced
+defaults and derived placement separately. Nested agents make the placement backfills
+nontrivial. Malformed legacy bytes exercise the historical 3 → 4 path before final discard.
+
+The matrix also proves upgraded save/read and isolated conversation/host removal, item-retirement
+rejection, inert known/unknown-owner legacy sources, one-time authoritative import and newer
+Room content surviving stale source files. Retirement fixtures intentionally have zero
+checkpoint/no coverage; certified siblings keep nonzero evidence. Metadata and supported read
+state retain independent ownership. Pending feedback crosses authoritative restoration and
+acceptance in memory; this establishes no provisional-send persistence across process death.
+Keep the retained import failure/cancellation/unobserved-write and factory no-backup/saved-pairing
+assertions alongside the matrix.
+
+`LegacyDiscardMigrationDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen`
+reuses the shared oracle on native Android SQLite for schema 2 (oldest authoritative), schema 11
+(latest before removal) and fresh creation, with two reopens each. Its `androidTest` entry point
+is necessary for configured UI-gate discovery: packaging the shared class into the test APK
+alone did not select it. A focused pass cannot replace counted configured-gate execution.
+Likewise, a historical fixture must restore its exported table/index DDL before changing its
+version; a version-only downgrade of schema 12 omits legacy tables and cannot test their drop.
+The repaired nested-agent storage probe keeps its structural-write and repeated-reopen assertions.
+
+The [initial evidence index](../../../app/src/test/resources/verification/legacy-discard-2386/results.json)
+records Linux x86_64, OpenJDK 21, Robolectric API 33 and managed Android 13, exact commands,
+source/APK/report hashes and raw preservation observations. At final focused JVM revision
+`c1f2ce9d6047d8afa51993010671889946e7891a`, individually selected classes executed/passed:
+
+| Class | Executed / passed | Failed / skipped |
+| --- | --- | --- |
+| `LegacyDiscardMigrationTest` | 3 / 3 | 0 / 0 |
+| `AuthoritativeRoomStorageTest` | 13 / 13 | 0 / 0 |
+| `MigratingConversationCacheTest` | 13 / 13 | 0 / 0 |
+| `ConversationCacheFactoryTest` | 3 / 3 | 0 / 0 |
+| `AuthoritativeSendReconciliationTest` | 7 / 7 | 0 / 0 |
+| `AuthoritativeOwnedRemovalTest` | 18 / 18 | 0 / 0 |
+| `FileConversationCacheReadPositionTest` | 3 / 3 | 0 / 0 |
+
+All 60 executed/passed with zero errors. The original focused native shared method executed/
+passed **1, 0 failed/errors/skipped**, using production/schema/shared sources
+`129144c6f6bb93614a52dfc5d03a33e112079524` at execution head
+`9866c8e209e26e6ee7dea85ad56a0759c8e3e790`; the final shared fixture differs only in whitespace.
+Raw XML and phone logs were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-20261022-129144c6f/`.
+The expected legacy-table red remains **1 executed, 0 passed, 1 failed, 0 skipped**;
+fixture-development failures and the optional-index fixture failure (**13 executed, 12 passed,
+1 failed, 0 skipped**) remain failed evidence. The repaired nested-agent method passed **1/1**.
+
+The [discovery-repair evidence index](../../../app/src/test/resources/verification/legacy-discard-2386/rework-results.json)
+at source `4ed26f221093f66d5be4c07d6371906154d21f96` records separate shared JVM **3/3** and
+focused device **1/1** passes, each with **0 failed/errors/skipped**. Raw XML, source/APK hashes
+and nine native exact-preservation observations were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-rework-20261022-4ed26f221/`.
+The earlier [verifier FAIL](https://github.com/pyrycode/pyrycode-mobile/pull/2448#issuecomment-6331855857)
+at `5a241432f05a351f64dc6916566c4f562165dafc` remains valid: its configured UI run reported
+328, executed/passed 327, failed 0 and skipped 1, with zero native preservation cases.
+
+The final [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2448#issuecomment-6332464426)
+for `6f2f74a9d1d62f5dec3b0298fdbe23ea607b8531` supersedes the manifests' pending-acceptance
+notes. Linux `python3 scripts/jvm-test-gate.py --with-build-checks` executed/passed **5321,
+0 failed/errors/skipped**, including all three shared migration methods. Complete configured
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` executed the device
+entry point above **once, passed, 0 failed/errors/skipped**. Raw and normalized XML agree;
+the raw XML SHA-256 is `c5fdc6f428e2935994dc069619542ba161663948ea8897707b618c2e8d10fcf6`.
+Its phone log records all nine `exact=true` observations (sources 2, 11 and fresh, each opened
+then reopened twice).
+
+Preserve that full UI invocation's actual result: **329 reported, 328 executed, 327 passed,
+1 failed, 0 errors, 1 skipped**. `RecordedMobileSuiteTest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+failed; the dispatcher accepted its unchanged rerun (**1 executed/passed, 0 failed/errors/skipped**),
+tracked on #2368. `RenameDialogCaptureTest.renameAtFigmaViewport` was skipped. This is accepted
+verification with a retained failure/rerun, not an all-pass original invocation.
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` executed/
+passed **24, 0 failed/errors/skipped**. The retained verifier evidence run is
+`8818f8f91c255157d9cc81347b6cbcfd1be49add2a13a36081d758790eb1f18d` on `build-hp-1`;
+counts are copied here because gate-worktree build paths are removed. These complete-gate
+results are separate from focused builder runs. macOS is outside this Linux ticket's scope;
+no real-Claude scenario was required and documentation ran no tests.
+
+See [supported layout/backfills](conversation-cache-layout.md#layout),
+[retained removal fences](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
+and the [plan](../../specs/architecture/2386-drop-legacy-room-tables.md).
+The complete contract/repository/thread retirement fold remains with #2364/#2387.
+
 ### Authoritative import and inert legacy files (#2385)
 
 `MigratingConversationCacheTest.ownershipInvariant_legacyFilesStayInertAcrossReopens`
 seeds both file families for two case-distinct hosts sharing conversation ids, unknown-owner
-hashed legacy files and different pre-existing legacy Room rows. Two fresh cache/database
-reopens must preserve exact legacy Room content and source bytes, with no legacy import
-bookkeeping. Empty legacy pages are valid empty pages, not null. The same probe checks exact
+hashed legacy files. Two fresh cache/database reopens must preserve source bytes without
+creating legacy tables or legacy import bookkeeping. Schema 12 removes the pre-existing
+legacy Room rows that #2385 originally preserved. The same probe checks exact
 owner-scoped authoritative content/certification, metadata and supported read state.
 `idempotenceInvariant_committedImportIsNeverRepeatedOrOverwritten` additionally keeps a newer
 Room save across restart despite its older authoritative source.
@@ -43,12 +135,16 @@ pairing-admission methods executed and passed; the six classes above account for
 in this full-suite run as well. Configured UI evidence records **327 executed/passed,
 0 failed/errors, 1 skipped** (`renameAtFigmaViewport`); scripted-all records **24 executed/passed,
 0 failed/errors/skipped**. These dispatcher results are separate from the focused builder runs.
-Native production-opener upgrade proof belongs to #2386 and final integration to #2364;
+Native production-opener upgrade proof is [recorded above](#legacy-discard-upgrades-and-reopen-proof-2386);
+final integration remains with #2364;
 macOS is outside this Linux ticket's verification scope. Documentation ran no tests.
 
 ### Indexed legacy disk probes (#2162)
 
-`LegacyRoomStorageTest` uses Robolectric with a real on-disk Room database and fresh database/
+The following preserves historical #2162 evidence. #2386 removed `LegacyRoomStorageTest`
+with its exclusive backend; these counts do not describe the current suite.
+
+`LegacyRoomStorageTest` used Robolectric with a real on-disk Room database and fresh database/
 storage instances between persistence assertions. An in-memory database or a same-instance
 read cannot establish restart fidelity. Its 18 probes cover all six persisted row kinds and
 fields, exact owner isolation, equal/misleading timestamp order, stale continuations, unsigned
