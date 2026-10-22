@@ -343,3 +343,29 @@ Source33516287c3 plus formatter-only6a3a05479d passed340/340affectedJVM methods 
 The paging failure repeated expecteditemDecodes200/actual400 on offlineopening1 after offlineopening0 passed. Chronological phone records show each of the two explicit attempts decoding200, then a separate read_parent_closure after successful reader_page in the failing arm only. Protected child2452 owns its causal investigation; it blocks2451 and all parents. Preserve the earlier d87e failure and unchanged-tree named pass; this repeat is not accepted flakiness. Parent2449 retains latency ownership; numeric2451 stays limited to exact validated number encoding. No current independent candidate is accepted.
 
 Numeric2451's additional real FileConversationCache→SavedAuthoritativeDestination/registry/coordinator/repository/ViewModel exact opaque-number cold-reopen probe ran on59f2079541 plus formatter-only7694aeb3af:1selected/executed/passed,0failures/errors/skips, four offline/held-newest first/reopen arms with exact raw values and no extra request at rest. Evidence logs/evidence/2451/manual-20261022/reopen-59f2, manifest0d7dac300d6aab6f12770f11a77080ac2603e7adaddd0145f4e073ad3164d46c. It supplements340green without claiming current native or independent acceptance. Every child and parent still requires its own independent complete configured Linux gates, actual documentation and reviewed merge/Done.
+
+## Prior first-draw map retained during reviewed storage retirement
+
+The following earlier map is retained verbatim as history. The approved authoritative-only #2447 mapping and current accepted-source evidence in this companion govern the pending acceptance. Historical focused passes do not accept a later candidate.
+
+### Earlier #2334 map
+
+The [paging proof and counted evidence](authoritative-reader-paging.md#native-and-deterministic-proof)
+covers offline/held-newest demand, explicit retry and cold reopen through the production
+negotiated destination and real database. It retains the 1000 ms product target, unchanged
+renderer bound, full-file fixture, delayed projection and slow control below. The bounded
+repair in #2437 adds production disk/repository/ViewModel reset-after-settled-Retry and exact
+reader-replacement cleanup probes. Its focused manual 178 JVM and six native passes are
+recorded separately from the parent's failed review and pending independent acceptance in
+the companion; they do not establish final #2334 acceptance.
+
+### Earlier updated first-draw map retained at integration
+
+The [paging proof and counted evidence](authoritative-reader-paging.md#native-and-deterministic-proof)
+covers offline/held-newest demand, explicit retry and cold reopen through the production
+negotiated destination and real database. It retains the 1000 ms product target, unchanged
+renderer bound and slow control. The [approved current native mapping](authoritative-reader-paging.md#approved-native-acceptance-mapping-2447) replaces retired legacy span/projection checks; the legacy measurements below remain historical. The bounded
+repair in #2437 adds production disk/repository/ViewModel reset-after-settled-Retry and exact
+reader-replacement cleanup probes. Its focused manual 178 JVM and six native passes are
+recorded separately from the parent's failed review and pending independent acceptance in
+the companion; they do not establish final #2334 acceptance.
