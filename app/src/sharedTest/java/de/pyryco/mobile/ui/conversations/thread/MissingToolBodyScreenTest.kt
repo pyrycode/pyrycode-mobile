@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -55,7 +56,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 class MissingToolBodyScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun mountedProductionConsumerLoadsRetriesAndReusesRetainedBodyWithoutFalseSight() {
+    @Test fun mountedProductionConsumerLoadsRetriesAndReusesRetainedBodyWithoutFalseSight() = mountedBody()
+
+    @Test fun stoppedDestinationReleasesDemandBeforeLoadingPresentationArrives() = mountedBody(stopBeforeLoading = true)
+
+    private fun mountedBody(stopBeforeLoading: Boolean = false) {
+        val frames = Channel<Long>(Channel.UNLIMITED)
+        frames.trySend(1L)
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val inbound = Channel<Envelope>(Channel.UNLIMITED)
         val sent = CopyOnWriteArrayList<Envelope>()
@@ -117,6 +124,14 @@ class MissingToolBodyScreenTest {
                             source,
                             connection,
                             ComposerDraftStore(),
+                            contentScheduling =
+                                if (stopBeforeLoading) {
+                                    ThreadContentScheduling(
+                                        Dispatchers.IO,
+                                    ) { frames.receive() }
+                                } else {
+                                    null
+                                },
                         )
                     }
                 },
@@ -182,9 +197,34 @@ class MissingToolBodyScreenTest {
             compose.onNodeWithText("Using tools: 2").performClick()
             compose.waitUntil(5000) { compose.onAllNodesWithTag("tool-row").fetchSemanticsNodes().isNotEmpty() }
             assertTrue(reads().isEmpty())
+            val beforeLoading = vm.state.value.authoritativeThread
             toggle()
             compose.waitUntil(5000) { reads().size == 1 }
             assertEquals("17", (reads().single().payload as JsonObject)["item_id"].toString())
+            if (stopBeforeLoading) {
+                assertSame(beforeLoading, vm.state.value.authoritativeThread)
+                compose.runOnIdle { (owner.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.CREATED }
+                compose.waitUntil(5000) {
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .bodyLoads
+                        .isEmpty()
+                }
+                reply(false)
+                reply(true)
+                // The next conversation query proves the abandoned slot drained without enrichment.
+                repo.openAuthoritativeThread("c")
+                compose.waitUntil(5000) { sent.any { it.type == "thread_catch_up" } }
+                assertTrue(
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .bodyContents
+                        .isEmpty(),
+                )
+                assertEquals(1, reads().size)
+                assertTrue(seen.isEmpty())
+                return
+            }
             compose.onNodeWithText("Loading tool details…").assertExists()
             assertTrue(seen.isEmpty())
             reply(false)

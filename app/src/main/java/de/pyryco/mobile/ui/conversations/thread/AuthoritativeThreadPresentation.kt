@@ -279,7 +279,7 @@ private fun projectThread(
             ) {
                 item
             } else {
-                ThreadItemDto.decode(
+                ThreadItemDto.decodeReplacement(
                     JsonObject(
                         item.raw + ("content" to JsonObject((item.content as? JsonObject).orEmpty() + body)),
                     ),

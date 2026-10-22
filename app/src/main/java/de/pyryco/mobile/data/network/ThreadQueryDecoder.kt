@@ -139,20 +139,23 @@ internal class ThreadQueryDecoder(
     ): ThreadDecodeOutcome<ThreadQueryReply> {
         val expected = request as ThreadQueryRequest.Body
 
-        fun metadata(fields: JsonObject): JsonObject? =
+        fun metadata(
+            fields: JsonObject,
+            validateKind: Boolean = true,
+        ): JsonObject? =
             try {
                 require(fields.threadString("epoch") == expected.epoch)
                 require(fields.threadUnsigned("item_id") == expected.itemId && fields.threadUnsigned("rev") == expected.expectedRev)
-                require(fields.threadString("kind") == expected.kind)
+                if (validateKind) require(fields.threadString("kind") == expected.kind)
                 require(fields.threadString("conversation_id") == expected.conversationId)
                 JsonObject(
-                    fields.filterKeys { it in setOf("conversation_id", "epoch", "version", "item_id", "rev", "kind") } +
+                    fields.filterKeys { it in setOf("conversation_id", "epoch", "version", "item_id", "rev") } +
                         ("envelope_routing" to route),
                 )
             } catch (_: IllegalArgumentException) {
                 null
             }
-        if (envelope.type != "thread_tool_body" || metadata(raw) == null) return reject("attribution")
+        if (envelope.type != "thread_tool_body" || metadata(raw, validateKind = !fragment) == null) return reject("attribution")
         if (!fragment && raw["final"] == JsonPrimitive(true)) {
             if (pending || !bodyData && !draining) return reject("sequence")
             val marker = decodeThreadQueryReply(envelope.type, raw) as? ThreadQueryReply.Body ?: return reject("malformed")
@@ -170,7 +173,7 @@ internal class ThreadQueryDecoder(
                     ) {
                         null
                     } else {
-                        metadata(fields)
+                        metadata(fields, validateKind = "continuation" !in fields)
                     }
                 },
                 {

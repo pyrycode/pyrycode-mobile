@@ -346,7 +346,7 @@ internal class AuthoritativeThreadQueries(
         }
         if (held.attentionRetries == 0) return
         val retry = Intent(request.conversationId, false, held.attentionRetries - 1, held.generation)
-        val pending = queued.indexOfFirst { it.conversation == retry.conversation && !it.older }
+        val pending = queued.indexOfFirst { it.conversation == retry.conversation && !it.older && it.body == null }
         if (pending < 0) {
             queued.addLast(retry)
         } else if (queued[pending].attentionRetries < retry.attentionRetries) {

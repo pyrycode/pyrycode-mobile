@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
@@ -236,6 +237,61 @@ class ToolBodyQueriesTest {
             assertNull(f.load())
         }
 
+    @Test fun attentionRetryPreservesQueuedBodyEvenWhenRepairWasAlreadyMarked() =
+        runTest {
+            val f = Fixture()
+            f.store.requestRepair("h", "c")
+            f.lane.refreshAttention("c")
+            val catchUp = f.sent.single()
+            f.demand()
+            val loading = f.store.current("h", "c")
+            assertEquals(BodyLoad.Loading, f.load())
+            f.lane.accept(f.error(catchUp))
+            assertSame(loading, f.store.current("h", "c"))
+            assertEquals(listOf("thread_catch_up", "thread_read_tool_body"), f.sent.map { it.type })
+            f.lane.accept(f.reply())
+            f.lane.accept(f.reply(true))
+            assertEquals(JsonPrimitive("body"), f.body()["output"])
+            assertNull(f.load())
+            assertEquals("thread_catch_up", f.sent.last().type)
+        }
+
+    @Test fun fetchedBodyExpansionPreservesLiveOptionalNullClears() =
+        runTest {
+            val f = Fixture()
+            AuthoritativeThreadRoute("h", f.store).accept(
+                Envelope(
+                    80,
+                    "thread_item_changed",
+                    "now",
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"c","epoch":"e","version":24,"item_id":17,"rev":24,"base_rev":23,"changes":{"session":null,"parent":null}}""",
+                    ),
+                ),
+            )
+            val held =
+                f.store
+                    .current("h", "c")
+                    .items
+                    .single()
+            assertEquals(24L, held.rev)
+            assertEquals(JsonNull, held.raw["session"])
+            assertEquals(JsonNull, held.raw["parent"])
+            f.demand()
+            f.lane.accept(f.reply(rev = 24))
+            f.lane.accept(f.reply(true, rev = 24))
+            val p = projectDeferredAuthoritativeThread("h", "c", f.store.current("h", "c"))
+            val row = p.demandRows(p.rows, setOf("${p.scope}:17")).single() as ThreadRow.Delivered
+            assertEquals("body", (row.item as ThreadItem.MessageItem).message.toolCall?.output)
+            assertSame(
+                held,
+                f.store
+                    .current("h", "c")
+                    .items
+                    .single(),
+            )
+        }
+
     @Test fun withdrawnExpansionGrantCannotPublishStagedData() =
         runTest {
             val f = Fixture()
@@ -332,7 +388,7 @@ class ToolBodyQueriesTest {
                     f.reply().copy(
                         payload =
                             JsonObject(
-                                (raw - setOf("content", "final")) +
+                                (raw - setOf("content", "final", "kind")) +
                                     mapOf(
                                         "data" to JsonPrimitive(data),
                                         "continuation" to

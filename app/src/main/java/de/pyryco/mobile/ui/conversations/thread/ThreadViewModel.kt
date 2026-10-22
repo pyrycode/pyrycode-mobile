@@ -724,8 +724,7 @@ class ThreadViewModel(
         if (controls.authoritative !== p ||
             controls.authoritativeBinding !== event.binding ||
             p.host != serverId ||
-            p.conversation != conversationId ||
-            route.store.current(serverId, conversationId) !== p.sourceSnapshot
+            p.conversation != conversationId
         ) {
             return
         }
@@ -736,7 +735,7 @@ class ThreadViewModel(
             bodyConnection = null
             return
         }
-        if (p.sourceConnection !== connection) return
+        if (route.store.current(serverId, conversationId) !== p.sourceSnapshot || p.sourceConnection !== connection) return
         if (bodyConnection !== connection) bodyRelease?.close()
         val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
         bodyRelease = route.bodies(

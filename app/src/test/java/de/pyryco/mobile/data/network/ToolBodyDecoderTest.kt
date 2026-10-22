@@ -92,27 +92,29 @@ class ToolBodyDecoderTest {
     }
 
     @Test fun assemblyIdentityMismatchIsARejectionRatherThanAnException() {
-        val logical = JsonObject(payload() + ("rev" to JsonPrimitive(24))).toString()
-        val hash =
-            MessageDigest
-                .getInstance("SHA-256")
-                .apply {
-                    update("thread_tool_body".toByteArray())
-                    update(0.toByte())
-                }.digest(logical.toByteArray())
-                .toHexString()
-        val fragment =
-            JsonObject(
-                (payload() - setOf("content", "final")) +
-                    mapOf(
-                        "data" to JsonPrimitive(logical),
-                        "continuation" to
-                            MobileJson.parseToJsonElement(
-                                """{"update_id":"$hash","index":0,"offset":0,"total_bytes":${logical.length},"final":true}""",
-                            ),
-                    ),
-            )
-        assertTrue(decoder().decode(frame(fragment)).single() is ThreadDecodeOutcome.Repair)
+        for ((key, value) in mapOf("rev" to JsonPrimitive(24), "kind" to JsonPrimitive("agent"))) {
+            val logical = JsonObject(payload() + (key to value)).toString()
+            val hash =
+                MessageDigest
+                    .getInstance("SHA-256")
+                    .apply {
+                        update("thread_tool_body".toByteArray())
+                        update(0.toByte())
+                    }.digest(logical.toByteArray())
+                    .toHexString()
+            val fragment =
+                JsonObject(
+                    (payload() - setOf("content", "final", "kind")) +
+                        mapOf(
+                            "data" to JsonPrimitive(logical),
+                            "continuation" to
+                                MobileJson.parseToJsonElement(
+                                    """{"update_id":"$hash","index":0,"offset":0,"total_bytes":${logical.length},"final":true}""",
+                                ),
+                        ),
+                )
+            assertTrue(decoder().decode(frame(fragment)).single() is ThreadDecodeOutcome.Repair)
+        }
     }
 
     @Test fun fragmentedBodyPreservesTokensAndCannotCompleteWhileUnfinished() {
@@ -132,7 +134,7 @@ class ToolBodyDecoderTest {
             data: String,
             last: Boolean,
         ) = JsonObject(
-            (payload() - setOf("content", "final")) +
+            (payload() - setOf("content", "final", "kind")) +
                 mapOf(
                     "data" to JsonPrimitive(data),
                     "continuation" to
@@ -149,6 +151,26 @@ class ToolBodyDecoderTest {
         val result = decoder.decode(frame(part(1, logical.drop(logical.length / 2), true))).single() as ThreadDecodeOutcome.Complete
         assertEquals(payload(), result.value.raw)
         assertTrue((decoder.decode(frame(payload(true))).single() as ThreadDecodeOutcome.Complete).value is ThreadQueryReply.Body)
+        for ((key, value) in mapOf(
+            "version" to JsonPrimitive(42),
+            "item_id" to JsonPrimitive(18),
+            "rev" to JsonPrimitive(24),
+            "epoch" to JsonPrimitive("other"),
+            "conversation_id" to JsonPrimitive("other"),
+        )) {
+            val changed = decoder()
+            assertTrue(changed.decode(frame(first)).single() is ThreadDecodeOutcome.Pending)
+            val second = JsonObject(part(1, logical.drop(logical.length / 2), true) + (key to value))
+            assertTrue(key, changed.decode(frame(second)).single() is ThreadDecodeOutcome.Repair)
+        }
+        val routed = decoder()
+        routed.decode(frame(first))
+        assertTrue(
+            routed
+                .decode(
+                    frame(part(1, logical.drop(logical.length / 2), true)).copy(inReplyTo = 38),
+                ).single() is ThreadDecodeOutcome.Repair,
+        )
         val unfinished = decoder()
         unfinished.decode(frame(first))
         assertTrue(unfinished.decode(frame(payload(true))).single() is ThreadDecodeOutcome.Repair)
