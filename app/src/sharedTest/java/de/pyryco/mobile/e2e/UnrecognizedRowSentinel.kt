@@ -237,6 +237,8 @@ internal class TappingConversationRepository(
                     override val support = source.support
                     override val store = source.store
 
+                    override fun localHistory(conversationId: String) = source.localHistory(conversationId)
+
                     override fun observe(conversationId: String) =
                         source.observe(conversationId).onEach { snapshot ->
                             UnrecognizedRowRecorder.record(projectAuthoritativeThread(host, conversationId, snapshot).items)
