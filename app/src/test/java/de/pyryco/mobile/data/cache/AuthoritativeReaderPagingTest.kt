@@ -730,7 +730,7 @@ class AuthoritativeReaderPagingTest {
                 try {
                     runCurrent()
                     assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
-                    assertEquals(ThreadHistoryTail.Offline, vm.state.value.historyTail)
+                    assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
                     vm.onDemandOlderHistory()
                     started.await()
                     vm.state.first { it.historyTail == ThreadHistoryTail.Loading }
@@ -761,7 +761,7 @@ class AuthoritativeReaderPagingTest {
                     runCurrent()
                 }
                 assertEquals(AuthoritativeHistoryLoad.Idle, route.localHistory("c").first())
-                assertEquals(ThreadHistoryTail.Offline, vm.state.value.historyTail)
+                assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             }
         }
 

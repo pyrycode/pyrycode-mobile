@@ -137,3 +137,7 @@ three methods replace the required six, or that earlier green results accept cur
 Retained native variants are in manual-reader-apply-20261022/main-b684-integration/.
 Current merged-source compilation, JVM evidence and final pre-verification remain required;
 complete independent/native acceptance and documentation cannot finish before #2447.
+
+### Current-main integration check — 2026-10-22
+
+The first merged-main check on 4256ef355499 executed 5354 JVM methods: 5353 passed, one failed, zero errors/skips. The ownership regression still expected the removed legacy Offline tail after local ownership became Idle; authoritative presentation has no legacy history tail, so the expected state is None at both cleanup boundaries. Loading/Retry, exact content, ownership and request assertions remain unchanged. Native compilation also found the missing assertIsDisplayed import in the retained paging probe. These are test integration repairs, with no production change. Raw reports and formatted source are retained under logs/evidence/2437/manual-reader-apply-20261022/main-b684-integration/failed-4256 (manifest fb1723e1cde245782bb13821a28fc9185d1d77778c19f58b374636e2e98616d8). Native execution count was zero. Focused replacement/compile rerun is pending; #2447 remains blocking and no current-candidate acceptance is claimed.
