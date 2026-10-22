@@ -788,13 +788,22 @@ class SavedThreadFirstDrawDeviceTest {
             var islands = 0
             composeRule.runOnIdle {
                 val state = vm.state.value
-                val snapshot = requireNotNull(state.authoritativeThread).sourceSnapshot
+                val presentation = requireNotNull(state.authoritativeThread)
+                val snapshot = presentation.sourceSnapshot
                 assertEquals(facts, snapshot.items.map { it.raw })
                 assertEquals(100_000L, snapshot.completedVersion)
                 assertEquals(90_000L, snapshot.checkpoint)
                 assertEquals(null, snapshot.coverage)
-                assertEquals(expectedText, state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
-                assertEquals(expectedText.size, state.items.size)
+                var displayedCount = 0
+                presentation.rows.asSequence().filterIsInstance<ThreadRow.Delivered>().chunked(200).forEach { rows ->
+                    val displayed = presentation.demandRows(rows, emptySet()).filterIsInstance<ThreadRow.Delivered>().map { it.item }
+                    assertEquals(
+                        expectedText.subList(displayedCount, displayedCount + displayed.size),
+                        displayed.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content },
+                    )
+                    displayedCount += displayed.size
+                }
+                assertEquals(expectedText.size, displayedCount)
                 assertEquals(
                     facts.size,
                     snapshot.items

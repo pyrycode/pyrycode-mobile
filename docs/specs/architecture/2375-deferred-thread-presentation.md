@@ -107,3 +107,19 @@ comparison: six fail on `27ea5e29d`, all six pass on that merged main. Bounded r
 streaming and reopened paging assertions. Preserve exact content/identity/order,
 certification, retirement, request and work-budget assertions; no production change.
 Run the affected class, then complete configured acceptance on the committed repair.
+
+2026-10-22 native caller rework under #2475: the full UI gate executed 333,
+with six further deferred-content caller failures plus inherited model selection
+(#2351), and one additional skipped capture. All seven failed on the same-tree
+selection. On merged main, the six caller methods passed and only model selection
+failed. Resolve the compatibility fixture's asserted contents, the design capture's
+canonical refusal, and the permission replay's final settled reply through their
+current presentation. Retain exact facts/counts, live-refusal identity, both
+permission confirmations, strict replay completion and every existing deadline.
+Production and JVM sources are unchanged from accepted `4c5ccd369`.
+
+The first native compatibility caller adaptation retained every resolved display
+model beside the full file fixture and hit the emulator's 192 MiB heap limit;
+retain that failed run. Compare identical ordered content in batches of 200 from
+the same presentation, then assert the complete count. This bounds assertion-only
+memory without changing production, first-draw measurement, facts or deadlines.
