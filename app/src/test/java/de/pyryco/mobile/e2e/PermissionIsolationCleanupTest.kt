@@ -6,10 +6,12 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.recording.RecordedSuiteTape
 import de.pyryco.mobile.recording.SuiteConnections
 import de.pyryco.mobile.recording.SuiteStep
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -75,7 +77,9 @@ class PermissionIsolationCleanupTest {
                 peerPump.start()
                 peerTransport.connect()
                 val peerEnd = async { peerPump.inbound.first { it.type == "turn_end" } }
-                val phoneReply = async { phonePump.inbound.first { it.type == "thread_items" } }
+                val phoneReply = CompletableDeferred<Envelope>()
+                // Keep emission alive through close so the pump can acknowledge consumption.
+                val phoneCollector = backgroundScope.launch { phonePump.inbound.collect { phoneReply.complete(it) } }
                 runCurrent()
                 assertEquals("turn_end", peerEnd.await().type)
 
@@ -86,6 +90,8 @@ class PermissionIsolationCleanupTest {
                             closePeer = peerTransport::close,
                             beforeHostRemoval = { hub.beforeClose(phone) },
                             removeHost = {
+                                assertTrue("The phone collector must survive until host removal", phoneCollector.isActive)
+                                assertTrue("Host removal requires the correlated phone reply", phoneReply.isCompleted)
                                 removed = true
                                 phoneTransport.close()
                             },
@@ -104,6 +110,7 @@ class PermissionIsolationCleanupTest {
                 runCurrent()
                 cleanup.await()
                 assertTrue(removed)
+                assertEquals("thread_items", phoneReply.await().type)
                 assertEquals(90L, phoneReply.await().inReplyTo)
                 assertEquals(reply.payload, phoneReply.await().payload)
                 hub.awaitIdle()
