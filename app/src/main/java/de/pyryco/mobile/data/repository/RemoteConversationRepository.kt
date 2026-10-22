@@ -349,7 +349,11 @@ class RemoteConversationRepository internal constructor(
             authoritativeNowMillis,
             retireAuthoritativeConnection,
             onCertified = { conversation, generation, reply ->
-                publishAuthoritativeCompletions(conversation, generation, certificate = reply)
+                if (publishAuthoritativeCompletions(conversation, generation, certificate = reply)) {
+                    // A live-triggered summary can precede the daemon's usable fold. Certification
+                    // supplies a new refresh edge, never shown metadata or read confirmation itself.
+                    refreshAuthoritativeReadFacts(conversation, generation)
+                }
             },
         )
 

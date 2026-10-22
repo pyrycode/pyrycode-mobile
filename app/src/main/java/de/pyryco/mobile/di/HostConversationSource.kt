@@ -163,6 +163,27 @@ class HostConversationSource internal constructor(
         }
     }
 
+    /** Content-free snapshot for the native unread predicate; no requests or daemon-authored text. */
+    @Synchronized
+    internal fun attentionDiagnostic(
+        serverId: String,
+        conversationId: String,
+        repository: ConversationRepository?,
+    ): String {
+        val entry = held[serverId]
+        val marks = entry?.attention?.readMarks?.get(conversationId)
+        return "host_current=${entry != null && isCurrent(entry)} " +
+            "source_owned=${entry != null && repository != null && entry.connection.repositories.value === repository} " +
+            "facts_owned=${entry != null && repository != null && entry.attentionRepository === repository} " +
+            "source_row=${entry?.snapshot?.channels?.any { it.id == conversationId } == true} " +
+            "source_supported=${marks?.threadSupported} source_shown=${marks?.lastShownVersion} source_read=${marks?.readUpTo} " +
+            "running=${entry?.attention?.running?.contains(conversationId) == true} " +
+            "busy=${entry?.attention?.busy?.contains(conversationId) == true} " +
+            "prompt=${entry?.modals?.any { it.conversationId == conversationId } == true} " +
+            "batch=${entry?.batches?.any { it.conversationId == conversationId } == true} " +
+            "projected=${entry?.resolved?.get(conversationId) ?: ConversationAttention.Idle}"
+    }
+
     /**
      * Retries one host's connection, and only that host's. Snapshots are untouched, so the host's rows,
      * cached or live, stay drawn while it redials.

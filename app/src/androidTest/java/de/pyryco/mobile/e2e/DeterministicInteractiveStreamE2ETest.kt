@@ -594,8 +594,48 @@ class DeterministicInteractiveStreamE2ETest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
         val unread = context.getString(R.string.cd_conversation_attention_unread)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
+        val hostSource = GlobalContext.get().get<HostConversationSource>()
+        var unreadSamples = 0
+        var previousUnreadSample = ""
+
+        fun unreadSample(terminal: Boolean = false): Boolean {
+            val current = coordinator.currentRepository.value
+            val marks = (current as? RemoteConversationRepository)?.currentReadMarks(conversationId)
+            val rowCount = composeTestRule.onAllNodes(row).fetchSemanticsNodes().size
+            val unreadCount = composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().size
+
+            fun count(description: Int) =
+                composeTestRule.onAllNodes(row and hasContentDescription(context.getString(description))).fetchSemanticsNodes().size
+
+            fun hash(value: String) =
+                java.security.MessageDigest
+                    .getInstance("SHA-256")
+                    .digest(value.toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            val sample =
+                "host=${hash(serverId)} conversation=${hash(conversationId)} connection=${current?.let(System::identityHashCode)} " +
+                    "owned=${current != null &&
+                        current === coordinator.currentRepository.value &&
+                        (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current} " +
+                    "supported=${marks?.threadSupported} shown=${marks?.lastShownVersion} read=${marks?.readUpTo} " +
+                    "${hostSource.attentionDiagnostic(serverId, conversationId, current)} " +
+                    "rows=$rowCount unread=$unreadCount idle=${count(R.string.cd_conversation_attention_idle)} " +
+                    "running_rows=${count(
+                        R.string.cd_conversation_attention_running,
+                    )} waiting_rows=${count(R.string.cd_conversation_attention_waiting)}"
+            if (terminal || sample != previousUnreadSample && unreadSamples < 12) {
+                android.util.Log.i("PingUnreadProof", "event=ping_unread_proof terminal=$terminal $sample")
+                unreadSamples++
+                previousUnreadSample = sample
+            }
+            return unreadCount > 0
+        }
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { unreadSample() }
+        } finally {
+            runCatching { unreadSample(terminal = true) }.onFailure {
+                android.util.Log.i("PingUnreadProof", "event=ping_unread_proof terminal=true code=sample_unavailable")
+            }
         }
         SecondClientPeer(
             PairedServer(

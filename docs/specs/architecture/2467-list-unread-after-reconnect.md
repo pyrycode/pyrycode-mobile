@@ -2,7 +2,7 @@
 
 ## Files read
 
-- `docs/specs/architecture/2462-scripted-ping-final-read-proof.md`: retained final-proof design and failed later unread acceptance; preserve its exact-owner proof and reconnect.
+- `docs/specs/architecture/2462-scripted-ping-read-proof.md`: retained final-proof design and failed later unread acceptance; preserve its exact-owner proof and reconnect.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt`: `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` waits for unread after admitting a durable post, then peer-confirmed idle without reopening.
 - `app/src/main/java/de/pyryco/mobile/di/HostConversationSource.kt`: `launchAttention`, `updateAttention` and `currentReadMarks` join current repository facts with transient attention.
 - `app/src/main/java/de/pyryco/mobile/di/ConversationAttention.kt`: `HostAttentionState.resolve` preserves waiting, running, unread precedence.
@@ -43,11 +43,11 @@ Keep existing host collectors and connection cancellation. Diagnostic sampling a
 | Event | Required coverage |
 | --- | --- |
 | Confirmed rendered reply, controlled reconnect, thread exit, post admission | Existing paired native ping including final proof, unread and peer-idle assertions |
-| Read metadata and post/completion arrive in different orders | Controlled repository regression against the demonstrated cause |
-| Duplicate/replayed facts, empty/one-row summaries | Repository regression; shown/read projection tests |
-| Host/conversation identifiers reused on another connection | Current-owner diagnostic and focused host attention tests; no inherited support |
-| Unavailable shown metadata, pending/local read only | `ShownVersionReadMarksTest`; never classify unavailable as unread |
-| Competing prompt/running activity, then peer read | `ConversationAttentionTest`, `ShownVersionReadMarksTest`, paired native ping |
+| Read metadata becomes unavailable before recovery completes | `unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement` |
+| Duplicate/replayed facts and one-row summaries | `unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement`, `admittedTurnEndRefreshesDaemonReadFactsWithoutInventingAMark`; empty snapshots in `HostConversationSourceTest` |
+| Host/conversation identifiers reused on another connection | `unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement`, `collidingHostsKeepSeparateStoresAndVerdicts`, `retiredConnectionCannotRestoreItsVerdictOrSendQueries` |
+| Unavailable shown metadata, pending/local read only | `unavailableMetadataNeverReusesAHeldShownWatermark`, `productionSummaryReceiptCannotSendReadAndConfirmedReplyDoesNotReplaceShown`, `qualifiedSightAndPendingWritesCannotSubstituteForDaemonConfirmation` |
+| Competing prompt/running activity, then peer read | `daemonMarksKeepPromptRunningUnreadPrecedenceAndSurviveDisconnect`, `unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement`, paired native ping |
 
 ## Error handling
 
@@ -59,7 +59,7 @@ Write and execute a controlled failing regression before the repair, then pass i
 
 ## Open Questions
 
-- Which boundary fails after the post? Resolve through bounded current-owner/metadata/projection/semantics diagnostics and record the controlled regression here.
+- Resolved for the controlled reproduction: current authoritative shown metadata remains unavailable after successful post recovery; attention correctly stays idle. Historical logs lack numeric post-summary values, so their exact metadata contents remain unobserved, not retroactively certified by the new run.
 
 ## Security review
 
@@ -77,3 +77,23 @@ Write and execute a controlled failing regression before the repair, then pass i
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-22
+
+## Revisions
+
+### 2026-10-22 — Recover summary availability after certification
+
+The diagnostic Linux pair passed 2/2 with unchanged assertions. Its terminal unread sample has one expected rendered row, current host/repository ownership, supported shown/read 13/9, source projection Unread, no running/busy/prompt/batch and exactly one unread semantic row. Raw evidence is in agents `logs/evidence/2467/diagnostic-linux/`. This pass does not reclassify the historical failure or prove its unlogged metadata values.
+
+The controlled `unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement` reproduces the metadata boundary with real production negotiation, connection replacement, thread release, live post and completion, then an authoritative summary with unavailable shown metadata before successful recovery. It fails before the repair: recovery makes no subsequent summary request (expected 2, actual 1). The current repository retains read 9 and unavailable shown metadata; completion certification itself must not invent shown/read facts. This is a Mobile-owned liveness gap: its one live-triggered request may observe the protocol's valid temporary unavailability, and its successful recovery has no metadata refresh edge. The failed historical phone trace likewise has no later changed read facts after recovery, but no retained raw post-summary values establish whether its first reading was absent or stale.
+
+Repair contract: after successfully publishing certified authoritative completions, request a fresh daemon summary through `refreshAuthoritativeReadFacts` on the same connection and generation. Keep the earlier live-completion refresh. Neither certification nor request submission changes read/shown values; only a supplied daemon response may restore availability. A later mark covering the post clears attention, without reopening or writing a phone read. Duplicate live facts still cause no new refresh; retirement/generation fencing remains in the existing helper and query owner. No polling, extra retry or new timeout. Protocol authority remains sibling `pyrycode/docs/protocol-mobile.md`, `conversations` and `conversation_updated`.
+
+Security re-review: PASS. The additional request uses the existing empty-payload list request and exact connection scope; it grants no metadata or read authority. Forecast remains below 600 lines, two production files, zero signature migrations. Preserve the red XML at agents `logs/evidence/2467/unit-red/`.
+
+### 2026-10-22 — Correct regression admission and strengthen source coverage
+
+The first supplied terminal inherited `status=running` from the generic item helper, so it was not an admitted completion. Preserve that failure as fixture-defective diagnostic evidence rather than causal proof. The corrected terminal explicitly has done status and inactive state, and the test asserts `isCompletion()` before delivery. Rerun it against the original production callback for the causal red. Drive `HostConversationSource` itself: the current row stays present with unavailable metadata and idle attention until a response to the post-certification request supplies shown 13/read 9; duplicated/older summaries preserve unread, and peer read 13 yields idle without a phone read command. The existing generic turn-end test still expects only its original refresh because its terminal intentionally remains non-complete.
+
+The corrected pre-fix run executed one test and failed exactly at the missing post-certification summary request (expected 3 including the host list subscription, actual 2). The row-presence and unavailable-metadata/idle assertions passed first. Preserve this causal red separately at agents `logs/evidence/2467/unit-red-corrected/`; the earlier fixture-defective result remains retained.
+
+The repaired `NegotiatedThreadActivationTest` class executed/passed all 19 tests on Linux. The regression verifies the response boundary through the real host source, replays post/completion facts in reverse order, and supplies late retired-connection metadata; none can manufacture a read or restart the completed refresh. The final implementation remains one behaviour slice: approximately 320 written lines including plan, diagnostics and regression, two production files, no new exported types, no consumer migrations, three criteria and no new rejection branches. Existing checks for waiting/running precedence and missing shown metadata remain active.
