@@ -108,8 +108,10 @@ that stack.
 `noBackupFilesDir/conversation-cache.db`; all database sidecars stay in the same backup-excluded
 directory, with no destructive upgrade or empty-cache substitute. Since #2385, authoritative
 threads import through the validated owner-scoped source codec before Room serves them.
-Retained legacy entry points use Room only; opening/import ignores leftover legacy files and
-preserves existing legacy rows. Explicit scoped removal retains file cleanup and retirement fences.
+Schema 12 upgrades discard legacy content/evidence tables and their exclusive indexes while
+preserving authoritative storage, supported backfills and import/retirement fences. Legacy
+entry points and codecs are removed; opening/import leaves leftover legacy files inert.
+Explicit scoped removal retains file cleanup and retirement fences.
 Lists and read positions still use the file cache; attachment/settings storage and
 repository/protocol selection are unchanged.
 Bounded screen reading and owned partial writes remain #2068's responsibility. See

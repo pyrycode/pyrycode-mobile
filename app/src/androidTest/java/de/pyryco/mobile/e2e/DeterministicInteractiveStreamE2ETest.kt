@@ -262,7 +262,15 @@ class DeterministicInteractiveStreamE2ETest {
         runBlocking {
             withTimeout(THREAD_TIMEOUT_MS) {
                 while (cache
-                        .readThread(serverId, conversation.id)
+                        .readAuthoritativeThread(serverId, conversation.id)
+                        ?.let {
+                            de.pyryco.mobile.ui.conversations.thread
+                                .projectAuthoritativeThread(
+                                    serverId,
+                                    conversation.id,
+                                    it.toSnapshot(),
+                                ).items
+                        }.orEmpty()
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .none { it.message.content == "$prefix-baseline-000" && !it.message.isStreaming }
                 ) {
