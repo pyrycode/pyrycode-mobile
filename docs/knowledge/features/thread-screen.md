@@ -127,6 +127,8 @@ Rows and exact read evidence travel together. See
 [worker admission, pacing and cancellation](thread-screen-how-it-works-state.md)
 and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
+Closed tool bodies and descendants behind omitted ancestors keep summaries until demanded. Retention, coverage and wire delivery stay independent; summaries never prove sight. See [deferred presentation probes](thread-screen-testing.md#deferred-authoritative-presentation-2375).
+
 **Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only while the destination is resumed and
 unobscured, after exact row reveal completes and its readable trailing edge is

@@ -65,9 +65,13 @@ None.
 
 ## Documentation handoff
 
-Pending documentation stage:
+Completed in this manual continuation:
 - `docs/knowledge/features/thread-screen.md`: explain closed presentation is deferred independently of authoritative retention and wire delivery.
 - `docs/knowledge/features/thread-screen-testing.md`, deferred presentation coverage: record the supplied focused/native/scripted counts and durable evidence paths.
+
+Both owning topics now record the behavior, source-bound caller rules, root-model
+sharing and counted evidence. Historical failures, exact candidate/main comparisons,
+known inherited/intermittent dispositions and verification limits remain explicit.
 
 ## Security review
 
