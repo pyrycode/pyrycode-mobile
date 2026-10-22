@@ -31,7 +31,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -156,7 +158,7 @@ class FileConversationCache(
                             held.saved
                         } else {
                             decodedAuthoritative = null
-                            decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId).also {
+                            decodeAuthoritative(bytes, serverId, conversationId).also {
                                 decodedAuthoritative = DecodedAuthoritative(document, serverId, conversationId, bytes, it)
                             }
                         }
@@ -178,7 +180,7 @@ class FileConversationCache(
         conversationId: String,
     ): SavedSource<SavedAuthoritativeThread> =
         source(authoritativeDocumentFor(serverId, conversationId)) { bytes ->
-            decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId)
+            decodeAuthoritative(bytes, serverId, conversationId)
         }
 
     /** Reads never repair: a rejected document keeps its bytes, and only IO or access failures stay retryable. */
@@ -207,13 +209,17 @@ class FileConversationCache(
             }
         }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun decodeAuthoritative(
-        text: String,
+        bytes: ByteArray,
         serverId: String,
         conversationId: String,
     ): SavedAuthoritativeThread {
-        val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(text)
+        val start = System.nanoTime()
+        val record = ByteArrayInputStream(bytes).use { MobileJson.decodeFromStream<CachedAuthoritativeThread>(it) }
+        val parsed = System.nanoTime()
         require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
+        RelayLog.d { "event=authoritative_file_decode parse_ns=${parsed - start}" }
         return record.saved.ownedValidated()
     }
 
@@ -244,7 +250,7 @@ class FileConversationCache(
                         null
                     } else {
                         try {
-                            decodeAuthoritative(Files.readAllBytes(document.toPath()).toString(Charsets.UTF_8), serverId, conversationId)
+                            decodeAuthoritative(Files.readAllBytes(document.toPath()), serverId, conversationId)
                         } catch (_: java.nio.file.NoSuchFileException) {
                             null
                         }

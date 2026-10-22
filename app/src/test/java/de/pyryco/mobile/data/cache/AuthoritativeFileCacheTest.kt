@@ -35,6 +35,26 @@ class AuthoritativeFileCacheTest {
 
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun ownedDecodePreservesUnknownNumericLexemesAndSealsNestedArraysAndRetirements() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val raw = item(1, 2, 5, extra = "\"extension\":[-0,1e-400,1.234567890123456789,true,null,{\"nested\":[]}],").raw
+            val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 0, retirements = mapOf(2L to 3L))
+            FileConversationCache(temporary.root, dispatcher).writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            val owned = requireNotNull(FileConversationCache(temporary.root, dispatcher).readAuthoritativeThread("host", "c"))
+            assertEquals(saved, owned)
+            assertEquals(raw, owned.toSnapshot().items.single().raw)
+            val values = owned.items.single()["extension"] as kotlinx.serialization.json.JsonArray
+            @Suppress("UNCHECKED_CAST")
+            val iterator = values.listIterator() as MutableListIterator<kotlinx.serialization.json.JsonElement>
+            iterator.next()
+            assertThrows(UnsupportedOperationException::class.java) { iterator.remove() }
+            @Suppress("UNCHECKED_CAST")
+            val retirement = owned.retirements.entries.single() as MutableMap.MutableEntry<Long, Long>
+            assertThrows(UnsupportedOperationException::class.java) { retirement.setValue(9L) }
+            assertEquals(saved, owned)
+        }
+
     @Test fun unchangedAuthoritativeBytesReuseOneOwnedValidatedDecode() =
         runTest {
             val dispatcher = StandardTestDispatcher(testScheduler)

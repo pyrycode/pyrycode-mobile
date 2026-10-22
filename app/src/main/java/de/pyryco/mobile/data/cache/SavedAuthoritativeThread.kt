@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.validThreadJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
@@ -28,12 +29,16 @@ data class SavedAuthoritativeThread(
 
     // Only a deeply owned, read-only decode may reuse validation. Generated copy() starts without this memo.
     internal fun ownedValidated(): SavedAuthoritativeThread {
+        val start = System.nanoTime()
         val owned =
             copy(
                 items = Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
                 retirements = Collections.unmodifiableMap(LinkedHashMap(retirements)),
             )
+        val frozen = System.nanoTime()
         val validated = owned.decodeSnapshot()
+        val decoded = System.nanoTime()
+        RelayLog.d { "event=authoritative_owned_validation freeze_ns=${frozen - start} validate_ns=${decoded - frozen}" }
         owned.ownedSnapshot = validated.copy(items = Collections.unmodifiableList(validated.items))
         return owned
     }
