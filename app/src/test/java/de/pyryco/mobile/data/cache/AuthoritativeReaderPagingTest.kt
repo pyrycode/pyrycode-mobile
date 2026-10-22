@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
+import de.pyryco.mobile.e2e.harnessThreadEvidence
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
@@ -181,7 +182,7 @@ class AuthoritativeReaderPagingTest {
             )
         }
 
-    @Test fun completedSecondaryObservationCannotRetireTheEstablishedReader() = runTest { readerSurvivesSecondaryObservation(true) }
+    @Test fun completedEvidenceObservationCannotRetireTheEstablishedReader() = runTest { readerSurvivesSecondaryObservation(true) }
 
     private suspend fun TestScope.readerSurvivesSecondaryObservation(secondary: Boolean) {
         val original = SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)
@@ -191,8 +192,8 @@ class AuthoritativeReaderPagingTest {
             vm.state.first { it.authoritativeThread?.rows?.size == 1 }
             val requests = fixture.requests.toList()
             if (secondary) {
-                val observed = requireNotNull(repo.negotiatedThread).observe("c").first { it.items.any { row -> row.id == 1L } }
-                assertEquals(listOf(fact(1)), observed.items.map { it.raw })
+                val observed = harnessThreadEvidence(repo).observe("c").first { it.records.any { row -> row.fact?.id == 1L } }
+                assertEquals(listOf(fact(1)), observed.records.map { requireNotNull(it.fact).raw })
             }
             val added = fact(2)
             repo.authoritativeThreads.applyBatch("host", "c", "e", 101, listOf(ThreadItemDto.decodeReplacement(added)), 0)
@@ -222,6 +223,43 @@ class AuthoritativeReaderPagingTest {
             assertEquals(requests, fixture.requests)
         }
     }
+
+    @Test fun evidenceObservationPreservesSettledRetryAndItsReaderBoundary() =
+        runTest {
+            val facts = (1..600).map { fact(it) }
+            val disk = disk()
+            disk.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 900)).getOrThrow()
+            var attempts = 0
+            val cache =
+                object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                    override suspend fun beforeAuthoritativeWindow(
+                        serverId: String,
+                        conversationId: String,
+                        cursor: AuthoritativeDisplayCursor,
+                        admitted: Set<Pair<Long, Boolean>>,
+                        size: Int,
+                    ): AuthoritativeThreadWindow? {
+                        attempts++
+                        return if (attempts == 1) null else disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                    }
+                }
+            destination(cache) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                vm.onDemandOlderHistory()
+                vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                val requests = fixture.requests.toList()
+                val evidence = harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                assertTrue(evidence.admitted)
+                runCurrent()
+                assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
+                vm.onRetryOlderHistory()
+                vm.state.first { it.authoritativeThread?.rows?.size == 400 }
+                assertEquals(facts.takeLast(400), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                assertEquals(2, attempts)
+                assertEquals(0, disk.authoritativeFullReads)
+                assertEquals(requests, fixture.requests)
+            }
+        }
 
     @Test fun savedOpaqueNumbersRemainExactThroughFileDestinationColdReopen() =
         runTest {
