@@ -1015,10 +1015,12 @@ class AuthoritativeReaderPagingTest {
             runCurrent()
             val store = repo.authoritativeThreads
             val route = requireNotNull(repo.negotiatedThread)
-            val field = CachingConversationRepository::class.java.getDeclaredField("processingDispatcher").also { it.isAccessible = true }
+            fun repositoryField(name: String) =
+                CachingConversationRepository::class.java.getDeclaredField(name).also { it.isAccessible = true }
+            val field = repositoryField("processingDispatcher")
             val originalDispatcher = field.get(repo)
-            val readersField = CachingConversationRepository::class.java.getDeclaredField("authoritativeReaders").also { it.isAccessible = true }
-            val hydrationsField = CachingConversationRepository::class.java.getDeclaredField("authoritativeHydrations").also { it.isAccessible = true }
+            val readersField = repositoryField("authoritativeReaders")
+            val hydrationsField = repositoryField("authoritativeHydrations")
             @Suppress("UNCHECKED_CAST")
             val readers = readersField.get(repo) as Map<String, kotlinx.coroutines.CoroutineScope>
             @Suppress("UNCHECKED_CAST")
@@ -1031,7 +1033,7 @@ class AuthoritativeReaderPagingTest {
             var replacement: Job? = null
             var oldHydration: Job? = null
             val before = store.current("host", "c")
-            val baselinesField = CachingConversationRepository::class.java.getDeclaredField("persistedAuthoritative").also { it.isAccessible = true }
+            val baselinesField = repositoryField("persistedAuthoritative")
             val baselines = baselinesField.get(repo) as Map<*, *>
             fun savedBaseline(): Any? = baselines["c"]?.let { candidate ->
                 candidate.javaClass.getDeclaredField("authoritative").also { it.isAccessible = true }.get(candidate)
