@@ -240,7 +240,8 @@ class AuthoritativeReaderPagingTest {
                         size: Int,
                     ): AuthoritativeThreadWindow? {
                         attempts++
-                        return if (attempts == 1) null else disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                        if (attempts == 1) return null
+                        return disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
                     }
                 }
             destination(cache) { fixture, vm, repo ->
