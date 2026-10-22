@@ -338,7 +338,13 @@ internal class DurableGapProof(
                                 1,
                                 matches.size,
                                 index,
-                            ),
+                            ) +
+                                " session_matches=${evidence.records.count { it.session == old.session }}" +
+                                " turn_matches=${evidence.records.count { it.turn == old.turn }}" +
+                                " role_matches=${evidence.records.count { it.message.role == old.message.role }}" +
+                                " text_matches=${evidence.records.count { it.fullText == old.fullText }}" +
+                                " parent_matches=${evidence.records.count { (it.fact?.parent ?: 0) == (old.fact?.parent ?: 0) }}" +
+                                " id_matches=${evidence.records.count { it.fact?.id == old.fact?.id }}",
                         )
                     }
                     val held = matches.single()
