@@ -751,13 +751,8 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately() {
         arriveInSeededThread()
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        val repository = requireNotNull(coordinator.currentRepository.value)
         val conversationId =
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
@@ -772,11 +767,29 @@ class DeterministicInteractiveStreamE2ETest {
         val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
         val prefix = hasText(REOPEN_PREFIX, substring = true) and inBubble
         typeAndSend(SEND_PROMPT)
+        android.util.Log.i("ReopenStreamProof", "phase=await_prefix source_current=${repository === coordinator.currentRepository.value}")
         val arrived =
-            runBlocking {
-                withTimeout(REPLY_TIMEOUT_MS) {
-                    evidence.observe(conversationId).first { it.openReply(it.owner)?.fullText == REOPEN_PREFIX }
+            try {
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        evidence
+                            .observe(conversationId)
+                            .onEach { reading ->
+                                android.util.Log.i(
+                                    "ReopenStreamProof",
+                                    "phase=prefix_read source_current=${repository === coordinator.currentRepository.value} " +
+                                        "admitted=${reading.admitted} assistants=${reading.assistantRecords().size} " +
+                                        "prefix=${reading.openReply(reading.owner)?.fullText == REOPEN_PREFIX}",
+                                )
+                            }.first { it.openReply(it.owner)?.fullText == REOPEN_PREFIX }
+                    }
                 }
+            } finally {
+                android.util.Log.i(
+                    "ReopenStreamProof",
+                    "phase=prefix_wait_exit source_current=${repository === coordinator.currentRepository.value} " +
+                        "replacement_available=${coordinator.currentRepository.value != null}",
+                )
             }
         val arrivedReply = requireNotNull(arrived.openReply(arrived.owner))
 
@@ -799,6 +812,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
         composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
         assertOpenReply(REOPEN_PREFIX)
+        android.util.Log.i("ReopenStreamProof", "phase=leave_thread")
         composeTestRule.onNodeWithContentDescription("Back").performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
@@ -814,6 +828,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodesWithText(REOPEN_SUFFIX, substring = true).assertCountEquals(0)
             assertOpenReply(REOPEN_PREFIX)
+            android.util.Log.i("ReopenStreamProof", "phase=reopened_prefix_committed")
             DaemonFaultControl().releaseStream()
             val combined = REOPEN_PREFIX + REOPEN_SUFFIX
             runBlocking {
@@ -840,6 +855,7 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.mainClock.autoAdvance = true
         }
         // Completion is fenced separately, after the still-open suffix-arrival display checkpoint.
+        android.util.Log.i("ReopenStreamProof", "phase=suffix_committed")
         DaemonFaultControl().finishStream()
         val combined = REOPEN_PREFIX + REOPEN_SUFFIX
         val fullReply = hasText(combined, substring = true) and inBubble
