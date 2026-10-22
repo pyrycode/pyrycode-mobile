@@ -49,6 +49,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     restart: (() -> Unit) -> AutoCloseable,
     openThread: () -> Unit,
     send: () -> Unit,
+    withActivity: (AutoCloseable, () -> Unit) -> Unit = { activity, proof -> activity.use { proof() } },
 ) {
     fun source() = GlobalContext.get().get<ThreadDestinationFactory>().repository(host)
 
@@ -320,23 +321,28 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     }
 
     Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
-    restart {
-        assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
-        assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
-        assertTrue("cache reopened", GlobalContext.get().get<ConversationCache>() !== oldCache)
-        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
-        runBlocking {
-            withTimeout(120_000) { registry.hostConnections.first { registry.connectionFor(host) != null } }
+    val replacement =
+        restart {
+            assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
+            assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
+            assertTrue("cache reopened", GlobalContext.get().get<ConversationCache>() !== oldCache)
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            runBlocking {
+                withTimeout(120_000) { registry.hostConnections.first { registry.connectionFor(host) != null } }
+            }
+            val route = requireNotNull(source().negotiatedThread)
+            assertTrue("saved facts do not negotiate support", route.support.value is ThreadSupport.Unverified)
+            val restored = runBlocking { withTimeout(120_000) { route.observe(conversation).first { it.epoch != null } } }
+            assertEquals("certified saved checkpoint restored before Activity launch", saved.checkpoint, restored.checkpoint)
+            assertEquals("saved coverage restored", saved.coverage, restored.coverage)
+            assertFamily(authoritativeThreadEvidence(host, conversation, route, restored))
+            receipt("saved_before_launch", authoritativeThreadEvidence(host, conversation, route, restored))
+            Log.i(
+                "NegotiatedAgentRestart",
+                "event=graph_cache_restart graph=replaced cache=reopened saved_family=restored support=unverified",
+            )
         }
-        val route = requireNotNull(source().negotiatedThread)
-        assertTrue("saved facts do not negotiate support", route.support.value is ThreadSupport.Unverified)
-        val restored = runBlocking { withTimeout(120_000) { route.observe(conversation).first { it.epoch != null } } }
-        assertEquals("certified saved checkpoint restored before Activity launch", saved.checkpoint, restored.checkpoint)
-        assertEquals("saved coverage restored", saved.coverage, restored.coverage)
-        assertFamily(authoritativeThreadEvidence(host, conversation, route, restored))
-        receipt("saved_before_launch", authoritativeThreadEvidence(host, conversation, route, restored))
-        Log.i("NegotiatedAgentRestart", "event=graph_cache_restart graph=replaced cache=reopened saved_family=restored support=unverified")
-    }.use {
+    withActivity(replacement) {
         PassiveThreadProbe.open().use { observation ->
             screenObservation = observation
             openThread()

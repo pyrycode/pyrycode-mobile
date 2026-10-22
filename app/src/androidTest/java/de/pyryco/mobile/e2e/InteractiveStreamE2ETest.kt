@@ -255,7 +255,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
-    /** Outside Activity teardown: close each test's owned daemon sessions even when its body fails. */
+    /** Close owned daemon sessions before releasing replacement Activities, even when the body fails. */
     @get:Rule(order = Int.MIN_VALUE)
     val sessionCleanup =
         LiveSessionCleanupRule(
@@ -5553,7 +5553,11 @@ class InteractiveStreamE2ETest {
                     awaitChannelList()
                     awaitConnected()
                     openChatRow(name)
-                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
+                }, send = {
+                    sendFromPhone(
+                        "Reply briefly to this new-session settlement check.",
+                    )
+                }, withActivity = sessionCleanup::withRestartedActivity)
             }
         } catch (error: Throwable) {
             failure = error

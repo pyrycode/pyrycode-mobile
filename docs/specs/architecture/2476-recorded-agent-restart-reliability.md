@@ -142,6 +142,29 @@ describing replacement ownership and counted Linux evidence.
 | Body/end/close failure with a retained replacement | `LiveSessionCleanupRuleTest` ownership and failure tests |
 | Complete repaired scenario with fresh graph/cache | Three independent focused Linux invocations of the original method |
 
+The controlled fixture requires checkpoint 24 after certifying checkpoint 12, so
+already-covered terminal-tail normalization cannot replace the delayed query. Replay
+transport closure stores its first mismatch for outer reporting; the fixture calls
+`SuiteConnections.awaitIdle` at physical close to surface that error before later
+cleanup assertions. Earlier fixture versions failed their explicit lifetime assertion
+(one executed/failed each) and remain retained rather than being called replay-boundary
+reproductions.
+
+The final controlled pre-repair run executed one test, failed one, skipped none (exit 1).
+Its first cause is `Recorded suite lifecycle mismatch at step 3: phone/host/2:close`,
+with the real post-reset `thread_catch_up` and fixture cleanup still required. The later
+lifetime assertion is suppressed. Raw XML, binary reports and exact extraction patch
+against `8b3c30bbe160392db8fe2c48a474eb2783dc3d02` are retained under agents
+`logs/evidence/2476/builder-lifetime-repair/regression-red/` with 12 verified manifest
+entries. The same folder family retains both earlier assertion failures and the complete
+verified original #2467 failure/rerun bundle. Only rule ownership changes for green.
+
+After ownership repair, the unchanged causal test and both existing consumption tests
+passed: 3 executed/passed, zero failures/errors/skips, exit 0. Evidence is retained in
+`logs/evidence/2476/builder-lifetime-repair/regression-green/` (12 verified files),
+including the exact source patch and raw XML. The cancelled-collector negative still
+times out under its original bound; terminal consumption is still required before close.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
