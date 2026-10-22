@@ -547,3 +547,11 @@ on final integrated #2334. Earlier receipts and failed results above remain hist
 
 The [earlier first-draw maps](authoritative-reader-paging-early-evidence.md#prior-first-draw-map-retained-during-reviewed-storage-retirement)
 remain verbatim as history, with the current native mapping and receipts above governing acceptance.
+
+## Final integrated #2334 receipt
+
+The user-approved consolidated plan integrates the reviewed repairs at source
+`688f93fcbdbf591d785a135af1e09aa07c48947a`. The accepted run above supplies complete
+unchanged-code acceptance; later changes are documentation only. All eight repair PRs
+are merged and issues closed/Done. The [integration and scoped review ledger](authoritative-reader-paging-final-acceptance.md)
+records the final acceptance basis.
