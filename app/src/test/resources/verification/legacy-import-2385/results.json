@@ -1,0 +1,82 @@
+{
+  "os": "Linux",
+  "implementationRevision": "4854376725a204030779deffd8865a2eeb976b3f",
+  "baselineRevision": "f7b5aee1484fd4d2feb47ce83b6a2b3318c23b24",
+  "baselineTestSource": "red-regression.txt",
+  "preFormatSourceIdentity": "sources-pre-format.sha256",
+  "sourceNotes": "cache/factory ran with the exact pre-format source hashes; other four classes ran after formatting at implementationRevision. Subsequent changes add evidence only. Production hashes were unchanged by formatting.",
+  "candidateTotals": {
+    "executed": 89,
+    "passed": 89,
+    "failed": 0,
+    "skipped": 0
+  },
+  "reports": [
+    {
+      "report": "authoritative-room.xml",
+      "class": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest",
+      "executed": 14,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T01:08:32.845Z"
+    },
+    {
+      "report": "cache.xml",
+      "class": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "executed": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T00:57:03.474Z"
+    },
+    {
+      "report": "factory.xml",
+      "class": "de.pyryco.mobile.di.ConversationCacheFactoryTest",
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T01:01:50.322Z"
+    },
+    {
+      "report": "file-thread.xml",
+      "class": "de.pyryco.mobile.data.cache.FileConversationCacheThreadTest",
+      "executed": 40,
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T01:09:58.919Z"
+    },
+    {
+      "report": "legacy-room.xml",
+      "class": "de.pyryco.mobile.data.cache.LegacyRoomStorageTest",
+      "executed": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T01:08:00.408Z"
+    },
+    {
+      "report": "owned.xml",
+      "class": "de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "timestamp": "2026-10-22T01:07:16.386Z"
+    },
+    {
+      "report": "red.xml",
+      "class": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "timestamp": "2026-10-22T00:42:18.947Z"
+    }
+  ],
+  "selectionRefusal": "An initial combined cache/factory selection was refused before execution (0 tests); replaced by the two counted single-class runs.",
+  "rawOutputNotes": "cache.log retains the complete test phase; full execution/compiler/admission output remains remotely at revision 4854376725a204030779deffd8865a2eeb976b3f in the same path. red.log retains complete failure completion; its initial compiler-warning display was truncated. owned.log retains complete test-task completion; repeated full compiler output remains at /tmp/builder-2385/owned-full.log. XML reports are complete, including CloseGuard warnings.",
+  "pending": "Dispatcher complete configured build/unit/UI/scripted acceptance; native production-opener upgrade proof belongs to #2386, final integration to #2364, documentation to the documentation stage. macOS is outside this ticket verification scope."
+}

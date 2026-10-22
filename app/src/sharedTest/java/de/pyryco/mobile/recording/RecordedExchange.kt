@@ -166,6 +166,10 @@ internal class RecordedExchange(
         }
     }
 
+    /** Use the same generated device identity in the test connection and strict replay payloads. */
+    @Synchronized fun reboundIdentity(recorded: String): String =
+        checkNotNull(identities[recorded]) { "Recorded device identity is absent from the captured exchange" }
+
     private fun mapped(value: JsonElement): JsonElement =
         when (value) {
             is JsonPrimitive -> if (value.isString) identities[value.content]?.let(::JsonPrimitive) ?: value else value

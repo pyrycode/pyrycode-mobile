@@ -1,6 +1,17 @@
-# Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt, task stop and new session
+# Remote conversation repository — control sends
 
-Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
+## Content acceptance and retained controls
+
+Message, attachment, prompt, configuration and task controls remain supported.
+Local pending sends register before asynchronous identity lookup/send, retain exact
+host/conversation/device/message identity and survive reconnect/reset until matched
+by an admitted daemon user item. An ack proves receipt only. Raw message/queue events
+and diagnostics cannot settle content. See [send registration](remote-conversation-repository-send-create-promote-rename.md).
+
+Raw `requestHistory` and its reply APIs are removed. Opening and older demand use
+[authoritative queries](remote-conversation-repository-reads-and-thread-store.md).
+Host-held settings survive a disconnected gap only after current-producer admission;
+replacement retires both holders as described in [live state](remote-conversation-repository-live-stream-and-modals.md#session-admission-and-held-settings).
 
 ## `requestScreenSnapshot(conversationId)` — the parser-independent screen-snapshot read (#375)
 
@@ -30,7 +41,7 @@ suspend fun requestScreenSnapshot(conversationId: String): String {
 
 - **The one genuinely-new bit is in the collector, not the method:** `screen_snapshot` is a *new*
   correlated reply type, so `TYPE_SCREEN_SNAPSHOT` is added to the success-arm `when` (see the [demux
-  table](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out) — it was previously an `else -> Unit` no-op, so
+  table](remote-conversation-repository-reads-and-thread-store.md) — it was previously an `else -> Unit` no-op, so
   existing flows are behaviorally unchanged). Everything else is the existing pattern: same single `init`
   collector, [`RelayRequests`](remote-conversation-repository-state-errors-and-handoff.md)'s `pendingRequests`, `nextRequestId` and
   `sendAndAwaitReply` (#914). **No second pump subscription.**
@@ -50,149 +61,15 @@ suspend fun requestScreenSnapshot(conversationId: String): String {
   `RelayRequests.mapError` is reused unchanged. `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` join the full `TYPE_*`
   companion registry (every wire type is a named constant here).
 
-## `dropQueuedMessage(conversationId, queuedMessageId)` — the `dequeue_message` outbound send (#466)
+## `dropQueuedMessage(conversationId, queuedMessageId)` — supplied queue targets
 
-The **outbound peer** of the inbound `queue_state` decode ([`observeQueue`](remote-conversation-repository-thread-observables.md#observequeueconversationid--the-thread-observable-queued-backlog-460), #460): sends a
-`dequeue_message` frame so the daemon removes a not-yet-drained message from a conversation's backlog. The
-daemon **never replies** to `dequeue_message` — not on success, and not when it cannot apply the request
-(an unknown, already-delivered or in-flight head id is silently ignored); `docs/protocol-mobile.md` §
-Queue (v2) lists no reply. The method originally called `sendAndAwaitReply` on the assumption of an empty
-ack; that assumption was wrong, so the awaited deferred never completed against production, the ack-gated
-echo removal never ran, and the caller's coroutine stayed suspended for the connection's life — found live
-by #849's second-client scenario, fixed by #859: the send is now **fire-and-forget**, and the echo removal
-is settled from the next `queue_state`, described in full at [Queued backlog § Dropping a queued
-entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466). The body now lives on
-`MessageCommands` (#915, `data/repository/MessageCommands.kt`), beside `sendMessage`, `uploadAttachment`
-and `requestScreenSnapshot`; the repository's `override suspend fun dropQueuedMessage` is a one-line
-hand-off.
+`dequeue_message` retains the exact conversation and daemon-supplied numeric queued
+message id. The presentation owner selects that target from an admitted authoritative
+user item; raw queue snapshots, equal text and minted echo ledgers supply no target.
+Sending never removes a content row or proves dropped/delivered settlement. A later
+admitted item revision supplies the actual lifecycle. The same rule applies to
+`sendQueuedNow`: it is a control request, not optimistic content acceptance.
 
-```kotlin
-// MessageCommands
-suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
-    val request = Envelope(
-        id = requests.nextRequestId(),
-        type = TYPE_DEQUEUE_MESSAGE, ts = Clock.System.now().toString(),
-        payload = MobileJson.encodeToJsonElement(
-            DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
-        ),
-    )
-    // resolved before the send — the confirming queue_state replaces the snapshot this reads from
-    val echoId = queueProjection.current(conversationId)
-        .firstOrNull { it.id == queuedMessageId }?.messageId.orEmpty()
-    if (echoId.isNotEmpty()) {
-        threadProjection.recordDrop(conversationId, queuedMessageId, echoId)
-    }
-    if (!send(request)) {
-        threadProjection.withdrawDrop(conversationId, queuedMessageId)
-        throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
-    }
-}
-```
-
-- **Fire-and-forget, not `RelayRequests.sendAndAwaitReply` (#859).** The method sends through the pump's raw
-  `send` (the `interrupt` idiom, passed into `MessageCommands`' constructor) and returns once the frame is
-  on the wire. It registers in no `RelayRequests.pendingRequests` slot,
-  so it can now throw only `IllegalStateException` from a not-connected session (`send` returns
-  `false`) — never `RelayErrorException` or `IllegalArgumentException`.
-- **The pending-drop ledger lives on `ThreadProjection`** (`pendingDrops:
-  MutableStateFlow<Map<String, Map<Long, String>>>`, `conversationId -> (queued_msg_id -> echo message
-  id)`), not on `MessageCommands` — `dropQueuedMessage` calls `ThreadProjection.recordDrop` /
-  `.withdrawDrop` rather than updating a `StateFlow` of its own. `recordDrop`
-  **records before the send**: the entry goes in first, so a confirming `queue_state` can never land
-  before there is a request to settle against it. (An earlier design recorded after a successful send and
-  settled immediately; that ordering left a window no deterministic unit test could exercise, because the
-  fake pump's inbound collector never interleaves with a call that doesn't suspend — recording first
-  closes the window structurally instead.) A failed send withdraws the entry it just added and throws;
-  nothing stays recorded for a drop that never reached the daemon.
-- **`removeOwnEcho` (#781) now runs from the inbound `TYPE_QUEUE_STATE` arm, not from this method.** After
-  `queueProjection.apply(envelope)`, the collector calls `settleDrops` for every conversation with a
-  pending entry (`pendingDrops.value.keys`); settling a conversation whose snapshot did not change is a
-  no-op. `settleDrops` claims, in one atomic `MutableStateFlow.update`, every pending entry whose
-  `queued_msg_id` the fresh snapshot no longer holds, then runs `removeOwnEcho` for each claimed entry's
-  echo id — so a conversation's drop settles at most once even if a caller and the collector race. An item
-  still in the snapshot (still queued, or an unrelated `queue_state`) stays pending. **Keyed on the
-  requested `queued_msg_id`, never a backlog diff**: a backlog also shrinks when the daemon *drains* it
-  normally, so an item that drains without a drop request from this device has no `pendingDrops` entry and
-  keeps its echo. `removeOwnEcho` itself is unchanged — the `mintedMessageIds` membership check still
-  enforces #781's multi-device rule (an empty id, one minted by another device, or an unresolved
-  `queuedMessageId` all leave the thread untouched). Full correlation rules, the multi-device rationale
-  and the security posture live in [Queued backlog § Dropping a queued
-  entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466) — not duplicated here.
-- **`settleQueuedEchoes` runs right after `settleDrops` in the same arm ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).** A drain is the other way a queued own echo leaves the backlog
-  (a drop is the first): for every conversation the minted-id ledger or the echo state knows about,
-  `settleQueuedEchoes` moves to the end of the thread, once, every echo the fresh snapshot no longer holds,
-  then replaces that conversation's queued set with the snapshot's own ids intersected against the ledger.
-  Drops and drains are independent — `settleDrops` has already spent a dropped id's ledger entry by the
-  time `settleQueuedEchoes` runs, so a dropped echo is removed, never moved. See [Queued backlog § Own echo
-  position](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558).
-- **The drain/drop race is accepted, not defended against (#859).** The daemon pushes the same
-  `queue_state` for a removal and for a drain, and it ignores a dequeue it cannot apply. If the operator
-  drops the head item just as the running turn ends, the item can drain before the dequeue lands; the next
-  snapshot then lacks the item exactly as a successful drop would, and the phone removes the echo of a
-  message claude did receive. The daemon gives no signal that distinguishes the two cases, and the
-  operator did ask for the message to go, so no defence was added — see the `dropQueuedMessage` KDoc
-  (`RemoteConversationRepository` and `ConversationRepository`) for the accepted trade-off.
-- **Encodes `DequeueMessagePayloadDto` (`{conversation_id, queued_msg_id}`)** through `MobileJson`;
-  `queuedMsgId: Long` encodes to a JSON **number** (the wire `uint64`), symmetric with the inbound
-  `QueuedMessageDto.queuedMsgId` — not a String (the pyrycode#720 trap). The caller echoes the
-  `QueuedMessage.id` it got from `observeQueue` verbatim.
-- **`security-sensitive` → never-log + no idempotency key.** The frame has no text field; the request,
-  envelope, ids and the `pendingDrops` ledger are all unlogged (structural — the layer has no logger). No
-  token/nonce: a monotonic `queued_msg_id` is never recycled, so a replayed drop hits an already-consumed
-  id → a benign daemon stale-id reject (the `modal_cancel` no-token posture). Authorization is daemon-side.
-
-## `requestHistory(conversationId, cursor, limit)` — the on-disk history page read (#623)
-
-One backward step of a conversation's scroll-back over v2 `request_history` (server pyrycode#2113,
-answered by pyrycode#2116). The [`rename`](remote-conversation-repository-send-create-promote-rename.md#renameconversationid-name--the-fourth-mutation-530)
-shape — encode → `RelayRequests.sendAndAwaitReply` → typed-decode — **minus the state fold**: a page is handed back
-to the caller and folded into the timeline by #645, so this method touches no projection and caches
-nothing.
-
-```kotlin
-override suspend fun requestHistory(conversationId: String, cursor: String, limit: Int): HistoryPage {
-    val request = Envelope(
-        id = relayRequests.nextRequestId(),
-        type = TYPE_REQUEST_HISTORY, ts = Clock.System.now().toString(),
-        payload = MobileJson.encodeToJsonElement(
-            RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = limit),
-        ),
-    )
-    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
-    return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-}
-```
-
-- **`cursor` and `limit` are forwarded verbatim**, never parsed, rebuilt or validated here — the daemon
-  re-validates both: a cursor that does not decode, was minted for another conversation, or names a
-  position no longer in the log is one merged `history.invalid_cursor`, and a negative limit is
-  `history.invalid_page_size`.
-- **`history_page` is a new correlated reply type**, added to the success-arm `when` alongside
-  `TYPE_RECENT_WORKSPACES_LIST` — without that registration the waiting deferred hangs forever, the
-  same hazard every new reply type on this seam carries.
-- **Deliberately no `.catch {}`**, unlike its one-shot sibling [`recentWorkspaces`](remote-conversation-repository-workspace-and-push.md#recentworkspaces--the-fourth-read-verb-leanest-of-the-family-no-fold-565),
-  which fails closed to empty for a picker: every failure must reach the caller so a walk can tell the
-  one **retryable** code (`history.unavailable`) from the three permanent ones
-  (`history.invalid_cursor` / `history.invalid_page_size` / `history.invalid_request`). `RelayRequests.mapError`
-  needs no new mapping — it is already generic over unrecognised codes, and it already turns the
-  daemon's `conversation.not_found` into the `IllegalArgumentException` the `ConversationRepository`
-  contract pins for an unknown conversation.
-- **Strict decode, no defaults.** `HistoryPagePayloadDto`/`HistoryEntryDto` require every field —
-  `at_start` in particular must never default to `false`, which would read as "keep walking" on a page
-  that omitted the key. A missing `entries`/`cursor`/`at_start` or a malformed `ts` throws at decode,
-  scoped to this caller alone; the shared inbound collector never sees it and no other conversation's
-  projection changes.
-- **`HistoryEntryDto.payload` stays a raw `JsonElement`** through the decode — the mapper
-  (`toHistoryPage()`, `data/network/HistoryPayloads.kt`) copies it across unexamined, so a consumer
-  (#645) re-reduces it through the same per-type decode arms the live lane runs rather than paying for
-  a second parse. `HistoryEntryDto.id` maps straight to `HistoryEntry.id`; an entry carrying both `id`
-  and an unrelated `event_id`-shaped key decodes from `id` only — the two are different sequences that
-  both look like small integers (see [`HistoryEntry`](conversation-repository-shape.md#shape)).
-- **`security-sensitive` → never-log.** Like `requestScreenSnapshot`, the class adds zero `Log.*` call
-  sites for this method: the cursor and every entry's `type`/`payload` are replayed content and never
-  reach Logcat, on any branch including the not-connected `check` and every decode-failure path.
-
-<a id="interrupt--the-bare-v2-interrupt-control-send-458"></a>
 
 ## `interrupt(conversationId)` — explicitly targeted v2 `interrupt`
 
@@ -223,7 +100,8 @@ private fun interruptRequest(conversationId: String): Envelope = Envelope(
   propagates through the ViewModel.
 - **Inbound events own turn state:** this method changes no projection on success
   or failure. Sending does not prove that the turn stopped; the existing
-  conversation-routed `turn_state`/`turn_end` events update the busy flag.
+  session-owned `turn_state` readings update the busy flag; canonical terminal facts
+  supply content outcomes.
 - **Preserve the callback seam:** the concrete method is reached through the repository's one-line
   hand-off, then the
   [coordinator passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-interrupt-passthrough-458)
@@ -261,7 +139,7 @@ from `RelayRequests.nextRequestId`, a timestamp, and verbatim JSON string fields
 `conversation_id` and `task_id`. It creates no reply waiter, interrupt, retry or
 optimistic mutation of messages, turn state or task status. `Result.success(Unit)`
 means only send acceptance: there is no success reply to await, and completion
-comes from a terminal task update or a subsequent roster omitting the task.
+comes from admitted authoritative task facts. Raw roster omission proves nothing.
 
 Subscribe to the refusal flow and establish collection **before invoking the
 send**. It is a replay-free shared event flow with a 64-event buffer and
@@ -286,6 +164,15 @@ emitting a refusal after send would miss the registration race.
 
 <a id="startnewsession--the-bare-v2-new_session-control-send-539"></a>
 
+Each refusal correlation expires after **30 seconds** in the existing connection
+scope, even for successful sends to distinct targets without disconnect. Replacement
+for the same target, refusal, send failure, cancellation and connection end cancel
+and retire the matching expiry. An old expiry/refusal cannot retire a newer attempt.
+Expiry changes no task/content state and creates no retry. Subscribe before sending
+so a refusal delivered during send is observable. The distinct-target expiry and
+same-target replacement regressions protect against an unbounded successful ledger.
+
+
 ## `startNewSession()` — explicitly targeted v2 `new_session`
 
 The wire half of **Reset session** sends the open conversation's id directly from
@@ -308,8 +195,8 @@ The body lives on `ConversationCommands` (#914, `data/repository/ConversationCom
   the [thread action](thread-overflow-menu.md) surfaces using fixed local copy.
   Sending successfully does not establish that rotation completed.
 - **Inbound events own session state:** neither a successful nor a failed send
-  changes local projections. The existing `session_transition` fold supplies the
-  real boundary and session identity. The required `Session` return is an
+  changes local projections. Authoritative items supply the
+  real boundary; admitted summaries/family clears establish live session identity. The required `Session` return is an
   unpersisted placeholder: empty `id` and `claudeSessionUuid`, the argument's
   `conversationId`, and the send-time `startedAt`. The UI discards it. Changing the
   interface return to `Unit` was deferred because it would also affect the fake

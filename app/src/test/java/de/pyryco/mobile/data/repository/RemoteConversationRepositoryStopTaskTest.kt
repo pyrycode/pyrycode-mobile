@@ -59,7 +59,6 @@ class RemoteConversationRepositoryStopTaskTest {
     fun sendsExactlyOneVerbatimEnvelopePerCallAndReturnsWithoutReplyOrStateMutation() =
         runTest {
             val (pump, repo) = repository()
-            pump.push(BackgroundTaskProjectionTest.started("task"))
             runCurrent()
             pump.push(
                 Envelope(
@@ -69,8 +68,8 @@ class RemoteConversationRepositoryStopTaskTest {
                     MobileJson.parseToJsonElement("""{"conversation_id":"c1","state":"thinking"}"""),
                 ),
             )
-            val tasks = repo.backgroundTasks.value
-            val messages = repo.observeMessages("c1").first()
+            val tasks = repo.authoritativeThreads.current(repo.authoritativeHost, "c1")
+            val messages = repo.observeAuthoritativeThread("c1").first()
             val phase = repo.observeTurnPhase("c1").first()
             pump.sent.clear()
             val conversation = "opaque/\"conversation\n"
@@ -89,8 +88,8 @@ class RemoteConversationRepositoryStopTaskTest {
             assertNotEquals(request.id, pump.sent.last().id)
             assertNull(request.inReplyTo)
             assertNull(request.eventId)
-            assertEquals(tasks, repo.backgroundTasks.value)
-            assertEquals(messages, repo.observeMessages("c1").first())
+            assertEquals(tasks, repo.authoritativeThreads.current(repo.authoritativeHost, "c1"))
+            assertEquals(messages, repo.observeAuthoritativeThread("c1").first())
             assertEquals(phase, repo.observeTurnPhase("c1").first())
             assertFalse(logs.any { conversation in it || task in it })
         }
@@ -138,37 +137,6 @@ class RemoteConversationRepositoryStopTaskTest {
         }
 
     @Test
-    fun terminalUpdateRetiresEvenAnUnlistedTaskAndOnlyItsConversation() =
-        runTest {
-            val (pump, repo) = repository()
-            val a = collect(repo.observeBackgroundTaskStopRefusals("c1"))
-            val b = collect(repo.observeBackgroundTaskStopRefusals("c2"))
-            repo.stopBackgroundTask("c1", "shared")
-            repo.stopBackgroundTask("c2", "shared")
-            pump.push(BackgroundTaskProjectionTest.terminal("shared", "custom-terminal", conversationId = "c1"))
-            pump.sent.forEach { pump.push(error(it.id)) }
-            runCurrent()
-            assertTrue(a.isEmpty())
-            assertEquals(listOf("shared"), b)
-        }
-
-    @Test
-    fun rosterOmissionRetiresOnlyOmittedTasksInThatConversation() =
-        runTest {
-            val (pump, repo) = repository()
-            val a = collect(repo.observeBackgroundTaskStopRefusals("c1"))
-            val b = collect(repo.observeBackgroundTaskStopRefusals("c2"))
-            repo.stopBackgroundTask("c1", "dropped")
-            repo.stopBackgroundTask("c1", "retained")
-            repo.stopBackgroundTask("c2", "dropped")
-            pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("retained"))))
-            pump.sent.forEach { pump.push(error(it.id)) }
-            runCurrent()
-            assertEquals(listOf("retained"), a)
-            assertEquals(listOf("dropped"), b)
-        }
-
-    @Test
     fun newerAttemptCannotBeRefusedByAnOlderAttempt() =
         runTest {
             val (pump, repo) = repository()
@@ -183,19 +151,51 @@ class RemoteConversationRepositoryStopTaskTest {
         }
 
     @Test
+    fun successfulDistinctTargetsExpireWithoutDisconnectAndRejectStaleRefusals() =
+        runTest {
+            val (pump, repo) = repository()
+            val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
+            repeat(100) { repo.stopBackgroundTask("c1", "old-$it") }
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            repo.stopBackgroundTask("c1", "current")
+            pump.sent.forEach { pump.push(error(it.id)) }
+            runCurrent()
+            assertEquals(listOf("current"), events)
+            assertTrue(repo.supportsBackgroundTaskStop)
+        }
+
+    @Test
+    fun expiredOlderAttemptCannotRetireReplacementForTheSameTask() =
+        runTest {
+            val (pump, repo) = repository()
+            val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
+            repo.stopBackgroundTask("c1", "task")
+            testScheduler.advanceTimeBy(15_000)
+            repo.stopBackgroundTask("c1", "task")
+            testScheduler.advanceTimeBy(15_000)
+            runCurrent()
+            pump.push(error(pump.sent.first().id))
+            runCurrent()
+            assertTrue(events.isEmpty())
+            pump.push(error(pump.sent.last().id))
+            runCurrent()
+            assertEquals(listOf("task"), events)
+        }
+
+    @Test
     fun failedSendRetiresCorrelationAndKeepsTaskData() =
         runTest {
             val (pump, repo) = repository()
             val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
-            pump.push(BackgroundTaskProjectionTest.started("t1"))
             runCurrent()
-            val before = repo.backgroundTasks.value
+            val before = repo.observeAuthoritativeThread("c1").first()
             pump.acceptSend = false
             assertTrue(repo.stopBackgroundTask("c1", "t1").isFailure)
             pump.push(error(pump.sent.single().id))
             runCurrent()
             assertTrue(events.isEmpty())
-            assertEquals(before, repo.backgroundTasks.value)
+            assertEquals(before, repo.observeAuthoritativeThread("c1").first())
             pump.acceptSend = true
             repo.stopBackgroundTask("c1", "t1")
             pump.push(error(pump.sent.first().id))
@@ -229,15 +229,16 @@ class RemoteConversationRepositoryStopTaskTest {
             val (pump, repo) = repository()
             val events = collect(repo.observeBackgroundTaskStopRefusals("c1"))
             repo.stopBackgroundTask("c1", "t1")
-            pump.push(BackgroundTaskProjectionTest.midLife("t1", "untrusted-update"))
-            pump.push(BackgroundTaskProjectionTest.progress("t1"))
-            pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = emptyList(), droppedTasks = -1))
-            pump.push(
-                BackgroundTaskProjectionTest.envelope(
-                    "background_task_updated",
-                    """{"conversation_id":"c1","task_id":"t1","status":"completed","patch":null}""",
-                ),
-            )
+            for (type in listOf("background_task_started", "background_task_updated", "background_task_roster")) {
+                pump.push(
+                    Envelope(
+                        99,
+                        type,
+                        "2026-10-21T00:00:00Z",
+                        MobileJson.parseToJsonElement("""{"conversation_id":"c1","task_id":"t1","status":"completed"}"""),
+                    ),
+                )
+            }
             pump.push(error(pump.sent.single().id))
             runCurrent()
             assertEquals(listOf("t1"), events)

@@ -233,6 +233,16 @@ not fixture paragraph text. See [counted navigation/open/close evidence](../../e
 See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
 and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+### Agent navigation proof readiness (#2373)
+
+Repository settlement does not fence rendered readiness. The pointer proof waits for
+one list containing the exact owned root, marker and closed-run representative.
+The finished-marker check after the later reply occurs earlier and needs its own
+current-generation identity and bounded geometry reveal. Index validation and scroll
+dispatch share one UI-thread operation so a generation change cannot dispatch a stale key.
+See [Agent navigation evidence](thread-screen-agent-navigation-evidence.md) for both
+boundaries, controlled regressions, source/recording identities and counted Linux acceptance.
+
 ### Attributed assistant prose in Agent blocks (#1827)
 
 `foldBackgroundAgentBlocks` also claims assistant rows whose nonempty `parentToolUseId` reaches a
@@ -268,7 +278,7 @@ an arbitrary "Using tools: N" label (#1904). `BackgroundAgentProseScreenTest`'s
 two tools so their labels really match, and derives the owned run from loaded child ownership.
 The control hides and reveals its prose; collapse never drops it. With collapse off the prose
 is visible as a nested child. Gaps inside a block are covered under
-[the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+[the oldest-end history demand](thread-screen-oldest-end-history-demand.md).
 
 `BackgroundAgentProseTest` probes the production projection: two agents and a main lane; empty,
 unknown, untracked and cyclic parents; running to finished; roster replacement; late parent joins;

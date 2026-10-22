@@ -28,10 +28,8 @@ excluding U+001C–U+001F and zero-width space. Default JVM trimming/tokenizatio
 would misclassify these boundaries.
 
 These ack-only commands bypass pending registration and device-identity lookup,
-while the registration callback still returns authoritative ownership. Returning
-false would select a legacy fallback bubble and merely replace the stuck Sending
-row. The retired-source guard, outbound text, list preview and ack/error handling
-remain intact; legacy/demo feedback retains its existing behavior. Reset commands
+while the registration callback still returns authoritative ownership. The callback must preserve authoritative ownership even for ack-only commands. The retired-source guard, outbound text, list preview and ack/error handling
+remain intact; no raw echo fallback exists. Reset commands
 do not clear unrelated pending sends. See the
 [repository regression contract](remote-conversation-repository-testing.md#testing).
 
@@ -46,65 +44,7 @@ across connection replacement and resets, without automatic resend or cross-host
 transfer; it is excluded from disk cache and does not survive process death.
 See [store ownership](remote-conversation-repository-reads-and-thread-store.md#authoritative-daemon-items-alongside-the-raw-event-projection)
 and [public-key wiring](device-static-keystore.md#wiring--usage).
-Activation and combined deterministic/live acceptance remain with #1988.
-
-**Legacy path (retained). The corrected wire premise is load-bearing.** `send_message` does **not** echo the sender its own
-persisted `Message`. The only sender-correlated reply is an empty **`ack`** on success
-(`in_reply_to == requestId`, payload `{}`) or an **`error`** on failure (`{code, message, retryable}`).
-A `message` envelope reaching this device is a user-echo to *other* paired devices or the assistant's
-*later, unsolicited* reply (`in_reply_to: null`), **never** a sender echo — so there is nothing to map
-for the return value, and the sender's own thread updates **only** if `sendMessage` projects the
-message locally. (The "send_message echo" phrasing still in the `TYPE_MESSAGE` code comments predates
-this correction and is harmless — that path correctly handles the other-device / assistant cases.) See
-[[phase4-send-message-acks-not-message-echo]] and [[phase4-request-encoders-live-in-mutation-tickets]].
-
-**Decision (PO-owned, `security-sensitive`): optimistic echo, not confirmed-insert ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355), reversing the original ruling below).** Desktop's
-`submitMessage` draws its `userText` echo the moment it sends, whether or not the send goes out, so the
-app never looks like it ignored a tap; mobile now copies that rule end to end. The message is built,
-recorded into both projections and minted into the echo ledger **before** `sendAndAwaitReply`, not after
-it. A refused send (a server `error` or a not-connected throw) leaves the echo in place — there is no
-rollback, because desktop has no failure surface for a send to roll back against either. The trust
-property the original ruling protected — the thread never shows a message the server did not receive —
-no longer holds by construction; it is traded for responsiveness, matching desktop's own posture. `ack`
-confirms receipt when it comes back clean, but nothing in
-the UI distinguishes a delivered bubble from a not-yet-acknowledged one (`Message` still carries no
-delivery-status field, so the supplied authoritative route above carries Sending separately).
-
-**Original ruling (superseded above, kept for context).** Before #1355 the message was projected into
-the read path only on the correlated `ack`, never before and never on failure, so the thread could never
-show a message the server had not received. That held by construction as long as the UI was willing to
-leave a tapped Send silent until the daemon answered; #1355 judged that latency a worse user-facing fault
-than the (already-accepted-on-desktop) risk of a bubble outliving a refused send.
-
-The flow (≤ ~15 lines):
-
-```kotlin
-// MessageCommands
-suspend fun sendMessage(conversationId: String, text: String): Message {
-    val messageId = UUID.randomUUID().toString()        // client-minted; the sender's correlation handle
-    val sentAt = Clock.System.now()
-    val request = Envelope(
-        id = requests.nextRequestId(),                   // the ENVELOPE id — distinct from messageId
-        type = "send_message", ts = sentAt.toString(),
-        payload = MobileJson.encodeToJsonElement(
-            SendMessagePayloadDto(conversationId, messageId, text)),  // {conversation_id, message_id, text}
-    )
-    val message = Message(messageId, sessionId = "", Role.User, text, sentAt, isStreaming = false)
-    conversationList.recordLastMessage(conversationId, message)  // echo drawn into BOTH projections and the
-    threadProjection.appendMessages(listOf(conversationId to message))  //   minted ledger BEFORE the await (#1355)
-    threadProjection.recordMinted(conversationId, messageId)
-    requests.sendAndAwaitReply(request)                  // throws on error / not-Open; the echo is already drawn
-    return message
-}
-```
-
-This **mirrors `FakeConversationRepository.sendMessage`'s observable contract** (mint id, reconstruct a
-`Role.User` message, insert, return) so the UI behaves identically under either binding. The one
-intentional divergence: `sessionId = ""` (the remote's list-tier placeholder; the v2 wire carries no
-`session_id`, boundaries are #336) vs the fake's `currentSessionId`. There is **no local cache guard**
-for an unknown conversation — the server is authoritative (the cached `projection` can be stale), so an
-unknown id surfaces through the server's `conversation.not_found` `error`. Observably identical to the
-fake's synchronous throw; the contract pins the exception *type*, not the timing.
+Production requires negotiated thread support; unsupported hosts receive update-required treatment.
 
 ### The `ack`/`error` correlation primitive (reused by #347/#348, moved to `RelayRequests` by #914)
 
@@ -199,58 +139,15 @@ the log).
 
 ### Naming a message's attachments — `sendMessage(conversationId, text, attachmentIds)` (#830)
 
-`send_message` can name the [uploaded attachments](attachment-upload.md) (#829) a message references, in
-`SendMessagePayloadDto`'s optional `attachment_ids` (`@SerialName`, declared last). Under `MobileJson`
-(`encodeDefaults = true`, `explicitNulls = false`) the field defaults to `null`, which is **omitted**, not
-encoded as `[]` — an `emptyList()` default would have added the key to every existing text-only send.
+`MessageAttachmentIds.forSend` validates before allocating/sending: caller-order ids
+are deduplicated, capped at 32 distinct references and omitted when empty. Only ids
+reach `SendMessagePayloadDto`; pending feedback keeps cleaned display names/MIME
+hints. Upload and byte retrieval remain separate transport operations. An ack or
+attachment-stored reply cannot create an accepted user item. Daemon-provided items
+supply the eventual content/reference identity and order.
 
-`MessageAttachmentIds` (`data/network/MessagePayload.kt`) is the `AttachmentUploadLimit` idiom applied to
-this bound: `MAX = 32`; `forSend(ids)` drops repeats keeping first-occurrence order, throws
-`IllegalArgumentException` when more than `MAX` distinct ids remain, and returns `null` for an empty list
-— so "no ids" has exactly one wire form. **The daemon counts the raw `attachment_ids` array elements,
-while the acceptance criteria count ids after repeats are dropped; sending the deduplicated list makes
-both counts equal**, so a caller can't be refused for repeats it didn't intend as distinct ids.
-
-`ConversationRepository` gains a third `sendMessage` overload (default-throwing, the `setSessionSettings`
-idiom — the two-argument member is untouched, so none of the seventeen existing test doubles change):
-
-```kotlin
-suspend fun sendMessage(conversationId: String, text: String, attachments: List<MessageAttachment>): Message =
-    error("sendMessage with attachments is not implemented for this ConversationRepository")
-```
-
-`MessageCommands`' two-argument `sendMessage` now calls the three-argument override with
-`emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
-building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
-otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same echo drawn before the
-`ack`, #1355), with `attachmentIds = attachments.map { it.attachmentId }` set on the DTO. Only ids reach the
-wire; the parameter's own type changed from `attachmentIds: List<String>` to `attachments:
-List<MessageAttachment>` for the caller (#983, see below) — no second overload, since JVM erasure forbids
-two `List<...>` overloads that only differ by element type. A daemon refusal (`attachment.not_found`,
-`protocol.malformed`) arrives as a correlated `error` and throws `RelayErrorException` through the same
-path as any other `sendMessage` failure — the echo is already drawn by this point (#1355), so a refused
-send leaves the row in place rather than leaving the thread unchanged.
-
-**The echoed row carries the references (#983).** `MessageCommands.sendMessage`
-builds the row's `attachments` from the parameter, not from the wire reply (`send_message`'s reply stays
-an empty `ack`): `attachments.distinctBy { it.attachmentId }.map { ... }` in caller order, with each
-non-null `displayName` and `mimeType` passed through `attachmentDisplayName` — **the same
-code-point-level name cleaner** [`AttachmentOfferProjection` uses for a daemon-offered name](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event)
-also cleans the MIME hint here, since a local file's name and its declared MIME type are both authored by
-whichever app supplied the document through the system picker and neither is more trustworthy than the
-other. `ThreadViewModel.sendWithAttachments` builds one `MessageAttachment(id, entry.displayName,
-entry.mimeType)` per pending entry, in order, before calling this three-argument `sendMessage` — nothing
-else in the ViewModel changed.
-
-`StableConversationRepository` overrides the three-argument member as
-`live.sendMessage(conversationId, text, attachmentIds)` — the repository live at call entry, the same
-snapshot-or-throw posture as the two-argument send (see [Stable conversation
-repository](stable-conversation-repository.md)).
-
-**Test gotcha:** `observeMessages` sends its own catch-up request as soon as it's collected. A test that
-collects the thread first and then asserts on `pump.sent.single()` fails with "more than one element" —
-filter the captured frames to `type == "send_message"` instead of asserting there's exactly one frame
-sent.
+A facade snapshots the live connection at call entry. Tests should filter outgoing
+frames by command type; authoritative opening may issue independent queries.
 
 ## `createDiscussion(workspace)` — the second mutation (#347)
 

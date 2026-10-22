@@ -37,7 +37,7 @@ class DesignHarnessSmokeTest {
     @Test fun everyThreadInputReachesTheThreadViewModel() {
         design.paired = true
         design.inputs.connectionState.value = ConnectionState.Offline
-        design.inputs.backgroundTaskCount.value = 2
+        design.inputs.taskFacts.value = captureTaskCount(2)
         design.launch()
         rule.onNodeWithText("Pyrycode Mobile").performScrollTo().performClick()
         rule.waitUntil(5_000) { design.inputs.thread.value != null }

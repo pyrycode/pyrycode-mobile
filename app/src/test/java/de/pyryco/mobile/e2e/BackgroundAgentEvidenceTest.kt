@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -107,6 +109,41 @@ class BackgroundAgentEvidenceTest {
         items: List<ThreadItemDto>,
         host: String = "host",
     ) = authoritativeThreadEvidence(host, "chat", connection, snapshot(items))
+
+    @Test fun finishedPlacementRejectsLostOrChangedTopLevelEndOrderWithIdenticalContent() {
+        val expected = ThreadItemDto.decode(JsonObject(agent(active = false, rev = 12).raw + ("ended_order" to JsonPrimitive(8))))
+        val before = fact(5, "user_message", status = "delivered")
+        val after = fact(10, "user_message", status = "delivered", session = "session-b")
+        assertTrue(evidence(listOf(expected, before, after)).retainsFinishedAgentPlacement(expected, before, after))
+        for (end in listOf(null, 7L, 9L)) {
+            val raw = expected.raw.toMutableMap()
+            if (end == null) raw.remove("ended_order") else raw["ended_order"] = JsonPrimitive(end)
+            val changed = ThreadItemDto.decode(JsonObject(raw))
+            assertEquals(expected.content, changed.content)
+            assertEquals(expected.order, changed.order)
+            assertEquals(expected.status, changed.status)
+            assertEquals(expected.active, changed.active)
+            assertFalse(
+                "top-level finished placement must survive independently of content",
+                evidence(listOf(changed, before, after)).retainsFinishedAgentPlacement(expected, before, after),
+            )
+        }
+    }
+
+    @Test fun finishedPlacementRequiresBothChronologicalAnchorsInTheProjectedOrder() {
+        val root = ThreadItemDto.decode(JsonObject(agent(active = false, rev = 12).raw + ("ended_order" to JsonPrimitive(8))))
+        val before = fact(5, "user_message", status = "delivered")
+        val after = fact(10, "user_message", status = "delivered", session = "session-b")
+        val reading = evidence(listOf(root, before, after))
+        assertTrue(reading.retainsFinishedAgentPlacement(root, before, after))
+        val reversed = ThreadEvidence(reading.owner, reading.records.reversed(), sourceSnapshot = reading.sourceSnapshot)
+        assertFalse(
+            "correct facts alone cannot excuse misplaced rendered rows",
+            reversed.retainsFinishedAgentPlacement(root, before, after),
+        )
+        assertFalse(evidence(listOf(root, before)).retainsFinishedAgentPlacement(root, before, after))
+        assertFalse(evidence(listOf(root, after)).retainsFinishedAgentPlacement(root, before, after))
+    }
 
     @Test fun authoritativeFamilyCorrelatesRawIdsToProjectedIdentities() {
         val snap = snapshot(family())

@@ -304,10 +304,7 @@ class SecondClientPeer(
         }
     }
 
-    /**
-     * Every entry of [conversationId]'s history as this device sees it (#1016), newest first: `request_history`
-     * pages walked from the newest, each page's cursor echoed verbatim, until one says `at_start`.
-     */
+    /** Independent producer diagnostics; never a phone content source. */
     internal suspend fun history(
         conversationId: String,
         timeoutMs: Long,
@@ -389,6 +386,8 @@ class SecondClientPeer(
      * `--allow-remote-permissions`, so a missing dismissal times out rather than naming a code. A link that
      * ends first gets the same answer again on its replacement: the daemon collapses a repeated `answer_token`.
      */
+    internal fun canAllowOnce(modalId: String): Boolean = RecordedSuiteNative.peerPermissionReady(link.current.value?.pump, modalId)
+
     internal suspend fun allowOnce(
         modalId: String,
         timeoutMs: Long,
@@ -574,7 +573,7 @@ class SecondClientPeer(
     ): Envelope =
         awaiting(dismissalType, timeoutMs) {
             link.request("peer $type", resend = true) { live ->
-                attempt(live, type, payload) { this.type == dismissalType && payloadField(idField) == id }
+                attempt(live, type, payload, permissionTimeoutMs = timeoutMs) { this.type == dismissalType && payloadField(idField) == id }
             }
         }
 
@@ -586,12 +585,16 @@ class SecondClientPeer(
         live: Link,
         type: String,
         payload: JsonElement,
+        permissionTimeoutMs: Long = ATTEMPT_TIMEOUT_MS,
         answers: Envelope.(Long) -> Boolean,
     ): RedialingLink.Attempt<Envelope> {
         val id = requestId.incrementAndGet()
         val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
         val observation = replyObservation
         val targeted = observation?.sending(this, envelope) { !closed.value && live.pump.state.value is PumpState.Open } == true
+        if (type == "modal_answer" && envelope.payloadField("option_id") == "allow_once") {
+            RecordedSuiteNative.beforePeerPermission(live.pump, checkNotNull(envelope.payloadField("modal_id")), permissionTimeoutMs)
+        }
         val sent = live.pump.send(envelope)
         if (targeted) observation?.sent(this, sent)
         if (!sent) {

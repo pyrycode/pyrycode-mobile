@@ -52,6 +52,20 @@ class RecordedExchangeTest {
             }.toString(),
         )
 
+    @Test fun connectionUsesOnlyCapturedDeviceIdentity() {
+        val exchange =
+            RecordedExchange(
+                recording(
+                    "client" to frame(1, "send_message", """{"text":"hello","device_id":"recorded-device","message_id":"old"}"""),
+                ),
+            )
+        val device = exchange.reboundIdentity("recorded-device")
+        assertEquals(device, exchange.reboundIdentity("recorded-device"))
+        assertThrows(IllegalStateException::class.java) { exchange.reboundIdentity("uncaptured-device") }
+        exchange.reply(frame(2, "send_message", """{"text":"hello","device_id":"$device","message_id":"fresh"}"""))
+        exchange.assertComplete()
+    }
+
     @Test fun requestsAndRepliesUseFreshIds() {
         val exchange =
             RecordedExchange(
@@ -62,6 +76,31 @@ class RecordedExchangeTest {
             )
         assertEquals(45L, exchange.reply(frame(45, "list_conversations")).single().inReplyTo)
         exchange.assertComplete()
+    }
+
+    @Test fun capturedDeviceIdentityBindsTheGraphAndExactSendPayload() {
+        val exchange =
+            RecordedExchange(
+                recording(
+                    "client" to frame(1, "send_message", """{"device_id":"captured-device","message_id":"old","text":"controlled"}"""),
+                    "daemon" to frame(2, "thread_updated", """{"device_id":"captured-device"}"""),
+                ),
+            )
+        val device = exchange.reboundIdentity("captured-device")
+        val replies =
+            exchange.reply(frame(10, "send_message", """{"device_id":"$device","message_id":"fresh","text":"controlled"}"""))
+        assertEquals(
+            device,
+            (replies.single().payload as kotlinx.serialization.json.JsonObject).getValue("device_id").let {
+                (it as kotlinx.serialization.json.JsonPrimitive).content
+            },
+        )
+        exchange.assertComplete()
+    }
+
+    @Test fun graphCannotInventAnUncapturedDeviceIdentity() {
+        val exchange = RecordedExchange(recording("client" to frame(1, "list_conversations")))
+        assertThrows(IllegalStateException::class.java) { exchange.reboundIdentity("uncaptured-device") }
     }
 
     @Test fun changedAndExtraFieldsFailWithoutLeakingContent() {

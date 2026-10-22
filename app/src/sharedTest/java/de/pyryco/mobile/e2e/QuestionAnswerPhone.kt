@@ -28,6 +28,14 @@ internal fun ComposeTestRule.questionAnswerTarget(
     evidence: (String) -> Unit = {},
 ): SemanticsNodeInteraction = questionAnswerLocation(matcher, lazyKey, allowPartial = false, evidence).first
 
+/** A generation-scoped row must resolve its current owned key at each geometry read. */
+internal fun ComposeTestRule.questionAnswerTargetWithCurrentKey(
+    matcher: SemanticsMatcher,
+    currentKey: () -> String,
+    revealCurrentKey: () -> Int,
+    evidence: (String) -> Unit = {},
+): SemanticsNodeInteraction = questionAnswerLocation(matcher, null, allowPartial = false, evidence, currentKey, revealCurrentKey).first
+
 /** Tap once inside the actual exposed control when a short thread cannot scroll past a notice. */
 internal fun ComposeTestRule.questionAnswerTap(
     matcher: SemanticsMatcher,
@@ -43,8 +51,12 @@ private fun ComposeTestRule.questionAnswerLocation(
     lazyKey: String?,
     allowPartial: Boolean,
     evidence: (String) -> Unit,
+    currentKey: (() -> String)? = null,
+    revealCurrentKey: (() -> Int)? = null,
 ): Pair<SemanticsNodeInteraction, Offset> {
     val list = onNode(hasScrollToNodeAction())
+
+    fun keyForRead(): String? = currentKey?.invoke() ?: lazyKey
 
     fun clearTop(): Float {
         val header = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
@@ -57,20 +69,24 @@ private fun ComposeTestRule.questionAnswerLocation(
     }
 
     fun boundsOrReveal(): Rect? {
-        if (lazyKey == null) return onNode(matcher).fetchSemanticsNode().boundsInRoot
+        val key = keyForRead() ?: return onNode(matcher).fetchSemanticsNode().boundsInRoot
         val nodes = onAllNodes(matcher).fetchSemanticsNodes()
         // Count and bounds come from the same synchronized read, so disposal between two reads is safe.
         if (nodes.isNotEmpty()) {
             assertTrue("tap target must match exactly one node", nodes.size == 1)
             return nodes.single().boundsInRoot
         }
-        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey](lazyKey)
+        val revealKey = keyForRead() ?: key
+        val index = revealCurrentKey?.invoke() ?: list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey](revealKey)
         evidence("event=question_answer_reveal stage=disposed key_index=$index composed=0")
-        assertTrue("tap target left the projected list", index >= 0)
-        list.performScrollToKey(lazyKey)
+        if (revealCurrentKey == null) {
+            assertTrue("tap target left the projected list", index >= 0)
+            list.performScrollToKey(revealKey)
+        }
         return null
     }
-    if (lazyKey != null) list.performScrollToKey(lazyKey)
+    if (revealCurrentKey != null) revealCurrentKey() else keyForRead()?.let { list.performScrollToKey(it) }
+    currentKey?.invoke()
     list.performScrollToNode(matcher)
     val target = onNode(matcher)
     var failure = "tap target did not remain composed after keyed reveal"

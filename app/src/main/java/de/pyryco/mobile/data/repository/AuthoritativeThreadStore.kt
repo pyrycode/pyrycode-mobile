@@ -30,6 +30,8 @@ internal data class AuthoritativeThreadSnapshot(
     val orderMoves: Map<Long, AuthoritativeOrderMove> = emptyMap(),
     val incarnation: String = "",
     val retirements: Map<Long, Long> = emptyMap(),
+    /** Transient opening contributions: false is content, true is a launch. Never durable certification. */
+    val openingRows: Set<Pair<Long, Boolean>>? = null,
 ) {
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
@@ -265,8 +267,11 @@ internal class AuthoritativeThreadStore {
         conversation: String,
         saved: AuthoritativeThreadSnapshot,
         generation: Long,
+        expected: AuthoritativeThreadSnapshot? = null,
+        openingRows: Set<Pair<Long, Boolean>>? = null,
     ): AuthoritativeThreadOutcome {
         val current = current(host, conversation)
+        if (expected != null && current != expected) return AuthoritativeThreadOutcome.Ignored
         // A reset already owns this store, even if its epoch string was reused before this read began.
         if (generation != current.generation || current.generation != 0L) return AuthoritativeThreadOutcome.StaleGeneration
         if (current.resetNeeded || (current.epoch != null && current.epoch != saved.epoch)) return AuthoritativeThreadOutcome.Ignored
@@ -288,6 +293,7 @@ internal class AuthoritativeThreadStore {
                 completedVersion = completedVersion,
                 checkpoint = checkpoint,
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
+                openingRows = openingRows?.plus(current.openingRows ?: current.items.flatMap { listOf(it.id to false, it.id to true) }),
                 repairNeeded = current.repairNeeded || completedVersion > checkpoint,
             ),
             restoring = true,
@@ -359,6 +365,7 @@ internal class AuthoritativeThreadStore {
                 epoch = update.epoch,
                 items = ordered(current.items.map { if (it.id == replacement.id) replacement else it }),
                 completedVersion = maxOf(current.completedVersion, update.version),
+                openingRows = current.openingRows?.plus(listOf(replacement.id to false, replacement.id to true)),
             ),
         )
         RelayLog.i { "event=thread_store code=applied" }
@@ -381,7 +388,12 @@ internal class AuthoritativeThreadStore {
         publish(
             host,
             conversation,
-            current.copy(epoch = epoch, items = ordered(merged), completedVersion = maxOf(current.completedVersion, version)),
+            current.copy(
+                epoch = epoch,
+                items = ordered(merged),
+                completedVersion = maxOf(current.completedVersion, version),
+                openingRows = current.openingRows?.plus(items.flatMap { listOf(it.id to false, it.id to true) }),
+            ),
         )
         RelayLog.i { "event=thread_store code=batch" }
         return if (merged == current.items &&
@@ -410,7 +422,14 @@ internal class AuthoritativeThreadStore {
         publish(
             host,
             conversation,
-            current.copy(epoch = epoch, items = ordered(merged), completedVersion = version, checkpoint = version, repairNeeded = false),
+            current.copy(
+                epoch = epoch,
+                items = ordered(merged),
+                completedVersion = version,
+                checkpoint = version,
+                repairNeeded = false,
+                openingRows = current.openingRows?.plus(items.flatMap { listOf(it.id to false, it.id to true) }),
+            ),
         )
         RelayLog.i { "event=thread_store code=complete" }
         return AuthoritativeThreadOutcome.Applied

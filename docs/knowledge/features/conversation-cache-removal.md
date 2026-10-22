@@ -15,12 +15,32 @@ pairing is still present. See [paired-server wiring](paired-server-store.md#wiri
 Since #2161, `MigratingConversationCache` serializes imports, thread saves and scoped removal
 under one mutex. Lock order remains repository `historyWrites`, cache mutex, then storage/file
 mutex; there is no second repository save coordinator. Confirmed conversation removal deletes
-both Room families and evidence and records both family `retired` markers in one transaction,
+authoritative items, headers and item-retirement rows and records both historical family
+`retired` markers in the shared `file_imports` ledger in one transaction,
 then deletes the file-backed metadata, read position and both source documents. Host removal
-clears both families for that exact host, replaces its ledger rows with a host-wide `retired`
+clears authoritative storage for that exact host, replaces its ledger rows with a host-wide `retired`
 marker, then removes the host's file directory. A committed retirement prevents leftover
 sources from re-importing after cleanup failure or restart. Same-id owners on other hosts
-remain readable. A failed database retirement is reported as failure, not successful removal.
+remain readable, including case-distinct `Host`/`host` owners. A failed database retirement
+is reported as failure, not successful removal. The [integrated preservation matrix](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+retains these isolation checks alongside authoritative item fences, independent metadata/read
+state and pending-send identity/acceptance checks. Storage retirement adds no process-death
+persistence for provisional sends and does not admit a forgotten host through a cache read.
+
+Schema 12 (#2386) drops only legacy content/evidence tables and their exclusive indexes.
+It preserves `file_imports`, including historical legacy completion/retirement records,
+authoritative completion records and host/conversation fences. The legacy family marker
+remains meaningful even though there is no legacy backend. Leftover known/unknown-owner
+legacy files stay inert during opening/import; explicit removal still cleans known scoped
+files without inferring owners from hashes. Authoritative content and its import completion
+record commit together, so retained source bytes cannot overwrite a newer Room save.
+
+Item retirement is a separate fence in `authoritative_retirements`: retained revisions reject
+stale item resurrection within a surviving conversation. Whole-scope removal clears those
+rows together with content and installs the ledger fence against stale file import. Neither
+operation promotes provisional sends into authoritative facts or certification. Metadata,
+supported read positions and pending sends retain their independent lifetimes. See the
+[upgrade/reopen proof](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
 
 Host removal also installs an in-process thread-write fence (`host_retired`), protecting against
 held, queued or final saves from the closing repository. Neither a read nor `writeConversations`
@@ -47,7 +67,7 @@ that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s f
 real `AttachmentStore` on a `TemporaryFolder` for exactly this reason.
 
 Permanent deletion does not go through this hook — see [Caching conversation repository §
-delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) for
+delete](caching-conversation-repository.md) for
 `removeConversation`'s call site, which is a `CachingConversationRepository` override, not a paired-
 server-store hook.
 

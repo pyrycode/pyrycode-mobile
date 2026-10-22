@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.SessionProvenance
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.After
@@ -144,7 +146,13 @@ class RemoteConversationRepositorySessionErrorTest {
             pump.push(frame("session_error", payload.toString()))
             runCurrent()
             assertEquals(code, remote.observeSessionError("c1").first())
-            assertEquals(emptyList<ThreadItem>(), remote.observeMessages("c1").first())
+            assertTrue(
+                remote
+                    .observeAuthoritativeThread("c1")
+                    .first()
+                    .items
+                    .isEmpty(),
+            )
             assertNull(remote.observeLastMessage("c1").first())
             assertTrue(logs.none { prose in it || code in it || "secret" in it || "c1" in it })
             assertTrue(logs.any { "event=session_error" in it })
@@ -166,6 +174,66 @@ class RemoteConversationRepositorySessionErrorTest {
                 runCurrent()
                 assertNull(remote.observeSessionError("c1").first())
             }
+        }
+
+    @Test
+    fun suppliedRecoveryClearsOnlyOnAdmittedNonIdleProgress() =
+        runTest {
+            val pump = FakeSessionPump()
+            val remote =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("thread", CAPABILITY_INTERACTIVE) },
+                    authoritativeHostId = "host",
+                )
+
+            fun supplied(
+                envelope: Envelope,
+                id: String = "c1",
+                session: String = "current",
+            ) = envelope.copy(conversationId = JsonPrimitive(id), sessionProvenance = SessionProvenance(JsonPrimitive(session)))
+            for (id in listOf("c1", "c2")) {
+                pump.push(supplied(frame("session_error", "{}"), id).copy(sessionStateCleared = JsonPrimitive(true)))
+                pump.push(supplied(error(id, "session.child_crashing"), id))
+            }
+            runCurrent()
+            for (state in listOf("idle", "private-unknown")) {
+                pump.push(supplied(turn("c1", state)))
+                runCurrent()
+                assertEquals("session.child_crashing", remote.observeSessionError("c1").first())
+            }
+            pump.push(supplied(turn("c1", "responding"), session = "unreconciled"))
+            pump.push(supplied(turn("c2", "responding"), id = "c1")) // Conflicting payload identity.
+            pump.push(supplied(frame("assistant_delta", """{"conversation_id":"c1","turn_id":"t","seq":0,"text":"private"}""")))
+            runCurrent()
+            assertEquals("session.child_crashing", remote.observeSessionError("c1").first())
+            for (state in listOf("thinking", "responding")) {
+                pump.push(supplied(turn("c1", state)))
+                runCurrent()
+                assertNull(remote.observeSessionError("c1").first())
+                assertEquals("session.child_crashing", remote.observeSessionError("c2").first())
+                pump.push(supplied(error("c1", "session.blocked")))
+                runCurrent()
+                assertEquals("session.blocked", remote.observeSessionError("c1").first())
+            }
+            assertTrue(logs.none { "private" in it || "unreconciled" in it && "code=unreconciled" !in it })
+        }
+
+    @Test
+    fun decodedTurnPhasesHaveContentFreeDiagnostics() =
+        runTest {
+            val (pump, _) = repo()
+            for (state in listOf("thinking", "responding", "idle", "private-unknown-state")) {
+                pump.push(turn("private-conversation", state))
+            }
+            pump.push(frame("turn_state", """{"conversation_id":"private-conversation","state":{"private":"value"}}"""))
+            runCurrent()
+            assertEquals(
+                listOf("thinking", "responding", "idle").map { "event=session_error_turn_state phase=$it" },
+                logs.filter { it.startsWith("event=session_error_turn_state ") },
+            )
+            assertTrue(logs.none { "private" in it })
         }
 
     @Test

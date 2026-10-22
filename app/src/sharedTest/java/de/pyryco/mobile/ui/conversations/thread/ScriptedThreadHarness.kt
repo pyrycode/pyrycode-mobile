@@ -14,10 +14,14 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.e2e.TappingConversationRepository
+import de.pyryco.mobile.e2e.ThreadEvidenceSource
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +29,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -33,25 +39,20 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
 /**
- * Layer 1a component-level harness (#432): drives a scripted sequence of structured live-session
- * events through the **real production graph** — [RemoteConversationRepository]'s fold (#337
- * `assistant_delta`→streaming row + #406 `turn_state`→`isThinking`) into [ThreadViewModel] into the
- * stateless [ThreadScreen] — and renders the assembled thread, with no network, daemon, or
- * emulator-host. The production-canonical streaming row lives in the **repository** fold (its inbound
- * collector runs unconditionally on [scope]), so the harness drives the real
- * [RemoteConversationRepository]; a fake-repo + scripted-`LiveSessionEvent` harness would exercise only
- * the dormant ViewModel fold and miss regressions in the real one.
+ * Component harness: scenario operations supply daemon item facts through the real
+ * [RemoteConversationRepository], negotiated thread route, [ThreadViewModel] and [ThreadScreen].
+ * [ScriptedThreadContent] owns the scripted facts and correlated query replies. Only authoritative
+ * content and supported session-tagged live readings cross the pump's inbound boundary; legacy
+ * reduction cannot provide the rendered rows.
  *
  * The single shared entry point sibling **#435** (Layer 1b: tool rows, session divider, connection
  * banner) extends — it injects the real graph in the constructor, so new scenarios add scripting
- * methods on top without re-deriving the stream → fold → render wiring. Keep the scripting surface
+ * methods on top without re-deriving the facts → repository → render wiring. Keep the scripting surface
  * minimal: text/spinner (#432), the interrupt affordance (#459), and tool rows (#472) are wired here.
  *
  * Construct, then [start] (from `@Before`), script via the `push*` methods (each a thin `pump.push`),
- * and [close] (from `@After`) to cancel [scope]. The `FakeSessionPump` and envelope builders are ported
- * from `RemoteConversationRepositoryTest` (they depend only on `main/` types); ktlint's
- * single-public-class rule constrains only the public [ScriptedThreadHarness], so the private siblings
- * share this file.
+ * and [close] (from `@After`) to retire support and cancel [scope]. Existing scenario vocabulary stays
+ * available at the fixture boundary; its content descriptions become supplied facts before delivery.
  */
 class ScriptedThreadHarness(
     private val composeRule: ComposeContentTestRule,
@@ -60,7 +61,7 @@ class ScriptedThreadHarness(
     private val seedAgent: ConversationAgent = ConversationAgent.Claude,
     onSend: (Envelope) -> Boolean = { true },
 ) {
-    /** Owns the repository's inbound collector + the DataStore; cancelled by [close]. */
+    /** Owns the repository's inbound collector; cancelled by [close]. */
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val pump = FakeSessionPump(onSend)
@@ -77,9 +78,43 @@ class ScriptedThreadHarness(
         RemoteConversationRepository(
             pump = pump,
             scope = scope,
-            // Gate open: with the default closed set, `assistant_delta` folds nothing and
-            // `liveSessionEvents` stays silent (see assistantDelta_capabilityGateClosed_producesNoRow).
-            negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) },
+            // Match production's supplied-content and supported live-reading negotiation.
+            negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, "thread") },
+            authoritativeHostId = "scripted-host",
+            authoritativeDeviceId = { "scripted-device" },
+        )
+
+    private val supported = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(repo))
+    private val route =
+        object : NegotiatedThread() {
+            override val host = "scripted-host"
+            override val support = supported
+            override val store = repo.authoritativeThreads
+
+            override fun observe(conversationId: String) = repo.observeAuthoritativeThread(conversationId)
+
+            override fun progress(
+                conversationId: String,
+                connection: Any,
+            ) = repo.observeAuthoritativeProgress(conversationId)
+
+            override suspend fun open(conversationId: String) = repo.openAuthoritativeThread(conversationId)
+
+            override suspend fun acquire(
+                conversationId: String,
+                connection: Any,
+            ) = repo.acquireAuthoritativeThread(conversationId)
+
+            override fun older(conversationId: String) = repo.requestOlderAuthoritativeThread(conversationId)
+
+            override fun cancel(conversationId: String) = repo.cancelAuthoritativeThread(conversationId)
+        }
+    private val repository =
+        TappingConversationRepository(
+            object : ConversationRepository by repo {
+                override val negotiatedThread = route
+            },
+            tapNegotiated = true,
         )
 
     /** Records taps on the interrupt affordance (#459) — the recording analog of #458's send path,
@@ -93,11 +128,11 @@ class ScriptedThreadHarness(
 
     private fun newVm(conversationId: String) =
         ThreadViewModel(
-            savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
+            savedStateHandle = SavedStateHandle(mapOf("serverId" to "scripted-host", "conversationId" to conversationId)),
             // #586: the same inert tap the live graph installs, so the rung-2 non-vacuity proof covers the
             // whole chain (scripted envelope → real fold → tap → recorder → finding) rather than a pure
             // function in isolation. It records and nothing more, so every other scenario is unaffected.
-            repository = TappingConversationRepository(repo),
+            repository = repository,
             connectionStateSource = connectionStateSource,
             // #789: a store of this harness's own — the scenarios never type, and an isolated one keeps
             // the scripted render independent of any other surface's composer state.
@@ -165,7 +200,18 @@ class ScriptedThreadHarness(
     fun pushEnvelope(envelope: Envelope) = pump.push(envelope)
 
     /** Retained rows for assertions that also run in the scripted device gate. */
-    internal fun observeMessages() = repo.observeMessages(conversationId)
+    internal fun observeMessages() =
+        repo.observeAuthoritativeThread(conversationId).map {
+            projectAuthoritativeThread("scripted-host", conversationId, it).items
+        }
+
+    internal fun observeEvidence() = ThreadEvidenceSource.negotiated(route).observe(conversationId)
+
+    internal fun presentation() = projectAuthoritativeThread("scripted-host", conversationId, authoritativeSnapshot())
+
+    internal fun itemKey(name: String) = "${presentation().scope}:${pump.itemId(conversationId, name)}"
+
+    internal fun authoritativeSnapshot() = repo.authoritativeThreads.current("scripted-host", conversationId)
 
     internal fun observeContextUsage() = repo.observeContextUsage(conversationId)
 
@@ -375,6 +421,7 @@ class ScriptedThreadHarness(
 
     /** Cancel [scope] — stops the inbound collector and the DataStore scope. Call from `@After`. */
     fun close() {
+        supported.value = ThreadSupport.Missing(repo)
         scope.cancel()
     }
 
@@ -429,13 +476,19 @@ private class FakeSessionPump(
     private val onSend: (Envelope) -> Boolean,
 ) : SessionPump {
     private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
+    private val content = ScriptedThreadContent { inboundChannel.trySend(it) }
 
     override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
 
-    override fun send(envelope: Envelope): Boolean = onSend(envelope)
+    override fun send(envelope: Envelope): Boolean = onSend(envelope).also { if (it) content.respond(envelope) }
+
+    fun itemId(
+        conversation: String,
+        name: String,
+    ) = content.id(conversation, name)
 
     fun push(envelope: Envelope) {
-        inboundChannel.trySend(envelope)
+        content.push(envelope)
     }
 }
 

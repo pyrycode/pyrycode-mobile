@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-21T22:30:44.479Z" hostname="0eeeba6d2d09" time="51.997">
+  <properties/>
+  <testcase name="retentionInvariant_trimClearsCertification" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedUpsertTest" time="51.529"/>
+  <system-out><![CDATA[retention_phase=fixture phase_ms=426 elapsed_ms=426
+retention_phase=seeded phase_ms=5765 elapsed_ms=6192
+retention_phase=observed phase_ms=112 elapsed_ms=6304
+retention_phase=trim_processed phase_ms=9 elapsed_ms=6313
+retention_phase=trim_flushed phase_ms=43 elapsed_ms=6357
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=1, headerWrites=1, ordinalReads=2, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+retention_phase=revision_processed phase_ms=99 elapsed_ms=6457
+retention_phase=revision_flushed phase_ms=9 elapsed_ms=6466
+owned_upsert_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=1, itemSerializations=1, itemWrites=1, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+retention_phase=reopened phase_ms=10845 elapsed_ms=17312
+retention_phase=completion_processed phase_ms=259 elapsed_ms=17572
+retention_phase=completion_flushed phase_ms=3 elapsed_ms=17576
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+retention_phase=completion_reopened phase_ms=10582 elapsed_ms=28158
+retention_phase=certificate_rejected phase_ms=85 elapsed_ms=28243
+retention_phase=completion_processed phase_ms=95 elapsed_ms=28339
+retention_phase=completion_flushed phase_ms=5 elapsed_ms=28344
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+retention_phase=completion_reopened phase_ms=10577 elapsed_ms=38922
+retention_phase=certificate_rejected phase_ms=85 elapsed_ms=39007
+retention_phase=recovery_processed phase_ms=94 elapsed_ms=39102
+retention_phase=recovery_flushed phase_ms=4 elapsed_ms=39107
+owned_upsert_work=WriteCounts(itemReads=0, itemDecodes=0, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=0, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=0) fullReads=0 replacements=1
+retention_phase=complete phase_ms=10661 elapsed_ms=49768
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

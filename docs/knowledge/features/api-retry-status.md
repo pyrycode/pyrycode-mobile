@@ -139,7 +139,7 @@ hostile daemon never decodes it and never surfaces it.
 behind the already-authenticated Noise channel. `ApiRetryStatus` is a **closed sealed type carrying
 two `Int`s and no `String`** — the routing `conversationId` stays a map key and never reaches the
 value — so no daemon-supplied text can structurally reach the UI through this arm, the same property
-[stall](stall-state.md#security) and [queued backlog](queued-backlog.md#security) share. No token,
+[stall](stall-state.md#security) and [queued backlog](queued-backlog.md) share. No token,
 key, RNG, hash, file I/O, IPC surface, or persistence is touched. Memory posture (unbounded key growth
 from a hostile-but-authenticated daemon sending frames for fabricated conversation ids) is
 pre-existing and identical across every sibling projection (`stalledConversations`,

@@ -72,6 +72,26 @@ class RecordingContractTest(unittest.TestCase):
             with self.assertRaises(FileExistsError): recorded.private_write(path, b'replacement')
             self.assertEqual(path.read_bytes(), b'original')
 
+    def test_refresh_retains_both_replay_results_and_changed_strict_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'refresh'
+            fixture = Path(directory) / 'old.json'
+            old = exchange(('request_history', {'conversation_id': 'old'}))
+            fresh = exchange(('thread_catch_up', {'conversation_id': 'new'}))
+            fixture.write_text(json.dumps(old))
+            def capture(serial, destination, pyry, evidence=None):
+                destination.write_text(json.dumps(fresh))
+                return {'executed': 1, 'failed': 0, 'skipped': 0}
+            with mock.patch.object(recorded, 'capture', side_effect=capture), \
+                 mock.patch.object(recorded, 'replay', side_effect=[RuntimeError('old route'), {'executed': 1, 'failed': 0, 'skipped': 0}]):
+                report = recorded.refresh('owned', fixture, output, 'test-daemon')
+            self.assertEqual(report['comparison'], 'CHANGED')
+            self.assertEqual(report['reviewedReplay']['result'], 'failed')
+            self.assertEqual(report['freshReplay']['executed'], 1)
+            self.assertEqual(json.loads((output / 'comparison.json').read_text())['fresh'], recorded.normalized_contract(fresh))
+            self.assertEqual(json.loads((output / 'reviewed.json').read_text()), old)
+            self.assertTrue((output / 'verification.json').is_file())
+
     def test_credential_fields_and_values_are_rejected(self):
         for candidate in [{'payload': {'token': 'opaque'}}, {'wire': [{'text': 'sk-ant-not-a-real-key'}]}]:
             with self.assertRaises(ValueError): recorded.require_safe(candidate)

@@ -585,12 +585,11 @@ class AuthoritativeThreadQueriesTest {
             assertFalse(store.current("host", "c").repairNeeded)
         }
 
-    @Test fun retiredErrorsNeverChangeLegacyReadEvidenceOrReplacementQuery() =
+    @Test fun retiredErrorsNeverChangeAuthoritativeFactsOrReplacementQuery() =
         runTest {
             for (cause in listOf("cancel", "timeout", "reset", "complete")) {
                 val (pump, repo) = repository()
                 seed(pump, repo)
-                val evidence = repo.observeThreadSnapshot("c").first().readEvidence
                 repo.openAuthoritativeThread("c")
                 val retired = pump.sent.last { it.type == "thread_catch_up" }
                 when (cause) {
@@ -603,22 +602,24 @@ class AuthoritativeThreadQueriesTest {
                     else -> pump.push(success(retired, 10))
                 }
                 runCurrent()
+                val beforeRetired = repo.authoritativeThreads.current("host", "c")
                 pump.push(queryError(retired))
                 runCurrent()
-                assertEquals(cause, evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+                assertEquals(cause, beforeRetired, repo.authoritativeThreads.current("host", "c"))
                 repo.openAuthoritativeThread("c")
                 val replacement = pump.sent.last { it.type == "thread_catch_up" }
+                val beforeReplacement = repo.authoritativeThreads.current("host", "c")
                 pump.push(queryError(retired))
                 runCurrent()
                 assertEquals(cause, replacement.id, pump.sent.last { it.type == "thread_catch_up" }.id)
-                assertEquals(cause, evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+                assertEquals(cause, beforeReplacement, repo.authoritativeThreads.current("host", "c"))
                 pump.push(if (cause == "reset") window(replacement, 10, 5, 11, true) else success(replacement, 10))
                 runCurrent()
                 assertFalse(cause, repo.authoritativeThreads.current("host", "c").repairNeeded)
-                // Unrelated correlated errors keep their existing legacy route.
+                val completed = repo.authoritativeThreads.current("host", "c")
                 pump.push(queryError(retired.copy(id = -1)))
                 runCurrent()
-                assertNotEquals(evidence, repo.observeThreadSnapshot("c").first().readEvidence)
+                assertEquals(completed, repo.authoritativeThreads.current("host", "c"))
             }
         }
 

@@ -186,7 +186,7 @@ class MessageTrailTest {
             listOf(
                 "data/diagnostics/MessageTrail.kt",
                 "data/repository/MessageCommands.kt",
-                "data/repository/ThreadProjection.kt",
+                "data/repository/RemoteConversationRepository.kt",
                 "data/repository/RelayRequests.kt",
             ).map { File(root, it).readText() }
         // BuildConfig lives in another package, so any read here needs its import or its full name.

@@ -5,6 +5,21 @@ moved verbatim at its headings on 2026-10-09 to keep the parent under the size c
 
 ## Testing
 
+The shared `ScriptedThreadHarness` (#2366) supplies authoritative item facts through the
+real repository's negotiated route. Stable scoped identities, revision/epoch/order and
+correlated query completion replace legacy content reduction; supported live readings and
+controls retain their own paths. Retained selection, refusal and recovery doubles use the
+same ownership discipline. Local-send acceptance requires both device and message identity;
+acknowledgement or a peer collision cannot accept the pending row. Selection rejects user,
+child, blank and streaming replies, and replacement connections retire old evidence.
+
+The [checked Linux inventory](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366)
+records 18 clients / 91 passing methods, including six device parser-gap methods, with no
+client skips. Three invariants were added; scenario coverage and supported assertions remain.
+Reply order/duplicate probes use `ThreadEvidence`; three literal delta-sequence rejection
+inputs remain outside the repository, ViewModel and screen for #2367. Agent checks use scoped
+presentation keys, preserving two-edge tool nesting and the separate one-Agent display depth.
+
 `ThreadMutationArrivalTest` (#1998) mounts the production ViewModel, stable facade and screen
 with the owner absent until the composer is drawn. It attaches the owner, awaits actual title
 semantics, taps More actions once, and requires Channel info plus Edit and its event. A

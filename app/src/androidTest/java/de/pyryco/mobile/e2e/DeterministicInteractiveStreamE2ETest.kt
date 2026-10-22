@@ -262,7 +262,15 @@ class DeterministicInteractiveStreamE2ETest {
         runBlocking {
             withTimeout(THREAD_TIMEOUT_MS) {
                 while (cache
-                        .readThread(serverId, conversation.id)
+                        .readAuthoritativeThread(serverId, conversation.id)
+                        ?.let {
+                            de.pyryco.mobile.ui.conversations.thread
+                                .projectAuthoritativeThread(
+                                    serverId,
+                                    conversation.id,
+                                    it.toSnapshot(),
+                                ).items
+                        }.orEmpty()
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .none { it.message.content == "$prefix-baseline-000" && !it.message.isStreaming }
                 ) {
@@ -330,28 +338,22 @@ class DeterministicInteractiveStreamE2ETest {
     fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
         arriveInSeededThread()
         typeAndSend(SEND_PROMPT)
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
+        val repositories = GlobalContext.get().get<RelayRepositoryCoordinator>().currentRepository
         val conversation =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                    repositories
+                        .firstOnLive(
+                            { it.observeConversations(ConversationFilter.All) },
+                        ) { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
                         .first { it.name == SEED_CHANNEL_NAME }
                         .id
                 }
             }
-        composeTestRule.assertReplySuggestionLongPress(repository, conversation, REPLY_TIMEOUT_MS)
+        composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
-    @org.junit.Ignore("blocked on #2167: legacy cache/coverage proof is unhooked from the production thread")
     @Test
     fun interactiveTurn_seededChannel_durableGapCatchUp() {
         arriveInSeededThread()
@@ -436,7 +438,6 @@ class DeterministicInteractiveStreamE2ETest {
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
         } finally {
             peer.close()
-            DurableHistoryProbe.end()
         }
     }
 
@@ -978,7 +979,7 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
     }
 
-    /** A queued own follow-up and its hidden receipt keep the held legacy reply in one row. */
+    /** A queued own follow-up retains its supplied identity while the held authoritative reply settles in one row. */
     @Test
     fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
         arriveInSeededThread()
@@ -1001,10 +1002,19 @@ class DeterministicInteractiveStreamE2ETest {
                             .single { it.name == SEED_CHANNEL_NAME }
                             .id
                     checkpoint = "held prefix"
-                    repository.sendMessage(conversationId, SEND_PROMPT)
+                    val firstSent = repository.sendMessage(conversationId, SEND_PROMPT)
                     val evidence = harnessThreadEvidence(repository)
                     val start = evidence.observe(conversationId).first { it.heldOpenReply(it.owner, STREAMED_PREFIX) != null }
                     val held = requireNotNull(start.heldOpenReply(start.owner, STREAMED_PREFIX))
+                    val phoneDevice =
+                        requireNotNull(start.sourceSnapshot)
+                            .items
+                            .single { fact ->
+                                fact.kind == "user_message" &&
+                                    (fact.content as? kotlinx.serialization.json.JsonObject)?.get("message_id")?.jsonPrimitive?.content ==
+                                    firstSent.id
+                            }.let { fact -> (fact.content as kotlinx.serialization.json.JsonObject)["device_id"]?.jsonPrimitive?.content }
+                    require(!phoneDevice.isNullOrEmpty())
                     val prefix = hasText(STREAMED_PREFIX, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
@@ -1012,8 +1022,38 @@ class DeterministicInteractiveStreamE2ETest {
                     composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
                     checkpoint = "queued follow-up"
                     val sent = repository.sendMessage(conversationId, SECOND_PROMPT)
-                    val queued = repository.observeQueue(conversationId).first { rows -> rows.any { it.text == SECOND_PROMPT } }
-                    assertTrue("the queued entry did not retain the phone-owned echo id", queued.any { it.messageId == sent.id })
+                    val queuedSnapshot =
+                        evidence.observe(conversationId).first { current ->
+                            current.admitted &&
+                                current.owner.matches(start.owner) &&
+                                current.sourceSnapshot?.items?.any { fact ->
+                                    val content = fact.content as? kotlinx.serialization.json.JsonObject
+                                    fact.kind == "user_message" &&
+                                        fact.status == "queued" &&
+                                        fact.active &&
+                                        content?.get("text")?.jsonPrimitive?.content == SECOND_PROMPT &&
+                                        content["message_id"]?.jsonPrimitive?.content == sent.id &&
+                                        content["device_id"]?.jsonPrimitive?.content == phoneDevice
+                                } == true
+                        }
+                    val queued =
+                        requireNotNull(queuedSnapshot.sourceSnapshot).items.single { fact ->
+                            val content = fact.content as? kotlinx.serialization.json.JsonObject
+                            fact.kind == "user_message" &&
+                                fact.status == "queued" &&
+                                fact.active &&
+                                content?.get("text")?.jsonPrimitive?.content == SECOND_PROMPT &&
+                                content["message_id"]?.jsonPrimitive?.content == sent.id &&
+                                content["device_id"]?.jsonPrimitive?.content == phoneDevice
+                        }
+                    val queuedContent = queued.content as kotlinx.serialization.json.JsonObject
+                    assertEquals(SECOND_PROMPT, queuedContent["text"]?.jsonPrimitive?.content)
+                    assertEquals(sent.id, queuedContent["message_id"]?.jsonPrimitive?.content)
+                    assertEquals(
+                        "the queued entry must retain phone device identity",
+                        phoneDevice,
+                        queuedContent["device_id"]?.jsonPrimitive?.content,
+                    )
                     evidence.observe(conversationId).first { it.holdsOpen(start.owner, held) }
                     checkpoint = "same reply completion"
                     DaemonFaultControl().releaseStream()
@@ -1202,9 +1242,18 @@ class DeterministicInteractiveStreamE2ETest {
     /** #1783: deterministic lifecycle/parent fixture twin; second send releases the terminal fragment. */
     @Test
     fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
+        backgroundAgentProof(restart = false)
+    }
+
+    @Test
+    fun interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect() {
+        backgroundAgentProof(restart = true)
+    }
+
+    private fun backgroundAgentProof(restart: Boolean) {
         arriveInSeededThread()
-        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-        val repository = requireNotNull(coordinator.currentRepository.value)
+        val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
+        val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
         val conversationId =
             runBlocking {
                 repository
@@ -1429,6 +1478,16 @@ class DeterministicInteractiveStreamE2ETest {
             expandLabel = expandLabel,
             collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
         )
+        if (restart) {
+            composeTestRule.proveNegotiatedAgentRestart(host, conversationId, "agent1783", "task1783", restart = { beforeLaunch ->
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                composeTestRule.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.DESTROYED)
+                instrumentation.runOnMainSync { (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph() }
+                beforeLaunch()
+                androidx.test.core.app.ActivityScenario
+                    .launch(MainActivity::class.java)
+            }, openThread = ::arriveInSeededThread, send = { typeAndSend("settlement2175") })
+        }
     }
 
     /**
