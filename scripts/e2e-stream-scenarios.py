@@ -6,7 +6,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-import time
 import xml.etree.ElementTree as ET
 
 CLASS = 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest'
@@ -40,10 +39,12 @@ def main():
                         str(Path(environment['ANDROID_HOME']) / 'platform-tools/adb'),
                         '-s', environment['ANDROID_SERIAL'], 'shell', 'pm', 'clear', 'de.pyryco.mobile',
                     ], check=True)
-                started = time.time_ns()
+                # Only this execution may supply XML, regardless of filesystem timestamps.
+                for path in reports.rglob('TEST-*.xml'):
+                    path.unlink()
                 result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child, pass_fds=inherited)
                 status = status or result.returncode
-                current = [path for path in reports.rglob('TEST-*.xml') if path.stat().st_mtime_ns >= started]
+                current = list(reports.rglob('TEST-*.xml'))
                 cases = [test for path in current for test in ET.parse(path).getroot().iter('testcase')]
                 if len(cases) != 1 or cases[0].get('classname') != CLASS or cases[0].get('name') != METHODS[case] or any(
                         cases[0].find(key) is not None for key in ('failure', 'error', 'skipped')):
