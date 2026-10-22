@@ -1,16 +1,5 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.test.hasScrollToIndexAction
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performTouchInput
-import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
-import kotlinx.coroutines.CompletableDeferred
-import java.util.concurrent.atomic.AtomicInteger
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.GLES20
@@ -28,18 +17,27 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
 import de.pyryco.mobile.data.cache.AuthoritativeThreadWindow
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
@@ -58,6 +56,7 @@ import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
 import de.pyryco.mobile.e2e.withEmulatorCpuSample
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -78,6 +77,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /** The GL renderer this process draws with, as the guest reports it. */
