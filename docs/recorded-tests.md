@@ -174,6 +174,61 @@ session grants and other live scenarios retain their existing tests and requirem
 Android startup and UI costs remain, so report measured Android times rather than using
 Desktop's replay timing as an Android forecast.
 
+### Authoritative runtime and permission replacement (#2367)
+
+The standalone permission screen uses its genuine paired host/device identity,
+production capabilities and the coordinator's negotiated route through the production
+stable wrapper. Replay binds the captured device through the engine's existing
+identity mapping; full payload and causal matching stay strict. Both catch-ups must
+complete with correlated certificates in the actual conversation/epoch. No raw
+message, assistant delta or history page supplies phone content.
+
+The genuine capture on Mobile `1a22302d728d89a6f9deb2dc25168496490cd05a` and daemon
+`fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe` executed/passed
+`RecordedPermissionTest.capturedPermissionReachesTheClientAndCompletes` once;
+fresh replay also executed/passed it once. Both had 0 failed/skipped. The retired
+fixture replay executed once and failed once, with 0 skipped. The refresh command
+remains nonzero and strict comparison remains **CHANGED**. The
+[semantic review](specs/architecture/2367-permission-recording-review.md) accepts
+the genuine replacement, not compatibility success.
+
+The current fixture SHA256 is
+`1d0268dd52528e76c9520eb3ef7c84b0965e39ba3d5ace251754bbf0e702a58c`.
+The unchanged retired asset `recorded/retired/permission-allow-legacy.json` has SHA256
+`71fff5a9926e594b9568b615480e8c797276eee3956f87829aab0086631c49c1`.
+The 76-frame genuine exchange contains 11 outgoing requests, two correlated thread
+catch-ups, no retired history/backfill request and five settled canonical items.
+The sent user identity matches the real phone device/message; the exact completed
+assistant reply shares session/turn with its successful terminal. The genuine
+permission identity matches the phone answer and remote dismissal.
+
+Native checks retain visible prompt, separate arm/confirm taps, physical pointer
+safety, absent/present file witness, completed visible reply, non-streaming/idle
+state and complete replay. The file-save capture separately uses the actual loaded
+attachment row, one production picker, original confirmation geometry and exact
+saved bytes. The raw-history-only `historyTailFramesAt412By892` design capture is
+retired; shared loading/retry/offline/unavailable rows retain presentation coverage.
+
+The accepted macOS full gates on Mobile `440c460adf60e9f9a12266b6539d857d6670b873`
+executed/passed 5341 JVM methods and 24 scripted methods, with 0 failed/skipped in
+those runs. Native UI executed 327, passed 325, failed 2 and skipped 1; its exact
+rerun executed 2, passed 1, failed 1 and skipped 0. The restart repeat passed;
+model-selection failure was accepted as inherited (#2351). Permission, loaded-file
+save and recorded offline/reconnect each executed/passed once in the original full
+UI invocation. See [named methods, sources and raw report locations](e2e-interactive-stream.md#authoritative-runtime-removal-2367).
+These are replay/scripted results, not fresh real-provider observations.
+
+The offline/reconnect fixture remains unchanged (SHA256
+`15dfdcc48840707cf915a9189666f944388aae3ae2563ea5a58f8a42b1852800`). Its
+[accepted review](specs/architecture/2245-recording-reviews/04-offline.md) retains
+one genuine capture and one fresh replay passed without skips on Mobile
+`a671976f427fffebd8aaf88e1a60aecd63adadf0`, daemon
+`e596971abb101d44d770dea33b4d29d61300e85e`. Its explicit CHANGED review remains.
+The authoritative recovery/rendered-order observations did not change in #2367.
+Independent peers' diagnostic raw history and attachment watermarks never populate
+or certify phone content. Keep prior rejected, failed, skipped and cancelled runs
+at their original source revisions.
+
 ### Attention destination acquisition (#2350)
 
 The Waiting pill can appear before destination metadata makes B's initial attention

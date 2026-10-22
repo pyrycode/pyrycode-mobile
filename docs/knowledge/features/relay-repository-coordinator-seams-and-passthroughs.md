@@ -108,42 +108,13 @@ compatibility projection, `get<RelayConnectionRegistry>().connectionStatus`, int
 > construction-time NPE (not a compile error). `activeConnection` sits just below `scope` (where the old
 > holders were), so every deriver below it satisfies this.
 
-## Live-session event seam (#406)
+## Current turn state and content
 
-The decoded [`LiveSessionEvent`](live-session-events.md) stream ([#385](../codebase/385.md)) lives on
-the **concrete** `RemoteConversationRepository.liveSessionEvents` — connection-scoped and **not** on the
-`ConversationRepository` interface — so a UI ViewModel cannot reach it. The coordinator owns the
-connection-scoped repository, so it threads that non-interface surface up exactly as `pyrycodeStatus`
-reaches the concrete pump through `activeConnection` (and as `registerPushToken` reaches the concrete repo
-through the construction-time handle):
-
-```kotlin
-val liveSessionEvents: Flow<LiveSessionEvent> =
-    activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
-```
-
-- The concrete `repo` is reached through the single `activeConnection` source (`conn?.repo`) — its
-  `Connection.repo` field is set as part of `activeConnection.value = Connection(pump, scope, repo, transport)` in
-  `onConnection` and cleared to `null` in `teardownActive`, both **non-suspending** writes inside the same
-  critical section, so the cancellation-atomicity invariant is preserved. The repo reference stays **inside**
-  `activeConnection`: only the *derived* event flow is exposed, never the concrete repo reference. (Before
-  [#493](../codebase/493.md) this was a separate private `activeRemoteRepo` mirror; the consolidation folded
-  it into the one source.)
-- **Cold, not `stateIn`'d.** Unlike `connectionStatus` (current-value state), these are *events* with no
-  "current value", so `liveSessionEvents` is a cold `Flow` with no scope of its own. Each consumer's
-  collection independently observes `activeConnection` (a `StateFlow`) and subscribes to the current
-  repo's `SharedFlow` (both multi-subscriber-safe) — no `shareIn`. (A code-review NIT flagged that
-  per-subscriber `flatMapLatest` re-derivation is fine at today's consumer count; revisit only if the
-  count grows.)
-- **Reconnection-surviving.** `flatMapLatest` cancels the prior connection's collection and switches to
-  the fresh repo's `liveSessionEvents` on each new connection; `emptyFlow()` between connections. A push
-  on a now-dead pump surfaces nowhere — a coordinator test pins this.
-- **Generic, not turn-state-specific.** The seam carries the **full** `LiveSessionEvent` stream, not an
-  `isThinking`/turn-state projection — reducing to "latest phase" is a consumer concern. The first
-  consumer is [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) (#406, the thinking-indicator
-  data half); #387 (tool timeline) and #337 (live assistant text) reuse the same flow without
-  re-plumbing this layer. `AppModule` supplies the registry projection of the
-  selected coordinator's flow, exactly like `connectionStatus`.
+The coordinator forwards admitted session-owned turn state and live readings.
+The former raw `liveSessionEvents` content seam is removed in #2367. The exact host's
+`NegotiatedThread` forwards authoritative content and queries through stable/cache
+wrappers. The store survives reconnect; connection-owned decoders and transient
+progress do not supply or certify content. See [live state](remote-conversation-repository-live-stream-and-modals.md).
 
 ## Modal event seam (#445) and the hoisted hostModals fold (#492)
 
@@ -241,94 +212,13 @@ fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
   below (§ [Outbound question-answer / refuse passthrough](#outbound-question-answer--refuse-passthrough-825)) —
   this seam itself stays read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal` existed.
 
-## Background-task roster (#677)
+## Supplied tasks and progress
 
-The held **`StateFlow<Map<String, BackgroundTaskRoster>>`** (`RemoteConversationRepository.backgroundTasks`)
-that tracks work claude left running past its turn — daemon state, not turn content, so it never reaches
-the thread timeline. Same shape as [`questionBatches`](#question-batch-projection-822): a per-connection
-concrete `StateFlow`, switched (not folded) at the coordinator, `Eagerly`, so a frame that arrives before
-any panel subscribes is not lost:
-
-```kotlin
-@OptIn(ExperimentalCoroutinesApi::class)
-val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> =
-    activeConnection
-        .flatMapLatest { conn -> conn?.repo?.backgroundTasks ?: flowOf(emptyMap()) }
-        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
-
-fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?> =
-    backgroundTasks.map { it[conversationId] }.distinctUntilChanged()
-
-fun observeLiveBackgroundTaskCount(conversationId: String): Flow<Int> =
-    observeBackgroundTasks(conversationId).map { it?.liveCount ?: 0 }.distinctUntilChanged()
-```
-
-The decode+fold itself lives on the repository at
-[`BackgroundTaskProjection`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677) —
-this section covers only the part that is specific to the coordinator: the one piece of state that has to
-survive a reconnect.
-
-- **Resets on reconnect, like `questionBatches` — with one deliberate carry-over.** `flatMapLatest`
-  switches to the new connection's fresh `backgroundTasks`, which starts empty because each connection
-  builds a new `RemoteConversationRepository`. Unlike `questionBatches`, though, the daemon has no
-  reconcile-on-connect contract for background tasks beyond re-sending its **last retained roster** — the
-  same roster it already sent, including any task that has since finished. Mobile drops and rebuilds its
-  connection on every return from the background, so without a carry-over a completed task would read as
-  live again on every foreground.
-- **The carry-over is narrow: only which task ids finished, not their `status`/`summary`.**
-  `RelayRepositoryCoordinator` owns one `FinishedBackgroundTasks` instance for the life of the host — the
-  [`replayCursor`](#reconnect-spanning-replay-cursor-412) precedent for state a fresh per-connection
-  repository cannot hold — and threads it into each connection's repository in `onConnection`, the same
-  parameter shape as `replayCursor`. `teardownActive` never touches it. Everything else about a task
-  (its description, its last mid-life update, its terminal `status`/`summary`) resets with the connection
-  and is rebuilt only from that connection's own frames; a re-listed finished task therefore comes back
-  with `isFinished == true` but `finish == null`.
-- **The finished set stays bounded by the conversation's own rosters, not by an unrelated cap.** Each
-  roster calls `FinishedBackgroundTasks.retainOnly(conversationId, rowIds)`, forgetting any id the roster
-  no longer lists. A task the daemon has fully forgotten is forgotten here too, on the next roster for
-  that conversation.
-- **`background_task_progress` (#1042) carries nothing across a reconnect — not even the narrow
-  finished-id carry-over.** A task's `BackgroundTask.progress` lives only in the per-connection
-  `BackgroundTaskProjection`, the same as its `latestUpdate`; a fresh connection starts every task without
-  progress and rebuilds it from whatever `background_task_progress` frames that connection receives. The
-  one thing the host-lifetime `FinishedBackgroundTasks` buys a re-listed finished task is staying finished
-  — which, through the same `isFinished` check the projection already applies, is also why that task shows
-  no progress on the reconnect that relists it.
-- **Host isolation is structural**, the same as `questionBatches`: one coordinator per host, and the map
-  and the finished set are both keyed by `conversationId` inside it, so a task id repeated across two
-  hosts' conversations cannot cross between them.
-- **Three deliberate differences from the desktop client's `backgroundTaskRosterStore`,** which this
-  seam's `BackgroundTaskProjection` otherwise follows for its merge rules:
-  1. Desktop's `setUpdatedTask` drops `status`/`summary` on a terminal update
-     ([pyrycode-desktop#1558](https://github.com/pyrycode/pyrycode-desktop/issues/1558)), which is why its
-     live count can stick at one after a task completes. This seam keeps both on the task's `finish` slot.
-  2. Desktop matches `status` against the closed set `completed`/`failed`/`stopped`. This seam finishes a
-     task on any non-empty `status` — the wire says "test `status != ""`, not a closed set" — so an
-     unrecognised terminal value still counts.
-  3. Desktop's later `unlistedStarts` (#1563) holds a started task outside the visible set until a roster
-     lists it, because claude also sends starts for long foreground `Bash` calls a roster never carries.
-     This ticket's one-set rule lists a start immediately instead. If a panel finds foreground starts
-     inflating `liveCount`, desktop's `unlistedStarts` is the precedent to adopt.
-- **No log.** `description`, `patch`, `status`, `summary` and progress's own `description`/
-  `subagentType`/`lastToolName` are claude-authored, unsanitised strings — held as inert fields, never
-  parsed (`patch` included), never used as a key besides `taskId`/`conversationId`, and never logged. A
-  malformed frame is dropped inside `BackgroundTaskProjection.apply` without reading the caught
-  exception's message, the `QueueProjection`/question-arm posture.
-- **A consumer must read the per-conversation surface** (`observeBackgroundTasks` /
-  `observeLiveBackgroundTaskCount`), not `backgroundTasks` directly — the whole-host map risks showing
-  one conversation's tasks inside another's panel, the same rule as `observeQuestionBatch`. The
-  background-task panel and running-task pill count that read this seam are [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678);
-  this seam is data only.
-
-Per-task stop tracking follows the decoded roster lifecycle, independently of the
-rendering fold (#1829). A terminal `background_task_updated` (any nonempty `status`)
-retires that conversation/task pair even if the task has no visible row. A decoded
-roster retires requests for task ids it omits, only in its own conversation.
-Malformed frames and nonterminal updates retire nothing. Hooking only visible-row
-changes would leave an unlisted finished task's request eligible for a stale
-refusal. These callbacks preserve the existing rendering data and finished-id
-carry-over; the [stop ledger](#outbound-background-task-stop-passthrough-1829)
-itself never survives reconnect.
+Canonical facts supply task identity, ownership, parent, placement and lifecycle.
+Raw started/updated/roster reconstruction and runtime work from #2266/#2267 were
+removed in #2367. Session-owned task progress remains a transient reading. A control
+send or missing roster entry cannot prove completion. Current-owner action targets
+retain their validation and stop/refusal passthrough below.
 
 ## Outbound modal-send passthrough (#451)
 
@@ -476,36 +366,9 @@ suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionA
   [#661](https://github.com/pyrycode/pyrycode-mobile/issues/661)'s panel. Never logs; never grants a
   permission.
 
-## Reconnect-spanning replay cursor (#412)
+## Reconnect content recovery
 
-Each bundle's coordinator owns one in-memory [`ReplayCursor`](replay-cursor.md):
-the latest interactive structured-stream [`Envelope.eventId`](mobile-protocol-v2-wire-layer.md)
-observed across that bundle's reconnects. Explicit-record bundles for A and B
-have separate coordinators and cursors even if their relay URL is the same.
-The cursor cannot live on the per-connection
-[`RemoteConversationRepository`](remote-conversation-repository.md), which is
-rebuilt each reconnect: the next `hello` needs the old position before its new
-inbound path exists. It is not persisted across bundle replacement or process
-restart.
-
-```kotlin
-internal val replayCursor: ReplayCursor = ReplayCursor()   // one per coordinator, survives reconnects
-```
-
-- Each per-connection repository receives its coordinator's cursor through
-  `replayCursor = replayCursor` in non-suspending `onConnection`. Inbound recording
-  or a `resync` reset in A changes only A's cursor; B retains its position.
-- `teardownActive` never clears the cursor. Drops, retry and background supervisor
-  close preserve it while replacing the transport, pump, Noise session and
-  repository. Bundle disposal ends this owner's usable lifetime; a new bundle
-  starts empty.
-- The [session factory supplier](noise-ik-session.md#factory-wiring) closes over
-  the owning coordinator's `internal val replayCursor`, with no Koin lookup.
-  It reads `.latest` at `hello`-build, advertising that position as
-  `hello.last_event_id`; `null` omits the field. Reading an app-wide coordinator
-  would mix hosts, and capturing a value at construction would miss later events.
-
-The registry selects among retained explicit-record bundles; it never moves a
-cursor between them. Selection changes leave all host cursors untouched. The
-older `createCompatibility(store)` helper can reread a different host on redial
-while retaining one cursor, so it is not used by app DI for collection ownership.
+The coordinator no longer owns `ReplayCursor` or passes replay suppliers to Noise
+sessions. Reconnect uses the host-owned authoritative store and certified checkpoint
+through fresh connection-owned queries. There is no raw fallback, resync or backfill.
+See [query ownership](remote-conversation-repository-reads-and-thread-store.md).

@@ -146,7 +146,7 @@ discards the saved position with a content-free diagnostic; retained rows remain
 order id must belong to its producing-entry set, and all claimed ids must be covered. Claims are
 then checked against retained content, so metadata cannot certify removed rows.
 
-The [caching wrapper](caching-conversation-repository.md#the-saved-history-position-1354) restores
+The [caching wrapper](caching-conversation-repository.md) restores
 old nonempty documents without coverage as unknown, even with saved `atStart`; their rows stay
 readable. After the newest page, unknown coverage tracks the verified span's older edge;
 its marker is subject to displayed-row eligibility.
@@ -155,7 +155,7 @@ coverage without an older durable anchor closes only on `at_start`, including an
 page. An empty uncovered cache ignores old backwards metadata unless `unsignedIncomplete` is set;
 that flag and its usable cursor survive even when no rows remain.
 Known holes require continuous received coverage joining their older anchor. See
-[resuming history](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
+[resuming history](remote-conversation-repository-reads-and-thread-store-history-paging.md)
 for lazy demand and marker/cursor behavior.
 
 Visible marker eligibility is documented in the parent
