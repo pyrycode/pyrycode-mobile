@@ -4,6 +4,50 @@ The production [repository](caching-conversation-repository.md#older-authoritati
 uses bounded saved pages before the existing daemon history coordinator. The full
 [cache contract](conversation-cache-contract.md) retains storage, ownership and writer rules.
 
+## Current DB and file acceptance scope — approved 2026-10-22
+
+Juhana explicitly approved separating full-file latency from #2334. Normal channel opening
+uses MigratingConversationCache and AuthoritativeRoomStorage to load roughly200 display
+contributions plus required parent/active facts. FileConversationCache still supports
+conversation metadata/read positions and one-time authoritative snapshot import. The direct
+36000-fact FileConversationCache fixture is a compatibility stress case; its frame time is
+neither normal bounded DB opening latency nor an actual file-to-Room import measurement.
+
+The1000ms product target and2000ms SwiftShader assertion remain binding for DB opening and
+reader demand/retry/reopen. Both file compatibility methods retain exact raw facts, numeric
+spelling, ownership, immutability,36000facts/18000islands/18000visiblemessages and exact
+read/request assertions. Their positive timing bound is enabled only by the test-only
+requireFullFileLatencyBound=true instrumentation argument and belongs to separate
+[#2456](https://github.com/pyrycode/pyrycode-mobile/issues/2456), which is not a #2334 blocker.
+The actual3000ms slow-read negative control now uses DB newest-window reads in all four
+offline/held-newest first/reopen arms and must reject the same renderer bound. The retired
+projection/API mapping remains as documented below; no unused dispatcher delay is claimed.
+
+This approved scope supersedes earlier positive full-file timing requirements in this
+companion and the six issue contracts. Historical failures remain failures of their original
+runs. Retained #2449 optimization code still requires independent correctness/security review
+before merging; no further file-latency implementation is needed for DB acceptance. Every
+child and the final parent retain independent complete configured JVM/UI/scripted gates,
+actual documentation and reviewed merge/Done requirements.
+
+### Last integrated run before the scope amendment
+
+Source b5618a873fcc795133bbb99cd0feb27022c0964e passed333/333affectedJVM methods across21classes,
+zero failures/errors/skips, plus build,lint,native compilation and formatting. Native
+ui-fkym3jib executed6/pass4/fail2/errors0/skips0 under the earlier file timing contract.
+DB first-draw frames258/243/228/215ms passed, each with200payloadresults/decodes,5queries and
+zero full reads. Paging/retry/reopen,descriptor cancellation and the earlier file slow control
+passed. Both file methods completed all exact content/read/request arms without heap
+exhaustion, but guarded frames2561/2260/2359/2187ms and ordinary frames2106/2301/2415/2437ms
+missed2000ms. Tree validation measured97–145ms after the equivalence-tested positive-integer
+allocation change. This attempt remains failed; the amended fixture must execute afresh.
+Complete raw reports/phone/APKs/sources/image/runtime and receipt are retained at
+logs/evidence/2452/manual-20261022/integrated-b561, manifest
+a3e05366ced8ae79d5fc5bbd3711acf251a1ffe3b92f18ff34400ac981d66761.
+The six selected native methods use the production registry/coordinator/repository/ViewModel
+with controlled transport; they do not execute an external daemon. Current amended-source
+native validation and independent acceptance are pending.
+
 ## Storage continuation contract
 
 `beforeAuthoritativeWindow` returns up to 200 additional display contributions plus validated
