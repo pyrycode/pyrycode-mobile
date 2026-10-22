@@ -665,7 +665,9 @@ class SavedThreadFirstDrawDeviceTest {
     ): Probe {
         val fragmented = facts.size == 36_000
         val expectedText = (0 until if (fragmented) 18_000 else 20).map { "Saved $it." }
-        val name = "authoritative-file fragmented=$fragmented online=$online opening=$opening guard_legacy=$guardLegacyReads delay_ms=$readDelayMs"
+        val name =
+            "authoritative-file fragmented=$fragmented online=$online opening=$opening " +
+                "guard_legacy=$guardLegacyReads delay_ms=$readDelayMs"
         awaitDeviceReadiness(name)
         val probe = Probe(name, expectedText.last())
         activeProbe = probe
