@@ -555,6 +555,8 @@ class SavedThreadFirstDrawDeviceTest {
                                 ?.size == 400
                         }
                         val retried = requireNotNull(retryFrame.get())
+                        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(399)
+                        composeRule.onNodeWithText("Saved 17601.").assertIsDisplayed()
                         composeRule.waitUntil(15_000) { retried.drawn.get() > 0 }
                         Log.i(
                             "SavedThreadPaging",
@@ -568,8 +570,6 @@ class SavedThreadFirstDrawDeviceTest {
                             assertTrue(retried.elapsed(retried.drawn.get()) >= successfulOlderReadDelayMs)
                             assertThrows(AssertionError::class.java) { retried.assertBound() }
                         }
-                        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(399)
-                        composeRule.onNodeWithText("Saved 17601.").assertIsDisplayed()
                         val olderBounds = composeRule.onNodeWithText("Saved 17601.").fetchSemanticsNode().boundsInRoot
                         val viewport = composeRule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
                         assertTrue(
@@ -946,7 +946,7 @@ class SavedThreadFirstDrawDeviceTest {
                         }, {
                         }, if (online) ConnectionState.Connected else ConnectionState.Offline, {
                         }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = {
-                            opening.retryFrame?.set(Probe("${probe.name} Retry", "Saved 17800."))
+                            opening.retryFrame?.set(Probe("${probe.name} Retry", "Saved 17601."))
                             vm.onRetryOlderHistory()
                         })
                     }
