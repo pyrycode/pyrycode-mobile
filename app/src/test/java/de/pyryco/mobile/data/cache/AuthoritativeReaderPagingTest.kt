@@ -1067,7 +1067,9 @@ class AuthoritativeReaderPagingTest {
                     val facts = (1..600).map { fact(it) }
                     disk().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 900)).getOrThrow()
                     val disk = disk()
-                    val attempts = java.util.concurrent.atomic.AtomicInteger()
+                    val attempts =
+                        java.util.concurrent.atomic
+                            .AtomicInteger()
                     val cache =
                         object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
                             override suspend fun beforeAuthoritativeWindow(
@@ -1088,6 +1090,7 @@ class AuthoritativeReaderPagingTest {
                         vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
                         runCurrent()
                         assertEquals(1, attempts.get())
+
                         fun field(name: String) =
                             CachingConversationRepository::class.java.getDeclaredField(name).also { it.isAccessible = true }
                         val dispatcherField = field("processingDispatcher")
@@ -1097,7 +1100,9 @@ class AuthoritativeReaderPagingTest {
                         val published = java.util.concurrent.CountDownLatch(1)
                         val release = java.util.concurrent.CountDownLatch(1)
                         val premature = java.util.concurrent.CountDownLatch(1)
-                        val armed = java.util.concurrent.atomic.AtomicBoolean(true)
+                        val armed =
+                            java.util.concurrent.atomic
+                                .AtomicBoolean(true)
                         val threads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
                         val executor =
                             java.util.concurrent.Executors.newFixedThreadPool(2) { runnable ->
@@ -1115,7 +1120,10 @@ class AuthoritativeReaderPagingTest {
                                     key: String,
                                     remappingFunction: java.util.function.BiFunction<in String, in Any?, out Any?>,
                                 ): Any? {
-                                    val pagePublished = repo.authoritativeThreads.current("host", "c").items.size == 400
+                                    val pagePublished =
+                                        repo.authoritativeThreads
+                                            .current("host", "c")
+                                            .items.size == 400
                                     if (pagePublished && armed.compareAndSet(true, false)) {
                                         published.countDown()
                                         check(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
@@ -1129,16 +1137,20 @@ class AuthoritativeReaderPagingTest {
                         dispatcherField.set(repo, worker)
                         try {
                             vm.onRetryOlderHistory()
-                            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8)
+                            val deadline =
+                                System.nanoTime() +
+                                    java.util.concurrent.TimeUnit.SECONDS
+                                        .toNanos(8)
                             var observerWaits = false
                             while (System.nanoTime() < deadline) {
                                 runCurrent()
-                                observerWaits = threads.any { thread ->
-                                    thread.state == Thread.State.BLOCKED &&
-                                        thread.stackTrace.any {
-                                            it.className.contains("CachingConversationRepository\$observeAuthoritativeThread")
-                                        }
-                                }
+                                observerWaits =
+                                    threads.any { thread ->
+                                        thread.state == Thread.State.BLOCKED &&
+                                            thread.stackTrace.any {
+                                                it.className.contains("CachingConversationRepository\$observeAuthoritativeThread")
+                                            }
+                                    }
                                 if (published.count == 0L && (premature.count == 0L || observerWaits)) break
                                 Thread.sleep(5)
                             }
@@ -1148,18 +1160,36 @@ class AuthoritativeReaderPagingTest {
                             val exposedOldBaseline = premature.count == 0L
                             if (exposedOldBaseline) executor.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
                             release.countDown()
-                            val settled = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8)
+                            val settled =
+                                System.nanoTime() +
+                                    java.util.concurrent.TimeUnit.SECONDS
+                                        .toNanos(8)
                             while (System.nanoTime() < settled) {
                                 runCurrent()
-                                if (vm.state.value.authoritativeThread?.rows?.size == 400 &&
+                                if (vm.state.value.authoritativeThread
+                                        ?.rows
+                                        ?.size == 400 &&
                                     vm.state.value.historyTail != ThreadHistoryTail.Loading
-                                ) break
+                                ) {
+                                    break
+                                }
                                 Thread.sleep(5)
                             }
                             advanceTimeBy(500)
                             runCurrent()
-                            assertEquals(400, vm.state.value.authoritativeThread?.rows?.size)
-                            assertEquals(facts.takeLast(400), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                            assertEquals(
+                                400,
+                                vm.state.value.authoritativeThread
+                                    ?.rows
+                                    ?.size,
+                            )
+                            assertEquals(
+                                facts.takeLast(400),
+                                repo.authoritativeThreads
+                                    .current("host", "c")
+                                    .items
+                                    .map { it.raw },
+                            )
                             assertEquals(2, attempts.get())
                             println(
                                 "retry_publication online=$online opening=$opening old_baseline=$exposedOldBaseline " +
