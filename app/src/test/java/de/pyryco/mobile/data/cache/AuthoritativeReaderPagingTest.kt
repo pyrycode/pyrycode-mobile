@@ -26,6 +26,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -171,6 +173,52 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(0, cache.authoritativeFullReads)
             }
         }
+
+    @Test fun establishedReaderPublishesStructuralLiveFactsWithoutSecondaryObservation() =
+        runTest { readerSurvivesSecondaryObservation(false) }
+
+    @Test fun completedSecondaryObservationCannotRetireTheEstablishedReader() =
+        runTest { readerSurvivesSecondaryObservation(true) }
+
+    private suspend fun TestScope.readerSurvivesSecondaryObservation(secondary: Boolean) {
+        val original = SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)
+        val cache = disk()
+        cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+        destination(cache) { fixture, vm, repo ->
+            vm.state.first { it.authoritativeThread?.rows?.size == 1 }
+            val requests = fixture.requests.toList()
+            if (secondary) {
+                val observed = requireNotNull(repo.negotiatedThread).observe("c").first { it.items.any { row -> row.id == 1L } }
+                assertEquals(listOf(fact(1)), observed.items.map { it.raw })
+            }
+            val added = fact(2)
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 101, listOf(ThreadItemDto.decodeReplacement(added)), 0)
+            val state =
+                withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(5_000) {
+                        vm.state.first {
+                            it.authoritativeThread
+                                ?.sourceSnapshot
+                                ?.items
+                                ?.any { row -> row.id == 2L } == true
+                        }
+                    }
+                }
+            val retained = repo.authoritativeThreads.current("host", "c")
+            println("secondary_reader secondary=$secondary store_facts=${retained.items.size} ui_updated=${state != null}")
+            assertEquals(listOf(fact(1), added), retained.items.map { it.raw })
+            assertTrue("a completed secondary read must not retire the established UI reader", state != null)
+            assertEquals(
+                listOf("Saved exact 1", "Saved exact 2"),
+                requireNotNull(state).items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content },
+            )
+            assertEquals(100L, retained.checkpoint)
+            assertFalse(retained.repairNeeded)
+            assertFalse(retained.resetNeeded)
+            assertEquals(0, cache.authoritativeFullReads)
+            assertEquals(requests, fixture.requests)
+        }
+    }
 
     @Test fun savedOpaqueNumbersRemainExactThroughFileDestinationColdReopen() =
         runTest {
