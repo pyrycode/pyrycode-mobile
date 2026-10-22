@@ -151,10 +151,12 @@ class ThreadViewModelRefusalOfferTest {
                 )
             val vm = collectedVm()
 
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
             assertTrue(
-                requireNotNull(vm.state.value.authoritativeThread)
-                    .items
-                    .any { it is ThreadItem.ModelRefusal },
+                presentation
+                    .demandRows(presentation.rows, emptySet())
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .any { it.item is ThreadItem.ModelRefusal },
             )
             assertNull(vm.switchBackOffer.value)
         }

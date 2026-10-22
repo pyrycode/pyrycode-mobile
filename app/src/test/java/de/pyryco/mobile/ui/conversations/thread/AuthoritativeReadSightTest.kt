@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ReadCheckpointRetries
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -395,6 +396,71 @@ class AuthoritativeReadSightTest {
             runCurrent()
             assertEquals(listOf(8uL), next.writes)
             retries.dispose()
+        }
+
+    @Test fun deferredResolvedContentsQualifyOnlyForTheirCurrentRevisionAndBinding() =
+        runTest {
+            val variants =
+                listOf(
+                    authoritativeItem(1, rev = 8),
+                    authoritativeItem(
+                        1,
+                        "tool_call",
+                        rev = 8,
+                        content = """{"name":"Read","input":{"file_path":"file"},"result":{"result_summary":"body"}}""",
+                    ),
+                    authoritativeItem(1, "notice", subtype = "banner", rev = 8, content = """{"text":"warning","level":"warning"}"""),
+                )
+            for (fact in variants) {
+                val peer = Peer()
+                val route =
+                    FixtureThread("h", "c").apply {
+                        support.value = ThreadSupport.Supported(peer)
+                        facts.value = listOf(fact)
+                    }
+                val retry = ReadCheckpointRetries(StandardTestDispatcher(testScheduler))
+                val vm =
+                    ThreadViewModel(
+                        SavedStateHandle(mapOf("serverId" to "h", "conversationId" to "c")),
+                        StableConversationRepository(
+                            MutableStateFlow<ConversationRepository?>(peer),
+                            readRetries = retry,
+                            negotiatedThread = route,
+                        ),
+                        FakeConnectionStateSource(),
+                        ComposerDraftStore(),
+                    )
+                val collecting = backgroundScope.launch { vm.state.collect {} }
+                runCurrent()
+                val p = requireNotNull(vm.state.value.authoritativeThread)
+                assertTrue(p.defersContents)
+                val binding = Any()
+                val key = p.rows.single().listKey(0)
+                val full = p.demandRows(p.rows, setOf("${p.scope}:1")).filterIsInstance<ThreadRow.Delivered>().single()
+                val summary = (p.items.single() as ThreadItem.MessageItem).let { it.copy(message = it.message.copy(content = "")) }
+                val event = ThreadEvent.NewestContentPresented(full.item, 8u, p, binding, key, p.shownRowRevisions)
+                try {
+                    vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p, binding))
+                    for (invalid in listOf(
+                        event.copy(binding = Any()),
+                        event.copy(row = summary),
+                        event.copy(seenRowRevisions = mapOf(key to 7L)),
+                        event.copy(rowKey = "retired:$key"),
+                    )) {
+                        vm.onOverflowEvent(invalid)
+                    }
+                    runCurrent()
+                    assertTrue(peer.writes.isEmpty())
+                    vm.onOverflowEvent(event)
+                    runCurrent()
+                    assertEquals(fact.kind, listOf(8uL), peer.writes)
+                    vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadRetired(binding))
+                    runCurrent()
+                } finally {
+                    retry.dispose()
+                    collecting.cancel()
+                }
+            }
         }
 
     private class Peer : ConversationRepository by FakeConversationRepository() {

@@ -666,6 +666,41 @@ and exclusion of independent peers/future generations with
 failures. See [counted restart evidence](knowledge/features/development-verification-gates.md#graph-restart-replay-evidence-2347)
 and [attachment recovery assertions](knowledge/features/attachment-retrieval.md#interrupted-retrieval-restart-replay-2347).
 
+Replacement Activity lifetime matters independently of the old graph's restart
+fence. In the interactive Agent restart proof, transfer the replacement to
+`LiveSessionCleanupRule.withRestartedActivity` before running its assertions.
+Keep its request producers and inbound consumers alive through fixture/peer
+cleanup and the rule's `end` callback, including `test-end`; only then close
+retained Activities once, in reverse registration order. Body failure remains
+primary, otherwise end failure, otherwise the first close failure; later failures
+are suppressed and every retained close is attempted. The standalone scripted
+caller keeps the proof's default lexical lifetime.
+
+An outer Activity teardown fence cannot protect a replacement already closed by
+an inner `.use`. [#2476](https://github.com/pyrycode/pyrycode-mobile/issues/2476)
+recovered that race at source `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`:
+`LifecycleConnectionDriver.onStop` closed `phone/host-0/2` at lifecycle step 69
+with request 13/checkpoint 0 still unmapped and `thread_catch_up` and `test-end`
+required. Later cleanup exceptions repeated the first sticky mismatch. Waiting
+at this inner close for a boundary that requires the later end control would
+deadlock the ordering; retain ownership through cleanup instead. Payload, owner,
+checkpoint and complete-consumption checks, recording bytes and deadlines stay
+unchanged.
+
+`SuiteCloseConsumptionTest.replacementActivitySurvivesResetQueryAndOrderedSessionCleanup`
+holds a real repository's same-epoch reset query across proof return. Its reply
+must advance certification from 12 to 24, so terminal-tail normalization cannot
+stand in for the missing query. Cleanup releases the reply and consumes fixture
+cleanup and test-end before physical close. The controlled old lexical lifetime
+failed on premature `phone/host/2:close` (1 executed, 1 failed, 0 skipped); the
+ownership repair passed all three consumption tests (3 executed/passed, 0
+failed/errors/skipped), including the cancelled-collector negative control.
+`LiveSessionCleanupRuleTest` covers success and body/end/close failures with
+once-only cleanup. Raw XML and extraction patches were retained under agents
+`logs/evidence/2476/builder-lifetime-repair/{regression-red,regression-green}/`.
+See [counted Linux replay and configured acceptance](e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246)
+for source revisions and the original failure/rerun evidence.
+
 ### Scenario host-removal readiness (#2349)
 
 Peer turn completion does not establish phone completion: permission isolation can

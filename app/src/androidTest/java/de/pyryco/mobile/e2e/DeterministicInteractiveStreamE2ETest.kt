@@ -1236,12 +1236,7 @@ class DeterministicInteractiveStreamE2ETest {
         val repo =
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
-                    GlobalContext
-                        .get()
-                        .get<RelayRepositoryCoordinator>()
-                        .currentRepository
-                        .filterNotNull()
-                        .first()
+                    harnessHostRepository(GlobalContext.get().get<RelayRepositoryCoordinator>())
                 }
             }
         val conversationId =

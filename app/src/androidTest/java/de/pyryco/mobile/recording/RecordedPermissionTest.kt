@@ -48,6 +48,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.PeerDeviceKeyStore
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -275,9 +276,16 @@ class RecordedPermissionTest {
             rule.waitUntil(120000) { rule.onNode(replyNode, useUnmergedTree = true).isDisplayed() }
             rule.onNode(replyNode, useUnmergedTree = true).assertIsDisplayed()
             rule.waitUntil(20000) {
-                vm.state.value.items.filterIsInstance<ThreadItem.MessageItem>().any {
-                    it.message.role == Role.Assistant && it.message.content.trim() == reply && !it.message.isStreaming
-                }
+                val presentation = requireNotNull(vm.state.value.authoritativeThread)
+                presentation
+                    .demandRows(presentation.rows, emptySet())
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .map {
+                        it.item
+                    }.filterIsInstance<ThreadItem.MessageItem>()
+                    .any {
+                        it.message.role == Role.Assistant && it.message.content.trim() == reply && !it.message.isStreaming
+                    }
             }
             rule.waitUntil(20000) { !vm.isBusy.value }
             rule.waitForIdle()
