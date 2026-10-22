@@ -85,6 +85,16 @@ retain their action order. Only named read-only queries may reorder within one a
 Daemon frames keep their recorded order and wait for their causal requests. Missing,
 extra, duplicate or changed requests fail, including requests after the last UI assertion.
 
+Test-driven close also waits for application consumption: after required requests and
+scheduled delivery drain, `SuiteConnections.beforeClose` snapshots the selected pump's
+queued inbound prefix and waits for each emission to return successfully from its
+existing downstream collector. Queuing a terminal reply does not prove the repository
+has certified its resumable checkpoint. This wait shares the existing 30-second close
+timeout. Cancelled or failed emissions cannot acknowledge consumption; another owner,
+peer or replacement pump cannot satisfy that prefix. The fence supplies no reply or
+checkpoint and preserves full-payload matching, causal delivery, connection ownership,
+observation boundaries and complete tape consumption.
+
 The standalone permission fixture and the full recorded Mobile suite use the actual
 production capability selection and negotiated thread route. The standalone screen
 receives that route through the production stable repository wrapper. The retired
@@ -491,6 +501,29 @@ listed name has a shipped recording. Checkpoints, close readiness and negative o
 messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
+
+### Downstream consumption before close (#2348)
+
+Keep the selected connection's repository collector alive through `beforeClose`, then
+cancel its scope and physically close the transport. `awaitIdle` alone drains delivery
+work into the pump's channel; it cannot prove the application processed those envelopes.
+The real-repository regression
+`SuiteCloseConsumptionTest.closeWaitsForTerminalConsumptionBeforeReplacementResumes`
+holds a terminal after its batch applies: checkpoint zero and the pending close must
+remain until release, then the replacement's exact recorded request resumes at 12.
+An unread peer frame neither releases nor blocks that phone fence.
+`cancelledCollectorCannotAcknowledgeTheClosePrefix` retains failure under the original
+deadline when the collector is cancelled while the terminal is held.
+
+Synthetic close fixtures also need an actual scoped inbound collector and a correlated
+receipt for the complete expected reply. `Flow.first` aborts emission before the
+post-emit consumption acknowledgement; merely observing the reply with it cannot
+establish close readiness. Keep consumers active through the fence for activity
+teardown, pairing removal and both generations of repeated graph restart. Check
+reply correlation and collector lifetime before physical close. Preserve missing-work,
+changed-payload/epoch/owner and complete-consumption negatives. No recording or
+production request contract changed for this repair. See the
+[diagnosis and counted macOS evidence](knowledge/features/development-verification-test-scheduling.md#background-permission-replay-consumption-2348).
 
 ### Explicit graph-restart readiness (#2347)
 
