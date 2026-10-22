@@ -554,8 +554,6 @@ class ThreadViewModelRefusalOfferTest {
 
         override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = refusals
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = error("legacy rows must not supply refusal evidence")
-
         override fun refreshSessionSettings(conversationId: String) {
             refreshes++
         }

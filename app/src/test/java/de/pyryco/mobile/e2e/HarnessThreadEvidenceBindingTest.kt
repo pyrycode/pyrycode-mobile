@@ -75,9 +75,22 @@ class HarnessThreadEvidenceBindingTest {
             assertEquals(ThreadEvidenceKind.Authoritative, harnessThreadEvidence(repository).kind)
         }
 
-    @Test fun onlyTheLegacyDemoRouteYieldsLegacyEvidence() {
-        assertEquals(ThreadEvidenceKind.Legacy, harnessThreadEvidence(FakeConversationRepository()).kind)
-    }
+    @Test fun demoRouteYieldsAuthoritativeFacts() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val conversation =
+                repository
+                    .observeConversations(de.pyryco.mobile.data.repository.ConversationFilter.All)
+                    .first()
+                    .first()
+                    .id
+            val source = harnessThreadEvidence(repository)
+            assertEquals(ThreadEvidenceKind.Authoritative, source.kind)
+            val evidence = source.observe(conversation).first()
+            assertTrue(evidence.admitted)
+            assertTrue(evidence.records.isNotEmpty())
+            assertTrue(evidence.records.all { it.fact != null })
+        }
 
     @Test fun missingOrRetiredExactConnectionCannotExposeSavedFacts() =
         runTest {

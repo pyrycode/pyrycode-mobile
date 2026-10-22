@@ -240,8 +240,10 @@ class AuthoritativeWindowRestoreTest {
                 repo.authoritativeThreads.applyBatch("host", "c", "e", 6000, listOf(ThreadItemDto.decodeReplacement(revised)), 0)
                 vm.state.first { it.authoritativeThread?.rows?.size == 201 }
                 requireNotNull(repo.negotiatedThread).older("c")
+                vm.state.first { (it.authoritativeThread?.rows?.size ?: 0) > 201 }
+                requireNotNull(repo.negotiatedThread).older("c")
                 val hydrated = vm.state.first { it.authoritativeThread?.rows?.size == 600 }
-                assertNull(requireNotNull(hydrated.authoritativeThread).sourceSnapshot.openingRows)
+                assertEquals(600, requireNotNull(hydrated.authoritativeThread).sourceSnapshot.openingRows?.size)
             }
         }
 
@@ -973,7 +975,7 @@ class AuthoritativeWindowRestoreTest {
             assertEquals(original, open().readAuthoritativeThread("host", "c"))
         }
 
-    @Test fun demandInvariant_failedOrNullHydrationForwardsToDaemon() =
+    @Test fun demandInvariant_failedOrNullHydrationRetainsDemandForRetry() =
         runTest {
             for (failed in listOf(false, true)) {
                 open()
@@ -990,14 +992,21 @@ class AuthoritativeWindowRestoreTest {
                     ).getOrThrow()
                 open()
                 val disk = migrating()
+                var failedDemand = true
                 val unavailable =
                     object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
-                        override suspend fun readAuthoritativeThread(
+                        override suspend fun beforeAuthoritativeWindow(
                             serverId: String,
                             conversationId: String,
-                        ): SavedAuthoritativeThread? {
-                            if (failed) throw java.io.IOException("unavailable")
-                            return null
+                            cursor: AuthoritativeDisplayCursor,
+                            admitted: Set<Pair<Long, Boolean>>,
+                            size: Int,
+                        ): AuthoritativeThreadWindow? {
+                            if (failedDemand) {
+                                if (failed) throw java.io.IOException("unavailable")
+                                return null
+                            }
+                            return disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
                         }
                     }
                 destination(unavailable, online = true) { fixture, vm, repo ->
@@ -1006,8 +1015,11 @@ class AuthoritativeWindowRestoreTest {
                     runCurrent()
                     val before = fixture.requests.size
                     requireNotNull(repo.negotiatedThread).older("c")
-                    runCurrent()
-                    assertTrue(fixture.requests.drop(before).any { it.type in setOf("thread_page", "thread_catch_up") })
+                    vm.state.first { it.historyTail == de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail.Retry }
+                    assertFalse(fixture.requests.drop(before).any { it.type in setOf("thread_page", "thread_catch_up") })
+                    failedDemand = false
+                    vm.onRetryOlderHistory()
+                    vm.state.first { it.authoritativeThread?.items?.size == 300 }
                 }
             }
         }
@@ -1105,7 +1117,7 @@ class AuthoritativeWindowRestoreTest {
                 backgroundScope.launch {
                     route.observe("c").collect {
                         if (it.items.isNotEmpty()) opened.complete(Unit)
-                        if (it.items.size == 18_000) hydrated.complete(Unit)
+                        if (it.items.size == 400) hydrated.complete(Unit)
                     }
                 }
             try {
@@ -1120,6 +1132,7 @@ class AuthoritativeWindowRestoreTest {
                 assertEquals(0, disk.authoritativeFullReads)
                 assertTrue(route.older("c"))
                 hydrated.await()
+                assertEquals(0, disk.authoritativeFullReads)
                 collection.cancelAndJoin()
                 assertEquals(original, open().readAuthoritativeThread("host", "c"))
             } finally {

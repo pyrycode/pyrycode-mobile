@@ -179,7 +179,7 @@ open class AgentNavigationScreenTest {
                 LocalThreadListCompositionObserver provides { listState = it },
             ) {
                 PyrycodeMobileTheme(darkTheme = true) {
-                    if (mounted) ThreadScreen(state, {}, {}, ConnectionState.Connected, {})
+                    if (mounted) ThreadScreen(state.withLiteralRows(), {}, {}, ConnectionState.Connected, {})
                 }
             }
         }

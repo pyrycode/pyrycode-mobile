@@ -452,7 +452,7 @@ ANR. Host quota contention contributes variance but cannot explain away this
 critical-path product cost. Timestamp, vendored-digest and decimal-parser candidates
 were rejected; the final repair retains the original serializer/provider and does
 not integrate #2042's decoder. See [cache reader ownership](conversation-cache-layout.md#thread-document-readers-1949)
-and [live merge ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+and [live merge ordering](caching-conversation-repository.md).
 
 `readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes` holds metadata separately:
 validated rows and atomic suppression must publish, but nonempty live merges must
@@ -524,7 +524,7 @@ WhileSubscribed re-collection regain this behavior. Later inputs keep prepared
 markers and rows until their complete replacement is ready, preserving latest-input
 cancellation and projected row/evidence coupling. Production frame pacing remains
 in place. See [independent cache readers](conversation-cache-layout.md#thread-document-readers-1949)
-and [saved/live ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+and [saved/live ordering](caching-conversation-repository.md).
 
 `SavedThreadOpenTest.readyCoverageCannotHoldFirstSavedRowsBehindProjection_firstOpenAndReopen`
 restores complete coverage before rows and holds the injected projection dispatcher.

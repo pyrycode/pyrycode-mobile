@@ -27,7 +27,6 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,11 +36,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
-import java.util.Collections
-import java.util.IdentityHashMap
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
 // inset on the same 20dp content gutter as the rest of the thread.
@@ -139,182 +135,6 @@ internal fun Modifier.olderHistoryPull(gesture: OlderHistoryGesture): Modifier =
             gesture.onGestureCancel()
         }
     }.nestedScroll(gesture)
-
-internal fun historyMarkersFor(
-    row: ThreadRow,
-    markers: List<ThreadHistoryMarker>,
-): List<ThreadHistoryMarker> {
-    if (row is ThreadRow.ToolRun && row.expanded) return emptyList()
-    val legacy = markers.filter { it.displayRow == null }
-    val keys =
-        if (legacy.isEmpty()) {
-            emptyList()
-        } else {
-            when (row) {
-                is ThreadRow.Delivered -> row.item.historyKeys()
-                is ThreadRow.ToolRun ->
-                    row.tools
-                        .firstOrNull()
-                        ?.let { ThreadItem.MessageItem(it).historyKeys() }
-                        .orEmpty()
-                else -> emptyList()
-            }
-        }
-    return markers.filter { marker ->
-        marker.displayRow?.let { target ->
-            when (row) {
-                is ThreadRow.Delivered -> sameDisplayRow(row.item, target)
-                is ThreadRow.ToolRun -> (target as? ThreadItem.MessageItem)?.message?.id == row.tools.firstOrNull()?.id
-                else -> false
-            }
-        } ?: (marker.beforeRow in keys)
-    }
-}
-
-private fun sameDisplayRow(
-    item: ThreadItem,
-    target: ThreadItem,
-): Boolean = item === target || item is ThreadItem.MessageItem && target is ThreadItem.MessageItem && item.message.id == target.message.id
-
-/** Hidden block gaps stay pullable at their run header; opening restores their original child anchors. */
-internal fun foldedAgentHistoryMarkers(
-    original: List<ThreadRow>,
-    folded: List<ThreadRow>,
-    markers: List<ThreadHistoryMarker>,
-): List<ThreadHistoryMarker> {
-    val blockByTool =
-        original
-            .filterIsInstance<ThreadRow.Delivered>()
-            .filter { it.isToolRow() }
-            .associate { (it.item as ThreadItem.MessageItem).message.id to it.agentBlockId }
-    val closedTargets =
-        folded
-            .filterIsInstance<ThreadRow.ToolRun>()
-            .filter { !it.expanded }
-            .mapNotNull { run ->
-                blockByTool[run.runId]?.let { it to ThreadItem.MessageItem(run.tools.first()) }
-            }.toMap()
-    if (closedTargets.isEmpty()) return markers
-    val preparedTargets = HashMap<String, ThreadItem>()
-    original.filterIsInstance<ThreadRow.Delivered>().forEach { row ->
-        closedTargets[row.agentBlockId]?.let { target ->
-            (row.item as? ThreadItem.MessageItem)?.message?.id?.let { preparedTargets[it] = target }
-        }
-    }
-    if (markers.all { it.displayRow != null }) {
-        return markers.map { marker ->
-            marker.copy(
-                displayRow =
-                    preparedTargets[(marker.displayRow as? ThreadItem.MessageItem)?.message?.id] ?: marker.displayRow,
-            )
-        }
-    }
-    val closed =
-        folded
-            .filterIsInstance<ThreadRow.ToolRun>()
-            .filter { !it.expanded }
-            .mapNotNull { run ->
-                blockByTool[run.runId]?.let { block -> block to ThreadItem.MessageItem(run.tools.first()).historyKeys().first() }
-            }.toMap()
-    if (closed.isEmpty()) return markers
-    val targets =
-        buildMap {
-            original.filterIsInstance<ThreadRow.Delivered>().forEach { row ->
-                val target = closed[row.agentBlockId] ?: return@forEach
-                row.item.historyKeys().forEach { put(it, target) }
-            }
-        }
-    return markers.map { marker ->
-        marker.copy(
-            beforeRow = targets[marker.beforeRow] ?: marker.beforeRow,
-            displayRow = preparedTargets[(marker.displayRow as? ThreadItem.MessageItem)?.message?.id] ?: marker.displayRow,
-        )
-    }
-}
-
-/** A marker's first newer tool stays visible; unrelated runs keep their existing collapse policy. */
-internal fun foldHistoryToolRuns(
-    rows: List<ThreadRow>,
-    expanded: Set<String>,
-    markers: List<ThreadHistoryMarker>,
-): List<ThreadRow> {
-    val preparedTargets = Collections.newSetFromMap(IdentityHashMap<ThreadItem, Boolean>())
-    markers.mapNotNullTo(preparedTargets) { it.displayRow }
-    val preparedMessageIds = preparedTargets.mapNotNullTo(HashSet()) { (it as? ThreadItem.MessageItem)?.message?.id }
-    val legacyKeys = markers.filter { it.displayRow == null }.mapTo(HashSet()) { it.beforeRow }
-    return buildList {
-        var start = 0
-        rows.forEachIndexed { index, row ->
-            val delivered = row as? ThreadRow.Delivered
-            val targeted =
-                delivered != null &&
-                    (
-                        delivered.item in preparedTargets ||
-                            (delivered.item as? ThreadItem.MessageItem)?.message?.id in preparedMessageIds ||
-                            legacyKeys.isNotEmpty() &&
-                            delivered.item.historyKeys().any { it in legacyKeys }
-                    )
-            if (delivered?.agentBlockId == null && targeted) {
-                addAll(foldToolRuns(rows.subList(start, index), expanded))
-                add(row)
-                start = index + 1
-            }
-        }
-        addAll(foldToolRuns(rows.subList(start, rows.size), expanded))
-    }
-}
-
-internal const val HISTORY_NEWEST_GAPS_KEY = "history-newest-gaps"
-
-internal fun visibleHistoryMarker(
-    layout: LazyListLayoutInfo,
-    rows: List<ThreadRow>,
-    promptRows: Int,
-    markers: List<ThreadHistoryMarker>,
-    heights: Map<ULong, Int> = emptyMap(),
-): ThreadHistoryMarker? =
-    layout.visibleItemsInfo.sortedBy { it.index }.firstNotNullOfOrNull { item ->
-        val row = rows.getOrNull(rows.lastIndex - (item.index - promptRows))
-        var edge = item.offset + item.size
-        val attached =
-            if (item.key == HISTORY_NEWEST_GAPS_KEY) {
-                markers.filter { it.beforeRow.isEmpty() }
-            } else {
-                row?.let { historyMarkersFor(it, markers) }.orEmpty()
-            }
-        attached
-            .mapNotNull { marker ->
-                val height = heights[marker.unsignedAnchor] ?: 0
-                val visible =
-                    edge - height < layout.viewportEndOffset &&
-                        edge > layout.viewportStartOffset ||
-                        height == 0 &&
-                        edge <= layout.viewportEndOffset
-                edge -= height
-                marker.takeIf { visible }
-            }.lastOrNull()
-    }
-
-@Composable
-internal fun HistoryGapRow(
-    anchor: ULong,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
-                .testTag("history-gap:$anchor"),
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            stringResource(R.string.thread_history_gap_label),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
 
 /**
  * Estimate loaded distance above the reversed viewport, even when its oldest row is not laid out.

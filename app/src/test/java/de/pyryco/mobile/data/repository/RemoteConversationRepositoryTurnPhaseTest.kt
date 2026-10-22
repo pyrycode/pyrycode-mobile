@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent.TurnState.Phase
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -13,7 +14,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -21,6 +24,18 @@ import org.junit.Test
  * whether or not a thread is observing it, behind the `interactive` gate.
  */
 class RemoteConversationRepositoryTurnPhaseTest {
+    private val oldLoggingEnabled = RelayLog.enabled
+
+    @Before
+    fun disableAndroidLogging() {
+        RelayLog.enabled = false
+    }
+
+    @After
+    fun restoreLogging() {
+        RelayLog.enabled = oldLoggingEnabled
+    }
+
     @Test
     fun framesForAnUnobservedConversation_areHeldForItsFirstReader() =
         runTest {
@@ -34,14 +49,14 @@ class RemoteConversationRepositoryTurnPhaseTest {
         }
 
     @Test
-    fun turnEnd_returnsTheConversationToIdle() =
+    fun obsoleteTurnEndCannotOverrideTheHeldLivePhase() =
         runTest {
             val (pump, repo) = repo()
             pump.push(turnState("c1", "thinking", id = 1L))
             pump.push(turnEnd("c1", id = 2L))
             runCurrent()
 
-            assertEquals(Phase.Idle, repo.observeTurnPhase("c1").first())
+            assertEquals(Phase.Thinking, repo.observeTurnPhase("c1").first())
         }
 
     /**

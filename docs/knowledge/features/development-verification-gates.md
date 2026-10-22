@@ -109,14 +109,13 @@ and it must never infer daemon support from cached or empty data. `ThreadEvidenc
 authoritative factory exists and is exercised by fixtures now, ahead of that activation,
 precisely so the later seam change carries no risk of its own.
 
-**Where this plugged in.** `awaitFinishedSelectionReply` and
-`assertReplySuggestionLongPress` (`ReplySuggestionE2EAssertions.kt`) now observe through
-`harnessThreadEvidence(repository).observe(conversationId)` instead of calling
-`observeMessages` directly, but kept their existing signatures and callers unchanged.
-`awaitFinishedSelectionReply` still means "a loaded main reply appeared"; the suggestion
-helper's echo check still means "exactly one delivered copy of this exact text exists," and
-its revisioned-clear check is untouched. `holdsSettledAssistantReply` itself was not
-changed — legacy settlement still delegates to it unmodified.
+**Consumer reads.** `awaitFinishedSelectionReply` still means "a loaded main reply
+appeared." `assertReplySuggestionLongPress` now takes the owning host's current
+repository holder (#2436). `ReplySuggestionReads` selects conversation/session and
+offer together inside `firstOnLive`, then follows that holder for exactly one
+verbatim delivered echo and a newer session-scoped clear. Capturing one repository
+can strand the offer wait after reconnect while the UI follows its replacement.
+See [replacement regression and counted evidence](../../e2e-interactive-stream.md#reply-suggestion-live-connection-observation-2436).
 
 **Lesson for later migrations.** When moving a stream-suite consumer off raw
 `observeMessages` or a raw `AuthoritativeThreadSnapshot` read, reach for `ThreadEvidence`
@@ -311,15 +310,16 @@ a child beneath it, as in `FaultEvidenceTest.test_destination_symlinks_are_rejec
 Check permission fixtures under both `077` and `022`; retain nonzero executed
 counts for focused checks and complete scripts discovery.
 
-Scenario report enumeration does not establish scenario launch order (#2383).
+Scenario report enumeration does not establish launch order (#2383).
 `AgentScenarioReportsTest.test_two_independent_outcomes_keep_the_first_failure`
 exercises sorted and reverse-sorted `Path.rglob` results. Assert the exact multiset
-of expected method names before building an identity map: a map alone hides
-duplicate reports. Check each outcome by identity, while checking retained-then-restart
-launch order and overall failure separately. The retained scenario must retain its
-failure, and the restart scenario must have no failure, error or skip. Positional
-report assertions can fail solely because the filesystem enumerates files differently;
-sorting reports alone does not prove missing or duplicate cases are rejected.
+of method names before building a map, which alone hides duplicates. Check each
+outcome by identity and launch order separately; the retained failure must survive,
+and restart must have no failure, error or skip. Sorting cannot prove completeness.
+For stream reports (#2455), retain each execution's XML before filename reuse and
+restore collected evidence even on interruption. [Selected-device ownership and
+counted regression evidence](development-verification-test-scheduling.md#stream-report-execution-ownership-2455)
+explain why pre-launch cleanup replaces mtime filtering.
 
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
 own output before it lands on `main`. That stage writes `docs/knowledge/features/`

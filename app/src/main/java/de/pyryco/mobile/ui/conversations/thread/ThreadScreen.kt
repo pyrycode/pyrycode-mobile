@@ -328,7 +328,6 @@ fun ThreadScreen(
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
-    onDemandHistoryGap: (Long) -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
     onRetryOlderHistory: () -> Unit = {},
@@ -392,9 +391,6 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
     attentionPill: (@Composable () -> Unit)? = null,
-    onDemandUnsignedHistoryGap: (ULong) -> Unit = { anchor ->
-        if (anchor <= Long.MAX_VALUE.toULong()) onDemandHistoryGap(anchor.toLong())
-    },
 ) {
     val authoritative = state.authoritativeThread
     val threadItems = authoritative?.items ?: state.items
@@ -702,18 +698,9 @@ fun ThreadScreen(
                         .hazeSource(chromeSource)
                         .then(frameBackground),
             ) {
-                // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
-                // message the daemon parked draws once — in place, carrying the queue treatment — instead
-                // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
-                // both inputs; the backlog stays replacement truth on ThreadUiState and never folds into
-                // the message reducer.
-                val queuedRows =
-                    remember(state.items, state.queuedMessages) {
-                        foldQueuedRows(state.items, state.queuedMessages)
-                    }
                 val agentRows =
-                    remember(authoritative, queuedRows, state.items, state.backgroundTasks) {
-                        authoritative?.rows ?: foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
+                    remember(authoritative, state.displayRows, state.items) {
+                        authoritative?.rows ?: state.displayRows ?: state.items.map { ThreadRow.Delivered(it) }
                     }
                 val agentNavigation = remember(interactionScope) { ThreadAgentNavigation() }
                 val destinationLifecycle = LocalLifecycleOwner.current.lifecycle
@@ -750,22 +737,9 @@ fun ThreadScreen(
                     previousAgentRows = agentRows
                 }
                 val rows =
-                    remember(authoritative, agentRows, collapseToolUses, retainedExpandedRuns, expandedTools, state.historyMarkers) {
-                        val folded =
-                            if (collapseToolUses) {
-                                foldHistoryToolRuns(
-                                    agentRows,
-                                    retainedExpandedRuns,
-                                    state.historyMarkers,
-                                )
-                            } else {
-                                agentRows
-                            }
+                    remember(authoritative, agentRows, collapseToolUses, retainedExpandedRuns, expandedTools) {
+                        val folded = if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
                         authoritative?.demandRows(folded, expandedTools) ?: folded
-                    }
-                val displayedHistoryMarkers =
-                    remember(agentRows, rows, state.historyMarkers) {
-                        foldedAgentHistoryMarkers(agentRows, rows, state.historyMarkers)
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -783,14 +757,10 @@ fun ThreadScreen(
                     // Movement can prefetch after a page settles; arrival alone never asks.
                     // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                    val demandHistoryGap by rememberUpdatedState(onDemandUnsignedHistoryGap)
-                    val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
-                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<ULong, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if ((authoritative?.rows?.isEmpty() ?: !state.hasMessages) &&
-                        state.historyMarkers.isEmpty() &&
-                        state.queuedMessages.isEmpty() &&
+                        state.displayRows.isNullOrEmpty() &&
                         shownQuestion == null &&
                         openRequest == null &&
                         !answerRejected
@@ -818,7 +788,6 @@ fun ThreadScreen(
                         val messageViewport = remember(listState) { mutableStateOf<Rect?>(null) }
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
-                                (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
                         val agentRelocation = readerViewport.relocationFor(rows, agentRows, promptRowCount, authoritative?.backgroundBlocks)
@@ -878,17 +847,7 @@ fun ThreadScreen(
                                 }
                             }
                         ThreadReadViewport(
-                            state =
-                                state.copy(
-                                    readEvidence =
-                                        if (authoritative ==
-                                            null
-                                        ) {
-                                            state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)
-                                        } else {
-                                            null
-                                        },
-                                ),
+                            state = state,
                             listState = listState,
                             candidate = readCandidate,
                             otherCandidates = authoritativeCandidates,
@@ -916,47 +875,18 @@ fun ThreadScreen(
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
-                        val currentHistoryRows by rememberUpdatedState(rows)
                         val historyPromptRows by rememberUpdatedState(promptRowCount)
                         val listPull =
                             remember(listState) {
-                                var gapDemanded = false
                                 OlderHistoryGesture(
                                     nearOldestEnd = {
-                                        visibleHistoryMarker(
-                                            listState.layoutInfo,
-                                            currentHistoryRows,
+                                        listState.layoutInfo.isNearOldestEnd(
+                                            oldestRowIndex,
+                                            listState.layoutInfo.viewportSize.height * 2f,
                                             historyPromptRows,
-                                            gapMarkers,
-                                            gapHeights,
-                                        ) !=
-                                            null ||
-                                            listState.layoutInfo.isNearOldestEnd(
-                                                oldestRowIndex,
-                                                listState.layoutInfo.viewportSize.height * 2f,
-                                                historyPromptRows,
-                                            )
+                                        )
                                     },
-                                    onDemand = {
-                                        // A selected gap owns this touch and its fling even after its marker disappears.
-                                        if (!historyLoading && !gapDemanded) {
-                                            val marker =
-                                                visibleHistoryMarker(
-                                                    listState.layoutInfo,
-                                                    currentHistoryRows,
-                                                    historyPromptRows,
-                                                    gapMarkers,
-                                                    gapHeights,
-                                                )
-                                            if (marker != null) {
-                                                gapDemanded = true
-                                                demandHistoryGap(marker.unsignedAnchor)
-                                            } else {
-                                                demandOlderHistory()
-                                            }
-                                        }
-                                    },
-                                    onStart = { gapDemanded = false },
+                                    onDemand = pullForOlderHistory,
                                 )
                             }
                         // #1314: one following state, derived from position on every scroll as desktop's
@@ -1066,15 +996,6 @@ fun ThreadScreen(
                                             },
                                         ),
                             ) {
-                                historyMarkersFor(row, gapMarkers).forEach { marker ->
-                                    HistoryGapRow(
-                                        marker.unsignedAnchor,
-                                        Modifier.onSizeChanged {
-                                            gapHeights[marker.unsignedAnchor] =
-                                                it.height
-                                        },
-                                    )
-                                }
                                 when (row) {
                                     is ThreadRow.Delivered ->
                                         when (val item = row.item) {
@@ -1304,21 +1225,6 @@ fun ThreadScreen(
                                 }
                                 item(key = "question-title:${pending.generation}") {
                                     Box(gutter) { QuestionBatchTitle(pending) }
-                                }
-                            }
-                            if (state.historyMarkers.any { it.beforeRow.isEmpty() }) {
-                                item(key = HISTORY_NEWEST_GAPS_KEY) {
-                                    Column {
-                                        gapMarkers.filter { it.beforeRow.isEmpty() }.forEach { marker ->
-                                            HistoryGapRow(
-                                                marker.unsignedAnchor,
-                                                Modifier.onSizeChanged {
-                                                    gapHeights[marker.unsignedAnchor] =
-                                                        it.height
-                                                },
-                                            )
-                                        }
-                                    }
                                 }
                             }
                             itemsIndexed(

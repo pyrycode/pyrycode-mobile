@@ -2,7 +2,6 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
-import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.HostModalState
@@ -13,44 +12,28 @@ import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.reduce
-import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
-import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskProgressPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
-import de.pyryco.mobile.data.network.HistoryPagePayloadDto
-import de.pyryco.mobile.data.network.MessageChunkPayloadDto
-import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
-import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
-import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
-import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
-import de.pyryco.mobile.data.network.ToolResultPayloadDto
-import de.pyryco.mobile.data.network.ToolUsePayloadDto
-import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
-import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toEvent
-import de.pyryco.mobile.data.network.toHistoryPage
-import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toSessionSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -128,16 +111,6 @@ class RemoteConversationRepository internal constructor(
      */
     private val negotiatedCapabilities: () -> Set<String> = { emptySet() },
     /**
-     * The reconnect-spanning replay cursor (#412): each interactive structured frame's durable
-     * [Envelope.eventId] is folded into this high-water mark in [recordReplayCursor]. It is **not**
-     * owned by this repository (rebuilt every reconnect) — [RelayRepositoryCoordinator] holds the
-     * process-scoped instance and threads the same one into each per-connection repo, so the mark
-     * survives connection churn and is readable at the next `hello`-build (#413). **Defaulted to a
-     * throwaway instance** so existing constructions (tests, pre-wiring) compile unchanged; only the
-     * coordinator-wired instance outlives the connection.
-     */
-    private val replayCursor: ReplayCursor = ReplayCursor(),
-    /**
      * The wall clock the usage-limit expiry reads (#802) — a **supplier**, not a value, for
      * [negotiatedCapabilities]' reason: the expiry is evaluated every time a collector reads
      * [observeUsageLimit], long after construction, so a captured instant would freeze it.
@@ -154,13 +127,6 @@ class RemoteConversationRepository internal constructor(
      * coordinator does, supplies the clock with it, and this one is unused.
      */
     now: () -> Instant = Clock.System::now,
-    /**
-     * Which background tasks this host has finished (#677), the one piece of background-task state that
-     * outlives a connection. [RelayRepositoryCoordinator] owns the host-lifetime instance and threads it into
-     * each repository, the [replayCursor] shape. **Defaulted to a throwaway instance** so existing
-     * constructions compile unchanged.
-     */
-    private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
     /**
      * The five readings the host pushes (#1317): announced model, session facts, context usage, usage limit and
      * slash-command menu. Only context usage is also asked for, by [requestContextUsage] (#1410). [RelayRepositoryCoordinator] owns the instance
@@ -193,8 +159,7 @@ class RemoteConversationRepository internal constructor(
         (pump as? ManagedSessionPump)?.close()
         scope.cancel()
     },
-) : ConversationRepository,
-    ThreadSnapshotSource {
+) : ConversationRepository {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
         AuthoritativeThreadRoute(
             authoritativeHostId,
@@ -281,7 +246,6 @@ class RemoteConversationRepository internal constructor(
 
     private val completionFacts = MutableStateFlow<List<AuthoritativeCompletion>>(emptyList())
     internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
-    internal val usesAuthoritativeAttention: Boolean get() = authoritativeHostId.isNotEmpty()
 
     @Volatile private var authoritativeCommandsEnded = false
 
@@ -304,7 +268,6 @@ class RemoteConversationRepository internal constructor(
      */
     private val stallProjection = StallProjection()
     private val sessionErrorProjection = SessionErrorProjection()
-    private val queueProjection = QueueProjection()
     private val apiRetryProjection = ApiRetryProjection()
     private val compactingProjection = CompactingProjection()
     private val usageLimitProjection = hostReadings.usageLimit
@@ -341,17 +304,10 @@ class RemoteConversationRepository internal constructor(
         )
 
     /**
-     * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
-     * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
-     * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
-     */
-    private val threadProjection = ThreadProjection(messageTrail)
-
-    /**
      * The files the daemon offered in each conversation on this connection (#898), each also appended to
      * [threadProjection] as a row the first time it arrives (#983). Declared after it for that reason.
      */
-    private val attachmentOfferProjection = AttachmentOfferProjection(threadProjection)
+    private val attachmentOfferProjection = AttachmentOfferProjection()
 
     /**
      * The model menu of every conversation (#913): the retained menus, the one-shot `request_model_list`
@@ -485,7 +441,6 @@ class RemoteConversationRepository internal constructor(
             requests = relayRequests,
             send = pump::send,
             conversationList = conversationListProjection,
-            threadProjection = threadProjection,
             deviceName = deviceName,
             negotiatedCapabilities = negotiatedCapabilities,
         )
@@ -501,8 +456,6 @@ class RemoteConversationRepository internal constructor(
             requests = relayRequests,
             send = pump::send,
             conversationList = conversationListProjection,
-            threadProjection = threadProjection,
-            queueProjection = queueProjection,
             trail = messageTrail,
             connToken = connToken,
             registerAuthoritativeSend = { conversation, message ->
@@ -655,21 +608,7 @@ class RemoteConversationRepository internal constructor(
     val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
     /** Independent stop-refusal ledger; IDs come from the same counter as ordinary reply waiters. */
-    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities)
-
-    /**
-     * The background tasks each conversation holds on **this connection** (#677), keyed by conversation id; a
-     * missing key means nothing has been reported. Folded by [BackgroundTaskProjection] from the three
-     * `background_task_*` frames; only the finished marks in [finishedBackgroundTasks] predate this
-     * connection. On the concrete repository only, like [questionBatches].
-     */
-    private val backgroundTaskProjection =
-        BackgroundTaskProjection(
-            finishedBackgroundTasks,
-            onTaskFinished = backgroundTaskStops::taskFinished,
-            onRosterReported = backgroundTaskStops::rosterReported,
-        )
-    val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
+    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities, scope)
 
     private val suppliedModals = MutableStateFlow(HostModalState())
     private val contextRequestOwner = Any()
@@ -876,6 +815,7 @@ class RemoteConversationRepository internal constructor(
                 try {
                     val settings = envelope.payload.toSessionSettings()
                     val arrival = ++settingsArrival
+                    hostReadings.holdSessionSettings(conversation, settings)
                     authoritativeSettings.update { it + (conversation to (arrival to settings)) }
                     relayRequests.waiter(envelope.inReplyTo)?.complete(envelope.payload)
                 } catch (_: IllegalArgumentException) {
@@ -904,8 +844,6 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun onInbound(envelope: Envelope) {
-        // An opted-in connection never promotes legacy replay into authoritative completion proof.
-        if (usesAuthoritativeAttention && envelope.type == TYPE_TURN_END) return
         if (authoritativeLiveEnabled() &&
             envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
@@ -937,28 +875,7 @@ class RemoteConversationRepository internal constructor(
             }
             return
         }
-        val payload = envelope.payload as? JsonObject
-        val conversation = (payload?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
-        val before = threadProjection.readRows(conversation)
-        val compaction = threadProjection.readCompactionFold(conversation)
-        // A completion consumer can resume inside tryEmit: its durable identity must already be known.
-        if (envelope.type == TYPE_TURN_END) recordLatestEntry(envelope, conversation)
-        try {
-            routeInbound(envelope)
-        } finally {
-            recordLatestEntry(envelope, conversation)
-            threadProjection.recordReadEnvelope(envelope, CAPABILITY_INTERACTIVE in negotiatedCapabilities(), before, compaction)
-        }
-    }
-
-    private fun recordLatestEntry(
-        envelope: Envelope,
-        conversation: String,
-    ) {
-        if (!contributesToUnreadWatermark(envelope.type, envelope.payload)) return
-        envelope.historyEntryId
-            ?.takeIf { it > 0u && conversation.isNotEmpty() }
-            ?.let { conversationListProjection.recordLatestEntry(conversation, it) }
+        routeInbound(envelope)
     }
 
     private fun routeInbound(envelope: Envelope) {
@@ -966,57 +883,10 @@ class RemoteConversationRepository internal constructor(
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
         if (attachmentRetrievals.route(envelope)) return
-        if (envelope.type != TYPE_REPLY_SUGGESTION) recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
                 // A full-list snapshot, reply or unsolicited push: see [ConversationListProjection.applySnapshot].
                 conversationListProjection.applySnapshot(envelope)
-            TYPE_MESSAGE -> {
-                // A live (or send_message-echo) `message` envelope. Decode + map through the single
-                // #317 boundary; a malformed payload (missing field / unmappable role →
-                // SerializationException, bad envelope ts → IllegalArgumentException via Instant.parse;
-                // the former is a subtype of the latter) is dropped so the single inbound consumer
-                // survives. `sessionId = ""` — the payload carries none and the last-message preview
-                // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
-                // silently: message content may be sensitive, so nothing here logs the payload.
-                val dto: MessagePayloadDto
-                val message: Message
-                try {
-                    dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
-                    val decoded = dto.toMessage(envelope, sessionId = "")
-                    message =
-                        if (decoded.role == Role.User) {
-                            decoded.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
-                        } else {
-                            decoded
-                        }
-                } catch (e: IllegalArgumentException) {
-                    return
-                }
-                val conversationId = dto.conversationId
-                // Keep the most-recent by timestamp (the strictly-greater fold below). Only a user
-                // message is a thread row (#1351), as on desktop: the v2 path mints `message` for the
-                // operator's delivered turn alone, and assistant output arrives as structured events.
-                // A held id — the phone's own confirmed send among them — is kept, not replaced.
-                conversationListProjection.recordLastMessage(conversationId, message)
-                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, dto.sentNow, dto.queuedMsgId)
-            }
-            TYPE_MESSAGE_CHUNK -> {
-                // The `backfill_since` response (#313): a batch of finished messages, each carrying
-                // the chunk's one envelope `ts`. Decode + map the whole chunk in one try/catch — a
-                // single bad row (unmappable role / missing field → SerializationException, bad ts →
-                // IllegalArgumentException via Instant.parse; the former is a subtype) drops the
-                // entire chunk so the single inbound consumer survives. Drop silently: message
-                // content may be sensitive. Each row self-routes via its own `conversation_id`.
-                val rows =
-                    try {
-                        val chunk = MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(envelope.payload)
-                        chunk.messages.map { dto -> dto.conversationId to dto.toMessage(envelope, sessionId = "") }
-                    } catch (e: IllegalArgumentException) {
-                        return
-                    }
-                threadProjection.appendMessages(rows)
-            }
             TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED -> {
                 // Updates include correlated replies and other-device pushes, keyed by payload id.
                 // Creates are replies only; the host announces new conversations with an update.
@@ -1072,7 +942,7 @@ class RemoteConversationRepository internal constructor(
             }
             TYPE_ACK, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT, TYPE_HOST_SYSTEM_PROMPT,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT, TYPE_HOST_SYSTEM_PROMPT,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -1087,11 +957,10 @@ class RemoteConversationRepository internal constructor(
                 // folder's canonical path); a `recent_workspaces_list` (#565) carries the
                 // `{workspaces:[…]}` the [recentWorkspaces] waiter decodes for its path list. An
                 // `inReplyTo` matching no pending entry (or null) is a
-                // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
+                // no-op: an uncorrelated list request draws no reply here; `screen_snapshot` /
                 // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
                 // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
-                // them); a `history_page` (#623) carries the `{entries,cursor,at_start}` the
-                // [requestHistory] waiter decodes for its page; a `session_settings` (#590) carries the
+                // them); a `session_settings` (#590) carries the
                 // run configuration the [observeSessionSettings] read decodes. That last one is where the
                 // demux does load-bearing safety work: the reply carries NO conversation_id of its own, so
                 // a stale, duplicate or unsolicited one has no pending entry to complete and therefore no
@@ -1121,70 +990,20 @@ class RemoteConversationRepository internal constructor(
                     backgroundTaskStops.applyRefusal(id, envelope.payload)
                     contextUsageProjection.forgetRequest(contextRequestOwner, id)
                 }
-            TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
-                // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
-                // capability — without `interactive` we never decode and never surface it (a buggy/
-                // hostile daemon ignoring the negotiated set cannot push structured events to a
-                // non-interactive phone). Decoding is best-effort: a malformed envelope or an
-                // unrecognized turn_state yields null and is dropped (AC #3/#4); tryEmit is
-                // non-blocking (DROP_OLDEST) so the shared inbound collector is never stalled.
-                // Drop silently: the payloads carry message/tool content — nothing here logs them.
+            TYPE_TURN_STATE -> {
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeLiveSessionEvent(envelope)?.let { event ->
-                        // Forward progress ends any active stall for the conversation (#395, AC #2):
-                        // the quiet-while-not-idle condition no longer holds. A removal of an absent id
-                        // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
-                        // onset arm below — both are inside the same `interactive` gate.
+                        if (event is LiveSessionEvent.TurnState) {
+                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
+                        }
                         stallProjection.clear(event.conversationId)
-                        // Hold the conversation's turn phase (#1313) for every conversation, open or not, so
-                        // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
                         turnPhaseProjection.apply(event)
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
                             contextUsageProjection.onTurnStarted(event.conversationId)
                             sessionErrorProjection.clear(event.conversationId)
                         }
-                        // Fold the structured turn into the same thread store ([ThreadProjection]) the live
-                        // `message` arm writes, so every row interleaves by arrival order (AC #4): a
-                        // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
-                        // `assistant_delta` stream into one streaming assistant row that `turn_end`
-                        // finalizes (#337). `turn_state` folds no row — the thinking indicator reads the
-                        // held phase above (#1313) — and every event is surfaced on the live-event stream
-                        // below regardless of whether it also folds a row.
-                        when (event) {
-                            is LiveSessionEvent.AssistantDelta -> threadProjection.applyAssistantDelta(event)
-                            is LiveSessionEvent.ToolUse -> threadProjection.applyToolUse(event)
-                            is LiveSessionEvent.ToolResult -> threadProjection.applyToolResult(event)
-                            is LiveSessionEvent.TurnEnd -> {
-                                threadProjection.finalizeAssistantTurn(event)
-                                // First of the two clears for #801's thinking-progress reading, which has
-                                // no falling edge of its own: the turn whose reasoning it described has
-                                // ended, so a retained reading would report the depth of a finished think.
-                                // This belongs HERE, inside the TurnEnd branch — NOT beside the stall
-                                // clear above, which runs for every live event: hoisted there it would
-                                // wipe the reading on each `assistant_delta` and `tool_use` while still
-                                // passing a turn-end test. Routed by the event's own conversation id, so
-                                // one conversation's turn ending cannot clear another's reading, and a
-                                // removal of an absent key is an inert no-op.
-                                thinkingProgressProjection.clear(event.conversationId)
-                            }
-                            else -> Unit
-                        }
                         mutableLiveSessionEvents.tryEmit(event)
                     }
-                }
-            }
-            TYPE_TOOL_DENIED -> {
-                // A refused tool call (#811): see [ThreadProjection.applyToolDenied]. Same `interactive` gate as the
-                // structured-stream arm above, but no live event — it folds into the thread store only.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyToolDenied(envelope)
-                }
-            }
-            TYPE_TOOL_PROGRESS -> {
-                // claude's elapsed reading for an open call (#812): see [ThreadProjection.applyToolProgress]. The same gate and
-                // thread-store-only shape as `tool_denied`; it clears no stall and emits no live event.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyToolProgress(envelope)
                 }
             }
             TYPE_SESSION_ERROR -> {
@@ -1196,19 +1015,6 @@ class RemoteConversationRepository internal constructor(
                 // Stall onset (#395): see [StallProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     stallProjection.apply(envelope)
-                }
-            }
-            TYPE_QUEUE_STATE -> {
-                // Queued-backlog snapshot (#460): see [QueueProjection.apply].
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    queueProjection.apply(envelope)
-                    // A snapshot is the daemon's only confirmation of a drop (#859). Settling a
-                    // conversation whose backlog did not change is a no-op, so settle every one pending.
-                    threadProjection.settleDrops(queueProjection)
-                    // After the drops, so a dropped echo is already gone: this device's queued echoes read
-                    // below the running turn, and a drained one settles at the end of the thread (#1558). Only
-                    // one first queued while a turn was open waits behind it (#1636).
-                    threadProjection.settleQueuedEchoes(queueProjection, turnPhaseProjection::isOpen)
                 }
             }
             TYPE_MODEL_LIST -> {
@@ -1232,11 +1038,9 @@ class RemoteConversationRepository internal constructor(
                 }
             }
             TYPE_COMPACTING -> {
-                // Context-compaction status (#596): see [CompactingProjection.apply]. The same frame folds
-                // the thread's compaction divider (#1358): see [ThreadProjection.applyCompacting].
+                // Session-owned compaction status; the authoritative thread supplies its divider.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     compactingProjection.apply(envelope)
-                    threadProjection.applyCompacting(envelope)
                 }
             }
             TYPE_RATE_LIMITED -> {
@@ -1290,121 +1094,6 @@ class RemoteConversationRepository internal constructor(
                     mcpStatusProjection.apply(envelope)
                 }
             }
-            TYPE_SESSION_TRANSITION -> {
-                // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
-                // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
-                // spurious `session_transition` from a buggy/hostile daemon that ignored the server-side
-                // fan-out gate (fail-closed, defence in depth — the client mirror of the producer's
-                // server-side drop of unbindable transitions). Decode-or-drop (AC #3/#5): a malformed
-                // payload or an unknown reason yields null → drop one envelope, the lone collector
-                // survives. Routes strictly by the payload's conversation_id, so the boundary structurally
-                // cannot cross-route into another thread (AC #1) — an id no collector observes simply sits
-                // unread in the map. Two sibling writes on a decoded boundary: appendSessionBoundary folds
-                // a thread-boundary row, and updateCurrentSessionId (#578) folds new_session_id into the
-                // projection Conversation.currentSessionId so session-scoped frames target the live session
-                // instead of the empty id the v2 `conversations` summary defaults. Unlike the structured-
-                // stream arm neither surfaces on liveSessionEvents (a boundary is not a streaming event) nor
-                // clears a stall (a session transition is not turn forward-progress). Drop silently —
-                // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
-                        // Invalidate ownership before resetting clears: that edge can issue the new ask.
-                        contextUsageProjection.onSessionTransition(conversationId, boundary)
-                        threadProjection.appendSessionBoundary(conversationId, boundary)
-                        conversationListProjection.updateCurrentSessionId(conversationId, boundary.newSessionId)
-                        // Third write since #590: the session this conversation's settings describe has
-                        // been replaced, so every reading of it is stale. Bump the trigger rather than
-                        // reading here — the read belongs on a collector's coroutine, and a conversation
-                        // nobody is watching must not send a frame. Routed by the same decoded
-                        // conversation_id as its two siblings, so a transition cannot invalidate another
-                        // conversation's reading.
-                        sessionSettingsCommands.bumpSettingsRevision(conversationId)
-                        // Fourth write since #801, and the second of the two clears for the
-                        // thinking-progress reading: the session whose reasoning it described has been
-                        // replaced, so the reading describes a think that can no longer be running.
-                        // Routed by the same decoded conversation_id as its three siblings, so a
-                        // transition cannot clear another conversation's reading; removing an absent key
-                        // is an inert no-op.
-                        thinkingProgressProjection.clear(conversationId)
-                        // Fifth write since #871: a reset ends in a session transition, and the daemon emits
-                        // `restarting` before it respawns claude, so no rising edge can follow this one. Routed
-                        // by the same decoded conversation_id, so it cannot clear another conversation's reading.
-                        resettingProjection.clear(conversationId)
-                        // Sixth and seventh writes since #890: both readings describe the replaced session's
-                        // run, and the new one reports its own on its first turn. Same routing, same no-op on
-                        // an absent key.
-                        announcedModelProjection.clear(conversationId)
-                        sessionFactsProjection.clear(conversationId)
-                        // Ninth since #1360: the replaced session's switch-back offer is over. Emitted on the same
-                        // flow as the refusals, so the two keep their wire order.
-                        liveRefusalEvents.tryEmit(conversationId to LiveRefusalEvent.SessionReplaced)
-                    }
-                }
-            }
-            TYPE_UNRECOGNIZED_MESSAGE -> {
-                // A claude message the daemon's stream-json parser could not map (#609, pyrycode#1074).
-                // Same `interactive` gate as the live-session / `stall` / `queue_state` / `api_retry` /
-                // `compacting` / `session_transition` siblings: a non-interactive phone never decodes a
-                // spurious `unrecognized_message` from a buggy/hostile daemon that ignored the server-side
-                // fan-out gate (fail-closed, defence in depth). Decode-or-drop (AC #4): a malformed payload
-                // or a `site` outside the closed set yields null → drop one envelope, the lone collector
-                // survives. Routes strictly by the payload's conversation_id, so the row structurally
-                // cannot cross-route into another thread (AC #1) — an id no collector observes simply sits
-                // unread in the map. Exactly ONE write, unlike the session_transition twin directly above:
-                // appendUnrecognizedMessage folds the thread row and that is all — there is deliberately no
-                // updateCurrentSessionId sibling here, because the frame carries no session identity (a
-                // reader who knows that arm will look for a second write; there isn't one). Inert toward
-                // every neighbour (AC #3): it does not tryEmit on liveSessionEvents (a diagnostic row is not
-                // a streaming event), does not open, close, or alter a turn (the frame carries no turn_id —
-                // the daemon could not attribute one honestly, and opening a turn would wedge the
-                // conversation since no turn end follows a message nobody could parse), and touches
-                // the stall state in NEITHER direction (an unparseable message is not turn forward
-                // progress, and clearing here would be a hostile-daemon lever for suppressing the stall
-                // indicator) nor any other conversation status. Drop silently — nothing here logs any
-                // payload field: `raw`/`message_type` are the most untrusted strings the thread holds, and a
-                // logged conversation_id is a cross-conversation correlation leak.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyUnrecognizedMessage(envelope)
-                }
-            }
-            TYPE_BANNER -> {
-                // Text claude printed about the session (#873, pyrycode#2256). Same `interactive` gate as
-                // its thread-row siblings above (fail-closed, defence in depth). Decode-or-drop: a malformed
-                // payload or ts yields null → drop one envelope, the lone collector survives. Routes strictly
-                // by the payload's conversation_id. Exactly ONE write — appendBanner folds the row — and
-                // inert toward every neighbour: no liveSessionEvents emission, no turn opened, closed or
-                // altered, no stall or other status touched. That holds for `stops_turn: true` too: it is a
-                // report, and acting on it would hand claude a self-service turn abort. Nothing here logs
-                // any payload field: `text` is claude-authored prose.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyBanner(envelope)
-                }
-            }
-            TYPE_COMPACTION_BOUNDARY -> {
-                // A finished compaction (#874, pyrycode#2237). Same `interactive` gate as its thread-row
-                // siblings (fail-closed). Decode-or-drop: a malformed payload or ts yields null → drop one
-                // envelope, the lone collector survives. Routes strictly by the payload's conversation_id.
-                // Exactly ONE write — withCompactionBoundary fills the pending divider or appends one — and inert toward every
-                // neighbour: `compacting` alone drives the status indicator, so this arm clears no compacting
-                // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyCompactionBoundary(envelope)
-                }
-            }
-            TYPE_MODEL_REFUSAL_FALLBACK, TYPE_MODEL_REFUSAL_NO_FALLBACK -> {
-                // claude refused a turn on one model, and retried on another or did not (#875,
-                // pyrycode#2265/#2266). Same `interactive` gate as its thread-row siblings (fail-closed).
-                // Decode-or-drop by envelope type: a malformed payload or ts drops one envelope, the lone
-                // collector survives. Routes strictly by the payload's conversation_id. Exactly ONE write —
-                // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
-                // opened, closed or altered, no status touched, and no model state, which `model_announced`
-                // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
-                // #1360: the one other write is the live signal, carrying the decoded refusal with its `scope`.
-                // Only this live arm emits it; the history lane never does.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    threadProjection.applyModelRefusal(envelope)?.let { liveRefusalEvents.tryEmit(it) }
-                }
-            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -1434,61 +1123,10 @@ class RemoteConversationRepository internal constructor(
                 // the projection filters on the payload's conversation_id. A first offer of an id is also a
                 // thread row (#983); no stall touched.
                 attachmentOfferProjection.apply(envelope)
-            TYPE_BACKGROUND_TASK_STARTED,
-            TYPE_BACKGROUND_TASK_UPDATED,
-            TYPE_BACKGROUND_TASK_ROSTER,
-            TYPE_BACKGROUND_TASK_PROGRESS,
-            -> {
-                // Background work claude left running past its turn (#677, progress #1042): see
-                // [BackgroundTaskProjection.apply].
-                // The panel remains replacing state; scalar frames also retain invisible lifecycle positions.
-                // No stall is cleared and command lines/summaries are never logged.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    backgroundTaskProjection.apply(envelope)
-                    threadProjection.applyBackgroundTaskLifecycle(envelope)
-                }
-            }
-            TYPE_RESYNC -> {
-                // Replay resync (#417): the daemon's signal that the advertised `last_event_id` aged out
-                // of its bounded ring (pyrycode#646/#647), so gap-free in-ring replay is impossible. Same
-                // `interactive` gate as the live-session, `stall`, and recordReplayCursor arms — a
-                // non-interactive phone never advertised a cursor, so a spurious `resync` from a buggy/
-                // hostile daemon is ignored (fail-closed, defence in depth). The reset is unconditional on
-                // the type match: the cursor is process-global (not per-conversation), so a malformed/
-                // absent conversation_id still clears it — the safety action (avoid mis-resuming; the next
-                // reconnect then advertises a fresh position, #416) must not depend on payload shape. The
-                // gap surface is conditional on a decodable conversation_id (it routes the ReplayGap).
-                // recordReplayCursor ran first (above) but a `resync` carries no event_id, so it recorded
-                // nothing — no record-then-reset conflict. Drop silently — nothing here logs the payload.
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    replayCursor.reset()
-                    resyncConversationId(envelope)?.let { id ->
-                        mutableLiveSessionEvents.tryEmit(LiveSessionEvent.ReplayGap(id))
-                    }
-                }
-            }
             // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
             // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
             // `message_chunk` already delivered the full history; the count is informational only.
             else -> Unit
-        }
-    }
-
-    /**
-     * Record the envelope-level replay cursor (#412), the **first** action in [onInbound] — before the
-     * `when` demux. Envelope-level and type-agnostic: it reads [Envelope.eventId] directly, so a frame
-     * with a valid `event_id` but a malformed structured *payload* still advances the cursor (the
-     * durable event occurred; the cursor marks position, not decodability). Gated on the negotiated
-     * `interactive` capability, symmetric with the structured-stream and `stall` arms: a buggy/hostile
-     * authenticated daemon that ignored the negotiated set cannot advance a cursor a non-interactive
-     * phone will never advertise (#413's advertise is itself `interactive`-gated) — defence in depth.
-     * A non-interactive frame carries no `event_id`, so [Envelope.eventId] is `null` and nothing is
-     * recorded (AC #3). [ReplayCursor.record] is throw-free (set-membership + a pure max-fold), so this
-     * never kills the single inbound collector; it is a pure side-write with no feedback into delivery.
-     */
-    private fun recordReplayCursor(envelope: Envelope) {
-        if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-            envelope.eventId?.let { replayCursor.record(it) }
         }
     }
 
@@ -1518,33 +1156,8 @@ class RemoteConversationRepository internal constructor(
                         null
                     }
                 }
-                TYPE_ASSISTANT_DELTA -> MobileJson.decodeFromJsonElement<AssistantDeltaPayloadDto>(envelope.payload).toEvent()
-                TYPE_TOOL_USE -> MobileJson.decodeFromJsonElement<ToolUsePayloadDto>(envelope.payload).toEvent()
-                TYPE_TOOL_RESULT -> MobileJson.decodeFromJsonElement<ToolResultPayloadDto>(envelope.payload).toEvent()
-                TYPE_TURN_END -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(envelope.payload).toEvent(envelope.historyEntryId)
                 else -> null
             }
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `session_transition` envelope (#336) to its routing [conversationId] and the mapped
-     * [ThreadItem.SessionBoundary], or **null** when it cannot be folded. Decodes the untrusted
-     * [Envelope.payload] through the single configured [MobileJson] and maps via `toBoundary()`. The whole
-     * body is one `try`/`catch (IllegalArgumentException)`
-     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed payload
-     * — a missing/wrong-typed required field or an unparseable `occurred_at` — yields `null`, dropping the
-     * one envelope while the lone inbound collector survives (AC #5). An **unrecognized `reason`** is a
-     * distinct path: `toBoundary()` returns `null` (no throw), so the one envelope drops the same way
-     * (AC #3). Mirrors the [StallProjection] / [QueueProjection] decoders' drop idiom — **nothing here logs the payload**
-     * (conversation_id / session ids / workspace_cwd are sensitive; a logged or mis-routed boundary is a
-     * cross-conversation leak).
-     */
-    private fun decodeSessionTransition(envelope: Envelope): Pair<String, ThreadItem.SessionBoundary>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<SessionTransitionPayloadDto>(envelope.payload)
-            dto.toBoundary()?.let { dto.conversationId to it }
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1570,21 +1183,6 @@ class RemoteConversationRepository internal constructor(
         } catch (e: IllegalArgumentException) {
             null
         }
-
-    /**
-     * Read the inline `conversation_id` of a `resync` marker (#417) as a JSON string, or **null** when
-     * it is absent / not a string / the payload is not a JSON object. Pure structural access off
-     * [Envelope.payload] — no `decodeFromJsonElement`, no DTO (mirrors the server's payload-less
-     * inline-struct precedent) — so it cannot throw and cannot kill the single inbound collector. Used
-     * only to tag the surfaced [LiveSessionEvent.ReplayGap] for routing; the id is never trusted beyond
-     * that (the cursor reset is process-global and does not read it). Nothing here logs the payload.
-     */
-    private fun resyncConversationId(envelope: Envelope): String? =
-        (envelope.payload as? JsonObject)
-            ?.get("conversation_id")
-            ?.let { it as? JsonPrimitive }
-            ?.takeIf { it.isString }
-            ?.content
 
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         flow {
@@ -1612,85 +1210,6 @@ class RemoteConversationRepository internal constructor(
 
     /** Recently-used workspace folders (#565), failing closed to empty; see [WorkspaceCommands.recentWorkspaces]. */
     override fun recentWorkspaces(): Flow<List<String>> = workspaceCommands.recentWorkspaces()
-
-    /**
-     * One backward step of [conversationId]'s history walk over v2 `request_history` (#623, server
-     * pyrycode#2113/#2116). The [rename] shape — encode → [RelayRequests.sendAndAwaitReply] → typed-decode — and,
-     * since #645, **one** state fold: the decoded page goes through [ThreadProjection.mergeHistoryPage] into
-     * [conversationId]'s thread before it is returned. Still nothing is cached, and the page itself is
-     * returned unchanged for the walking caller's `cursor` / `atStart`.
-     *
-     * [cursor] and [limit] are forwarded **verbatim** (as [rename] forwards the dialog's name). The
-     * cursor is opaque — never parsed, rebuilt or validated here — and the daemon re-validates both:
-     * a cursor that does not decode, was minted for another conversation, or names a position no
-     * longer in the log is one merged `history.invalid_cursor`, and a negative limit is
-     * `history.invalid_page_size`.
-     *
-     * **Deliberately no `.catch {}`**, unlike its one-shot sibling [recentWorkspaces], which fails
-     * closed to empty for a picker: every failure must reach the caller so a walk can tell the one
-     * **retryable** code (`history.unavailable`) from the three permanent ones. [RelayRequests.mapError] needs no
-     * new mapping — it is already generic over unrecognised codes, and it already turns the daemon's
-     * `conversation.not_found` into the [IllegalArgumentException] the [ConversationRepository]
-     * contract pins for an unknown conversation. So: [IllegalStateException] when the session is not
-     * connected or tears down mid-await (#488), [IllegalArgumentException] for an unknown
-     * conversation, [de.pyryco.mobile.data.network.RelayErrorException] carrying `code`/`retryable`
-     * for every `history.*` code, and the #318 decode exception for a malformed page. Each fails
-     * **only this ask** — the failure lands on this caller's deferred, the shared inbound collector
-     * never sees it, and no other conversation's projection changes.
-     *
-     * Emits no log on any branch, like the rest of this class: the cursor and the entries' `type` /
-     * `payload` are replayed content and never reach Logcat.
-     */
-    override suspend fun requestHistory(
-        conversationId: String,
-        cursor: String,
-        limit: Int,
-    ): HistoryPage {
-        refuseRetiredLegacyContent()
-        val page = readHistoryPage(conversationId, cursor, limit)
-        page.entries
-            .asSequence()
-            .filter { contributesToUnreadWatermark(it.type, it.payload) }
-            .maxOfOrNull { it.unsignedId }
-            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
-        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
-        return page
-    }
-
-    /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
-    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage {
-        refuseRetiredLegacyContent()
-        return readHistoryPage(conversationId, "", 0)
-    }
-
-    /** An opted-in host never requests legacy content, irrespective of its negotiated verdict. */
-    private fun refuseRetiredLegacyContent() {
-        if (authoritativeHostId.isNotEmpty()) {
-            RelayLog.d { "event=legacy_content_request_refused" }
-            throw IllegalStateException("legacy_content_request_refused")
-        }
-    }
-
-    private suspend fun readHistoryPage(
-        conversationId: String,
-        cursor: String,
-        limit: Int,
-    ): HistoryPage {
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_REQUEST_HISTORY,
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = limit),
-                    ),
-            )
-        // Throws on a server `error` / not-Open session before the decode below. The reply is the
-        // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
-        val reply = relayRequests.sendAndAwaitReply(request)
-        return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-    }
 
     /** The run configuration of a conversation's session (#590); see [SessionSettingsCommands.observeSessionSettings]. */
     override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
@@ -1747,61 +1266,13 @@ class RemoteConversationRepository internal constructor(
         }
     }
 
-    /**
-     * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
-     * SSOT `internal/protocol/messaging.go` `BackfillSincePayload` (#272): full history is requested
-     * from the Unix epoch ([BACKFILL_ALL_HISTORY_SINCE]) with an advisory cap
-     * ([BACKFILL_MAX_MESSAGES]). The server replies with `message_chunk` (+ `backfill_done`)
-     * correlated via `inReplyTo`; the chunk self-routes by its rows' `conversation_id`, so this
-     * slice does not track the request id against the conversation.
-     */
-    private fun backfillSinceRequest(conversationId: String): Envelope =
-        Envelope(
-            id = relayRequests.nextRequestId(),
-            type = TYPE_BACKFILL_SINCE,
-            ts = Clock.System.now().toString(),
-            payload =
-                MobileJson.encodeToJsonElement(
-                    BackfillSincePayloadDto(
-                        sinceTs = BACKFILL_ALL_HISTORY_SINCE,
-                        conversationId = conversationId,
-                        maxMessages = BACKFILL_MAX_MESSAGES,
-                    ),
-                ),
-        )
-
     // ---- Stubs: each later slice replaces the methods it owns -----------------------------------
-
-    /**
-     * Full thread for [conversationId] (#313): historical messages backfilled ahead of the live
-     * `message` stream, merged into one chronological [ThreadItem.MessageItem] list, deduped by
-     * `message_id`, in wire/arrival order. Cold, mirroring [observeConversations]: every
-     * subscription issues a `backfill_since` request (re-delivered history is absorbed by the
-     * `message_id` dedup, so no idempotency guard is needed); a pre-Open send returns false and is
-     * dropped — the live stream still fills the thread and the next subscription re-backfills.
-     */
-    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        observeThreadSnapshot(conversationId).map { it.rows }.distinctUntilChanged()
-
-    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
-        flow {
-            if (authoritativeHostId.isEmpty()) {
-                pump.send(backfillSinceRequest(conversationId))
-            } else {
-                RelayLog.d { "event=legacy_content_request_refused" }
-            }
-            emitAll(threadProjection.observeSnapshot(conversationId))
-        }
-
-    override fun observeThreadRowCounts(): Flow<Map<String, Int>> = threadProjection.observeRowCounts()
 
     override fun observeLastMessage(conversationId: String): Flow<Message?> = conversationListProjection.observeLastMessage(conversationId)
 
     override fun observeStall(conversationId: String): Flow<Boolean> = stallProjection.observe(conversationId)
 
     override fun observeSessionError(conversationId: String): Flow<String?> = sessionErrorProjection.observe(conversationId)
-
-    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queueProjection.observe(conversationId)
 
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
@@ -2150,12 +1621,6 @@ class RemoteConversationRepository internal constructor(
     /** Archive every active row at a workspace path (#663); see [WorkspaceCommands.archiveWorkspace]. */
     override suspend fun archiveWorkspace(path: String): Unit = workspaceCommands.archiveWorkspace(path)
 
-    /**
-     * Widened from `private` to `internal` by #645 so [reduceHistoryPage] can dispatch a stored
-     * [HistoryEntry.type] against the **same** wire-string declarations this class demuxes live frames
-     * on, rather than re-spelling eight protocol strings in a second place. The constants are protocol
-     * vocabulary, not state — nothing here becomes writable by widening it.
-     */
     internal companion object {
         /** Request: list the conversations (payload `{}` per protocol). */
         const val TYPE_LIST_CONVERSATIONS = "list_conversations"
@@ -2173,29 +1638,6 @@ class RemoteConversationRepository internal constructor(
          * the [onInbound] success-reply arm, or its pending deferred hangs (the delete/create-family hazard).
          */
         const val TYPE_RECENT_WORKSPACES_LIST = "recent_workspaces_list"
-
-        /** Request: one backward page of a conversation's stored history (#623, pyrycode#2113). Reply is [TYPE_HISTORY_PAGE]. */
-        const val TYPE_REQUEST_HISTORY = "request_history"
-
-        /**
-         * Correlated reply for [TYPE_REQUEST_HISTORY] (#623, pyrycode#2116): one page of entries,
-         * newest-first, with the next cursor and `at_start`. A **new** reply type, so it must be
-         * registered in the [onInbound] success-reply arm or its pending deferred hangs (the
-         * delete/create-family hazard [TYPE_RECENT_WORKSPACES_LIST] records).
-         */
-        const val TYPE_HISTORY_PAGE = "history_page"
-
-        /**
-         * Live/echo single-`message` payload (#317) — feeds both the last-message preview (#329) and
-         * the conversation thread (#313). The batched backfill response is [TYPE_MESSAGE_CHUNK].
-         */
-        const val TYPE_MESSAGE = "message"
-
-        /** Request: full thread backfill for one conversation (#313, #272 `BackfillSincePayload`). */
-        const val TYPE_BACKFILL_SINCE = "backfill_since"
-
-        /** Response: a batch of finished `message` rows answering a `backfill_since` (#313, #272). */
-        const val TYPE_MESSAGE_CHUNK = "message_chunk"
 
         /** Request: post a user message to a conversation (#346, #272 `SendMessagePayload`). */
         const val TYPE_SEND_MESSAGE = "send_message"
@@ -2314,23 +1756,11 @@ class RemoteConversationRepository internal constructor(
         /** Structured-stream event: coarse turn lifecycle `{conversation_id, state}` (#385, #607). */
         const val TYPE_TURN_STATE = "turn_state"
 
-        /** Structured-stream event: incremental assistant text `{…, seq, text}` (#385, #607). */
-        const val TYPE_ASSISTANT_DELTA = "assistant_delta"
-
-        /** Structured-stream event: a tool invocation `{…, tool_use_id, name, input_summary}` (#385, #607). */
-        const val TYPE_TOOL_USE = "tool_use"
-
-        /** Structured-stream event: a tool result `{…, tool_use_id, is_error, result_summary}` (#385, #607). */
-        const val TYPE_TOOL_RESULT = "tool_result"
-
         /** Thread-store event: claude refused a tool call `{…, tool_use_id, tool_name, message, …}` (#811). */
         const val TYPE_TOOL_DENIED = "tool_denied"
 
         /** Thread-store event: claude's elapsed reading for an open call `{…, tool_use_id, elapsed_seconds}` (#812). */
         const val TYPE_TOOL_PROGRESS = "tool_progress"
-
-        /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
-        const val TYPE_TURN_END = "turn_end"
 
         /**
          * Capability-gated control event: a remote-head stall `{conversation_id}` (#395, #638/#639) —
@@ -2340,13 +1770,6 @@ class RemoteConversationRepository internal constructor(
 
         /** Unsolicited conversation-scoped failure; carries no replay event id or retry instruction. */
         const val TYPE_SESSION_ERROR = "session_error"
-
-        /**
-         * Capability-gated snapshot event: a conversation's queued-message backlog
-         * `{conversation_id, queued:[{queued_msg_id, text, ts}]}` (#460, pyrycode#705/#720) — the full
-         * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
-         */
-        const val TYPE_QUEUE_STATE = "queue_state"
 
         /**
          * Capability-gated snapshot event: a conversation's published model menu
@@ -2495,15 +1918,6 @@ class RemoteConversationRepository internal constructor(
         const val TYPE_REQUEST_CONTEXT_USAGE = "request_context_usage"
 
         /**
-         * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
-         * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
-         * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
-         * arrival order at a `/clear` / idle-evict / workspace-change transition. `reason` ∈ {`clear`,
-         * `idle_evict`, `workspace_change`}; `workspace_cwd` is non-null only for `workspace_change`.
-         */
-        const val TYPE_SESSION_TRANSITION = "session_transition"
-
-        /**
          * Capability-gated thread event: a claude message the daemon's stream-json parser could not map
          * `{conversation_id, site, message_type, raw, truncated}` (#609, pyrycode#1074) — folds a
          * [ThreadItem.UnrecognizedMessage] into the conversation thread (keyed by `conversation_id`) in
@@ -2582,21 +1996,6 @@ class RemoteConversationRepository internal constructor(
         const val TYPE_QUESTION_DISMISSED = "question_dismissed"
 
         /**
-         * Capability-gated background task claude started past its turn
-         * `{conversation_id, task_id, tool_call_id, description, task_type, truncated_fields}` (#677).
-         */
-        const val TYPE_BACKGROUND_TASK_STARTED = "background_task_started"
-
-        /**
-         * Capability-gated change to a background task
-         * `{conversation_id, task_id, patch, status, summary, truncated_fields}` (#677); `status != ""` ends it.
-         */
-        const val TYPE_BACKGROUND_TASK_UPDATED = "background_task_updated"
-
-        /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
-        const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
-
-        /**
          * Capability-gated current activity of a running background task `{conversation_id, task_id, description,
          * subagent_type, last_tool_name, total_tokens, tool_uses, duration_ms, truncated_fields}` (#1042).
          */
@@ -2635,14 +2034,6 @@ class RemoteConversationRepository internal constructor(
          * "New session" (/clear). No payload, no reply, interactive-gated server-side; replay-safe.
          */
         const val TYPE_NEW_SESSION = "new_session"
-
-        /**
-         * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,
-         * pyrycode#646/#647) — the daemon's signal that the advertised `last_event_id` aged out of its
-         * bounded ring, so gap-free in-ring replay is impossible. The phone resets its replay cursor and
-         * surfaces the gap; full reload via `backfill_since` is deferred (no daemon handler yet).
-         */
-        const val TYPE_RESYNC = "resync"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"
@@ -2712,13 +2103,5 @@ class RemoteConversationRepository internal constructor(
          * required `time.Time` on the wire (#272), so full history is the epoch, not an absent field.
          */
         const val BACKFILL_ALL_HISTORY_SINCE = "1970-01-01T00:00:00Z"
-
-        /**
-         * Advisory cap on the backfilled-message count (`backfill_since.max_messages`, #272). Sized
-         * to cover a full thread without truncation; the server chunks the response and may deliver
-         * fewer. The backfill dispatcher is not yet live, so this value is not yet exercised against
-         * real server behaviour.
-         */
-        const val BACKFILL_MAX_MESSAGES = 10_000
     }
 }

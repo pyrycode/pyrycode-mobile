@@ -22,14 +22,9 @@ import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
-import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.historyKeys
-import de.pyryco.mobile.data.repository.projectDisplay
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
-import de.pyryco.mobile.ui.conversations.thread.ThreadRow
-import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -40,7 +35,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.koin.core.context.GlobalContext
-import java.util.IdentityHashMap
 
 /** Shared rung-3/4 proof; all rows and requests come from the app's existing repository tap. */
 internal class DurableGapProof(
@@ -50,7 +44,6 @@ internal class DurableGapProof(
 ) {
     private val cache get() = GlobalContext.get().get<ConversationCache>()
     private val fault = DaemonFaultControl()
-    private var finalRows: List<ThreadItem>? = null
     private var authoritativeBaseline: AuthoritativeThreadSnapshot? = null
     private var finalAuthoritative: ThreadEvidence? = null
     val prefix = "e2e1833-" + RecordedSuiteNative.uniqueStamp()
@@ -62,8 +55,8 @@ internal class DurableGapProof(
     fun cacheBaseline() {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId))
         val repository = runBlocking { withTimeout(30_000) { bundle.coordinator.currentRepository.first { it != null } } }
-        if (harnessThreadEvidence(checkNotNull(repository)).kind == ThreadEvidenceKind.Authoritative) {
-            DurableHistoryProbe.end()
+        check(harnessThreadEvidence(checkNotNull(repository)).kind == ThreadEvidenceKind.Authoritative)
+        run {
             runBlocking {
                 withTimeout(30_000) {
                     while (true) {
@@ -86,25 +79,6 @@ internal class DurableGapProof(
             }
             return
         }
-        DurableHistoryProbe.begin(conversationId)
-        runBlocking {
-            withTimeout(30_000) {
-                while (true) {
-                    val rows = cache.readThread(serverId, conversationId).filterIsInstance<ThreadItem.MessageItem>()
-                    val coverage = cache.readHistoryPosition(serverId, conversationId)?.coverage
-                    // A stale opening page can cover state frames without covering the settled ping.
-                    if (rows.isNotEmpty() &&
-                        coverage != null &&
-                        coverage.spans.isNotEmpty() &&
-                        rows.all { row -> row.historyKeys().all { coverage.rowEntries[it].orEmpty().isNotEmpty() } }
-                    ) {
-                        break
-                    }
-                    delay(50)
-                }
-            }
-        }
-        DurableHistoryProbe.end()
     }
 
     fun missPages(
@@ -117,12 +91,7 @@ internal class DurableGapProof(
         // The same durable home survives, but a fresh process cannot replay the missing ring.
         fault.stop()
         fault.start()
-        val baseline = authoritativeBaseline
-        if (baseline != null) {
-            AuthoritativeHistoryProbe.begin(serverId, conversationId, baseline)
-        } else {
-            DurableHistoryProbe.begin(conversationId)
-        }
+        AuthoritativeHistoryProbe.begin(serverId, conversationId, checkNotNull(authoritativeBaseline))
     }
 
     fun catchUp(
@@ -131,134 +100,10 @@ internal class DurableGapProof(
         reply: ProducedReplyEvidence,
         cachedRows: List<SemanticsMatcher>,
     ) {
-        if (authoritativeBaseline != null) {
-            catchUpAuthoritative(reconnect, promptText, reply)
-            return
-        }
-        try {
-            reconnect()
-            try {
-                rule.waitUntil(30_000) { DurableHistoryProbe.completed() >= 1 }
-            } catch (failure: Throwable) {
-                throw AssertionError(
-                    "newest completion: asks=${DurableHistoryProbe.asks().size}, pages=${DurableHistoryProbe.completed()}, rows=${messages().size}, gap=${coverageGap()}",
-                    failure,
-                )
-            }
-            rule.waitUntil(30_000) { messages().any { it == newestPost } && coverageGap() }
-            assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
-            assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
-            assertTrue(
-                "reply must be outside newest page and empty replay",
-                DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>().none {
-                    it.message.role ==
-                        Role.Assistant &&
-                        it.message.segment?.turnId == reply.turn
-                },
-            )
-            recordObservation("newest")
-            // A history page can retain the cached reader anchor. Reveal the already delivered row
-            // through semantics, which must not become history demand or certify replay coverage.
-            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
-            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
-            assertEquals("newest row visibility is inert", listOf(true), DurableHistoryProbe.asks())
-            val expected =
-                (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
-                    (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
-
-            fun recoveredReply(): CompletedReplyObservation? {
-                val repository =
-                    GlobalContext
-                        .get()
-                        .get<RelayConnectionRegistry>()
-                        .connectionFor(serverId)
-                        ?.coordinator
-                        ?.currentRepository
-                        ?.value
-                        ?: return null
-                val evidence = legacyThreadEvidence(serverId, conversationId, repository, DurableHistoryProbe.rows())
-                return reply.admitted(evidence, serverId)
-            }
-
-            fun recoveredFixture(): Boolean {
-                val texts = messages().toSet()
-                return expected.all { it in texts } && recoveredReply() != null
-            }
-            var pulls = 0
-            // Hidden cache fragments are still unresolved metadata, but cannot initiate reader demand.
-            // Walk the missing fixture content, then independently prove the displayed marker closes.
-            while (!recoveredFixture()) {
-                assertTrue("bounded durable gap walk", pulls < 6)
-                val count = DurableHistoryProbe.asks().size
-                // Semantics scrolling makes the gap visible without a physical gesture.
-                rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Load earlier messages"))
-                rule.waitForIdle()
-                assertEquals("marker visibility is inert", count, DurableHistoryProbe.asks().size)
-                pull()
-                pulls++
-                rule.waitUntil(30_000) { DurableHistoryProbe.completed() == count + 1 }
-                rule.waitForIdle()
-                // A quiescent interval exposes an accidental page-arrival catch-up loop.
-                runBlocking { delay(500) }
-                assertEquals("one page per pull; page arrival is inert", count + 1, DurableHistoryProbe.asks().size)
-                assertEquals(false, DurableHistoryProbe.asks().last())
-                recordObservation("pull_$pulls")
-            }
-            assertTrue("gap spans multiple older pages", pulls >= 2)
-            recordObservation("fixture_recovered")
-            var recordedSearch = false
-            rule.waitUntil(30_000) {
-                try {
-                    rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Load earlier messages"))
-                    if (!recordedSearch) {
-                        recordObservation("search_present")
-                        recordedSearch = true
-                    }
-                    false
-                } catch (missing: AssertionError) {
-                    if (missing.message?.startsWith("No node found that matches") != true) throw missing
-                    recordObservation("search_absent")
-                    true
-                }
-            }
-            val posts = messages().filter { it.startsWith(prefix) }
-            assertEquals("chronological posts, each once", expected, posts)
-            val rows = messages()
-            val messageRows = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()
-            val recovered = checkNotNull(recoveredReply()) { "recovered source does not hold the produced reply" }
-            val replyIndices =
-                recovered.records.map { record ->
-                    val matches = messageRows.indices.filter { messageRows[it].message.id == record.message.id }
-                    assertEquals("each produced fragment once", 1, matches.size)
-                    matches.single()
-                }
-            assertEquals("complete producer text survives history", reply.text, recovered.records.joinToString("") { it.fullText })
-            assertTrue("recovered reply fragments remain chronological", replyIndices == replyIndices.sorted())
-            assertTrue(
-                "reply between the two durable post batches",
-                replyIndices.all {
-                    it > rows.indexOf(lastOlderPost) && it < rows.indexOf("$prefix-b-000")
-                },
-            )
-            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
-            rule.onNodeWithText(olderPost, useUnmergedTree = true).assertIsDisplayed()
-            val asks = DurableHistoryProbe.asks()
-            val bubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-            assertRenderedOrder(
-                cachedRows +
-                    listOf(
-                        hasText(lastOlderPost) and bubble,
-                        hasText(promptText) and bubble,
-                    ) + recovered.records.map(::ownedReplyMatcher) + listOf(hasText("$prefix-b-000") and bubble),
-            )
-            assertEquals("rendered row reveals are inert", asks, DurableHistoryProbe.asks())
-        } finally {
-            finalRows = DurableHistoryProbe.rows()
-            DurableHistoryProbe.end()
-        }
+        checkNotNull(authoritativeBaseline)
+        catchUpAuthoritative(reconnect, promptText, reply)
     }
 
-    /** Recover an accepted saved tail, or walk real older pages after an independently observed reset. */
     private fun catchUpAuthoritative(
         reconnect: () -> Unit,
         promptText: String,
@@ -268,6 +113,18 @@ internal class DurableGapProof(
         val expected =
             (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
                 (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+        Log.i(
+            "DurableGapProof",
+            durableGapDiagnostic(
+                DurableGapCheck.Baseline,
+                true,
+                baseline.generation,
+                baseline.checkpoint,
+                baseline.completedVersion,
+                baseline.items.size,
+                baseline.items.size,
+            ),
+        )
         try {
             reconnect()
             rule.waitUntil(30_000) {
@@ -417,13 +274,26 @@ internal class DurableGapProof(
             assertEquals("no legacy content request", 0, AuthoritativeHistoryProbe.legacyRequests())
             val recovered = checkNotNull(reply.admitted(evidence, serverId))
             assertEquals("complete independently produced reply", reply.text, recovered.records.joinToString("") { it.fullText })
-            val terminal =
-                snapshot.items.single {
+            val terminalMatches =
+                snapshot.items.filter {
                     it.kind == "turn_end" &&
                         (it.parent ?: 0) == 0L &&
                         it.session == recovered.session &&
                         it.turn == recovered.turn
                 }
+            Log.i(
+                "DurableGapProof",
+                durableGapDiagnostic(
+                    DurableGapCheck.Terminal,
+                    snapshot.epoch == baseline.epoch,
+                    snapshot.generation,
+                    snapshot.checkpoint,
+                    snapshot.completedVersion,
+                    1,
+                    terminalMatches.size,
+                ),
+            )
+            val terminal = terminalMatches.single()
             assertTrue(
                 "completed root turn is certified",
                 !terminal.active && terminal.status == "done" && terminal.rev.toULong() <= version,
@@ -435,9 +305,9 @@ internal class DurableGapProof(
 
             val baselineRows = authoritativeThreadEvidence(serverId, conversationId, Any(), baseline).records
             val retained =
-                baselineRows.map { old ->
-                    val held =
-                        evidence.records.single { now ->
+                baselineRows.mapIndexed { index, old ->
+                    val matches =
+                        evidence.records.filter { now ->
                             if (recoveryEpoch == baseline.epoch) {
                                 now.fact?.id == checkNotNull(old.fact).id
                             } else {
@@ -445,7 +315,7 @@ internal class DurableGapProof(
                                     now.turn == old.turn &&
                                     now.message.role == old.message.role &&
                                     now.fullText == old.fullText &&
-                                    (now.fact?.parent ?: 0) == (old.fact?.parent ?: 0) &&
+                                    durableParentMatches(now.fact?.parent, old.fact?.parent) &&
                                     (
                                         old.message.role != Role.User ||
                                             (
@@ -456,12 +326,51 @@ internal class DurableGapProof(
                                     )
                             }
                         }
+                    if (matches.size != 1) {
+                        Log.i(
+                            "DurableGapProof",
+                            durableGapDiagnostic(
+                                DurableGapCheck.RetainedRow,
+                                recoveryEpoch == baseline.epoch,
+                                snapshot.generation,
+                                snapshot.checkpoint,
+                                snapshot.completedVersion,
+                                1,
+                                matches.size,
+                                index,
+                            ) +
+                                " session_matches=${evidence.records.count { it.session == old.session }}" +
+                                " turn_matches=${evidence.records.count { it.turn == old.turn }}" +
+                                " role_matches=${evidence.records.count { it.message.role == old.message.role }}" +
+                                " text_matches=${evidence.records.count { it.fullText == old.fullText }}" +
+                                " parent_matches=${evidence.records.count {
+                                    durableParentMatches(
+                                        it.fact?.parent,
+                                        old.fact?.parent,
+                                    )
+                                }}" +
+                                " id_matches=${evidence.records.count { it.fact?.id == old.fact?.id }}",
+                        )
+                    }
+                    val held = matches.single()
                     assertEquals("saved source session", old.session, held.session)
                     assertEquals("saved source turn", old.turn, held.turn)
                     assertEquals("saved source role", old.message.role, held.message.role)
                     assertEquals("saved source text", old.fullText, held.fullText)
                     held
                 }
+            Log.i(
+                "DurableGapProof",
+                durableGapDiagnostic(
+                    DurableGapCheck.RetainedRows,
+                    recoveryEpoch == baseline.epoch,
+                    snapshot.generation,
+                    snapshot.checkpoint,
+                    snapshot.completedVersion,
+                    baselineRows.size,
+                    retained.size,
+                ),
+            )
             val texts = evidence.records.map { it.fullText }
             assertEquals("chronological durable posts, each once", expected, texts.filter { it.startsWith(prefix) })
             val indices = recovered.records.map { record -> evidence.records.indexOfFirst { it.fact?.id == record.fact?.id } }
@@ -506,14 +415,7 @@ internal class DurableGapProof(
             }
         }
 
-    fun messages(): List<String> =
-        if (authoritativeBaseline != null) {
-            (finalAuthoritative ?: authoritativeEvidence())?.records.orEmpty().map { it.fullText }
-        } else {
-            (finalRows ?: DurableHistoryProbe.rows()).filterIsInstance<ThreadItem.MessageItem>().map {
-                it.message.content
-            }
-        }
+    fun messages(): List<String> = (finalAuthoritative ?: authoritativeEvidence())?.records.orEmpty().map { it.fullText }
 
     /** Compare rendered positions across lazy viewports, rather than repository row indices. */
     private fun assertRenderedOrder(matchers: List<SemanticsMatcher>) {
@@ -536,35 +438,7 @@ internal class DurableGapProof(
         }
     }
 
-    private fun coverageGap(): Boolean =
-        runBlocking {
-            cache.readHistoryPosition(serverId, conversationId)?.coverage?.let {
-                it.gaps.isNotEmpty() ||
-                    it.unknown
-            } ==
-                true
-        }
-
     /** Numeric receipt/projection evidence is separate from the actual exhaustive Compose search. */
-    private fun recordObservation(phase: String) {
-        val coverage = runBlocking { cache.readHistoryPosition(serverId, conversationId)?.coverage }
-        val rows = DurableHistoryProbe.rows()
-        val delivered = IdentityHashMap<ThreadItem, Unit>()
-        foldQueuedRows(rows, emptyList()).filterIsInstance<ThreadRow.Delivered>().forEach { delivered[it.item] = Unit }
-        val projected = coverage?.projectDisplay(rows, isDisplayed = { it in delivered })?.markers.orEmpty()
-        val composed = rule.onAllNodes(hasText("Load earlier messages"), useUnmergedTree = true).fetchSemanticsNodes().size
-        val pages =
-            DurableHistoryProbe.pageReceipts().joinToString(";") { ids ->
-                "${ids.size}:${ids.firstOrNull()}-${ids.lastOrNull()}"
-            }
-        Log.i(
-            "DurableGapProof",
-            "event=durable_gap_observed phase=$phase asks=${DurableHistoryProbe.asks().size} " +
-                "pages=$pages rows=${rows.size} spans=${coverage?.unsignedSpans} " +
-                "gaps=${coverage?.unsignedGaps} unknown=${coverage?.unsignedUnknown} " +
-                "projected=${projected.map { it.anchor }} composed=$composed",
-        )
-    }
 
     private fun pull() =
         rule.onNodeWithTag("thread-message-region").performTouchInput {

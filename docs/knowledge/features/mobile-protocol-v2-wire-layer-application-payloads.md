@@ -56,7 +56,7 @@ The hint stays inert and conversation-local, grants no authority and must never 
 interpreted as a path, command or URL. It does not replace wire `turn_id` or `seq` as identity:
 main and child lanes keep distinct turn ids and independent sequences. No new lane or completion
 protocol is introduced. The wire SSOT remains pyrycode's `docs/protocol-mobile.md`, `assistant_delta`;
-[segment reconciliation](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+[segment reconciliation](remote-conversation-repository-assistant-reply-segments.md)
 owns retaining known hints when later frames omit them.
 
 ### Background-task payloads (#1782)
@@ -75,7 +75,7 @@ progress and finish slots under the existing panel rules.
 
 The panel roster remains replacement truth: omitted tasks and their pending slots, started-origin
 tracking and finished marks are pruned; disappearance is not completion. Retained
-[`BackgroundTaskLifecycle` evidence](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)
+[`BackgroundTaskLifecycle` evidence](remote-conversation-repository-reads-and-thread-store-history-paging.md)
 is separate, survives empty/replacing rosters and comes only from started and terminal updated entries.
 Live and history lifecycle handling both require `interactive`; the additive roster field adds no
 capability. Task descriptions, patches and summaries remain inert text, never evaluated or logged;
@@ -85,7 +85,7 @@ malformed decode exceptions are discarded unread. The daemon protocol remains th
 
 \#720's `workspace_label` field sits on the DTOs; #721 is what makes a *live* label change reach the phone, by decoding the two frames daemon #2208/#2209/#2210 ship. Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § Renaming a workspace.
 
-- **`WorkspaceUpdatedPayloadDto` (`WorkspaceUpdatedPayloadDto.kt`, own file)** — `{path: String, label: String? = null}`, keyed by **workspace (a daemon-host folder), not conversation id**. `path` is required with no default (an absent one is malformed); `label` is nullable *with* a default so an omitted key and an explicit `"label":null` both decode to `null` under `explicitNulls = false` — the protocol's two spellings of "clear" need no special case. No `toDomain()` mapper: the two scalars are consumed directly by `RemoteConversationRepository.applyWorkspaceLabel`, which relabels every row whose `cwd` equals `path` — byte-for-byte, no trim/normalize/filesystem access, since two paths differing by a trailing separator name distinct workspaces on the daemon. See [`remote-conversation-repository-reads-and-thread-store.md`](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out).
+- **`WorkspaceUpdatedPayloadDto` (`WorkspaceUpdatedPayloadDto.kt`, own file)** — `{path: String, label: String? = null}`, keyed by **workspace (a daemon-host folder), not conversation id**. `path` is required with no default (an absent one is malformed); `label` is nullable *with* a default so an omitted key and an explicit `"label":null` both decode to `null` under `explicitNulls = false` — the protocol's two spellings of "clear" need no special case. No `toDomain()` mapper: the two scalars are consumed directly by `RemoteConversationRepository.applyWorkspaceLabel`, which relabels every row whose `cwd` equals `path` — byte-for-byte, no trim/normalize/filesystem access, since two paths differing by a trailing separator name distinct workspaces on the daemon. See [`remote-conversation-repository-reads-and-thread-store.md`](remote-conversation-repository-reads-and-thread-store.md).
 - **Both `workspace_updated` and `conversation_updated` arrive from two producers, and a client MUST accept both** (the protocol's own wording): a correlated reply to a request this client sent, and an unsolicited push the daemon fans to every *other* interactive-capable connection when a workspace or conversation changes on another client. `workspace_updated` is applied identically either way — host-scoped by construction, since each `RemoteConversationRepository` owns one connection's projection. `conversation_updated`'s correlated half (`promote`'s reply, #348, and the other mutations' replies) was left to its waiter by #721; since #996 the collector also folds it by `id` before completing the waiter, so a rename survives a caller cancelled mid-reply. Its unsolicited half — no `in_reply_to`, or one matching no pending request — now folds into the projection by the payload's own `id` (`upsertConversation`), carrying whatever `workspace_label` that frame holds, including a move to a differently labelled workspace. `conversation_created` stays a correlated reply only; the daemon never broadcasts a create.
 - **Neither frame carries an `event_id`**, so neither rides the [replay cursor](replay-cursor.md) — a client disconnected mid-rename or mid-clear has no gap to replay; it reads the current label off its next `conversations` snapshot instead, same as any other live-only push.
 

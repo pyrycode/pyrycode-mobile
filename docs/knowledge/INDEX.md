@@ -14,8 +14,8 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Conversation thread](features/thread-screen.md): messages, live turns, status rows and thread actions.
 - [Markdown reader](features/markdown-reader-screen.md): in-app reader for a `.md`/`.markdown` attachment, opened from the thread's file rows instead of another app; also opened live, fetched fresh on every tap and never cached, from a workspace-path link in an assistant reply.
 - [Slash-command type-ahead](features/slash-command-type-ahead.md): composer suggestions from the conversation's published slash-command menu, filtering, completion and dismissal.
-- [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
-- [Model refusal row](features/model-refusal-row.md): a model refusal or fallback explained in the thread, live and on history reload.
+- [Banner notice row](features/banner-notice-row.md): daemon-supplied inert notice content in the thread.
+- [Model refusal row](features/model-refusal-row.md): a daemon-supplied refusal or fallback explained in the thread.
 - [Stopped-turn row](features/stopped-turn-row.md): a turn that failed or stopped early leaves a "Stopped: …" row in the thread, live and on history reload, surviving after the status-area turn-outcome arm clears.
 - [Settings](features/settings-screen.md): notifications-only modal and persisted push control.
 - [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
@@ -27,6 +27,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Data model](features/data-model.md): domain entities and portable data-layer rules.
 - [Conversation cache](features/conversation-cache.md): app-private, host-keyed storage that lets loaded conversation content survive a restart.
 - [Conversation repository](features/conversation-repository.md): repository contract and observable thread state.
+- [Authoritative saved-history paging](features/authoritative-reader-paging.md): bounded local demand/retry, placement recovery and counted paging/reopen evidence.
 - [Remote repository](features/remote-conversation-repository.md): relay-backed reads, writes and live events.
 - [Mobile protocol](features/mobile-protocol-v2-wire-layer.md): versioned envelope and payload handling.
 - [Noise session](features/noise-ik-session.md): the encrypted phone-to-daemon session.

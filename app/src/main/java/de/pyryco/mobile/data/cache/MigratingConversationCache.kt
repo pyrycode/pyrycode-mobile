@@ -3,8 +3,6 @@ package de.pyryco.mobile.data.cache
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.FileImport
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.repository.HistoryPosition
-import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -17,9 +15,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The app's [ConversationCache] (#2161): conversation lists and read positions stay in [FileConversationCache]
- * under [root]; both thread families are served from Room after each exact owner's saved file is imported once.
+ * under [root]; authoritative files import once for each exact owner. Obsolete legacy files stay inert.
  *
- * Import runs before any thread read or write of that owner and family. Its content and its completion marker
+ * Import runs before any authoritative thread read or write. Its content and its completion marker
  * commit in one transaction, so an interrupted import leaves the file to retry and a committed one is never
  * repeated or overwritten by a leftover file. A rejected file keeps its bytes. A file that cannot be imported right
  * now (IO, access, database) is retried, and that family's writes fail meanwhile. When its content does arrive after
@@ -40,10 +38,8 @@ internal class MigratingConversationCache(
     private val beforeCommit: suspend () -> Unit = {},
 ) : ConversationCache,
     AuthoritativeUpsertCache,
-    AuthoritativeWindowCache,
-    OwnedLegacyCoverageCache {
+    AuthoritativeWindowCache {
     private val files = FileConversationCache(root, ioDispatcher)
-    private val legacy = LegacyRoomStorage(database, ioDispatcher, beforeCommit)
     private val authoritative = AuthoritativeRoomStorage(database, ioDispatcher, beforeCommit)
     private val mutex = Mutex()
     private val settled = HashSet<Triple<String, String, String>>()
@@ -63,28 +59,6 @@ internal class MigratingConversationCache(
         (authoritativeRetirements[host to null]?.get() ?: 0L) to
             (authoritativeRetirements[host to conversation]?.get() ?: 0L)
 
-    /** The legacy storage's counts for the last page or thread read, for bounded-decoding probes. */
-    internal val legacyReadCounts get() = legacy.lastReadCounts
-    internal val legacyMutationCounts get() = legacy.lastMutationCounts
-
-    override suspend fun mutateLegacyRows(
-        host: String,
-        conversation: String,
-        upserts: List<OwnedLegacyRow>,
-        removed: Set<String>,
-    ): Result<Unit> = write(host, conversation, LEGACY, "mutate_rows") { legacy.mutateRows(host, conversation, upserts, removed) }
-
-    override suspend fun writeOwnedLegacyCoverage(
-        host: String,
-        conversation: String,
-        position: HistoryPosition,
-        previous: HistoryPosition?,
-        observed: List<ThreadItem>,
-    ): Result<Unit> =
-        write(host, conversation, LEGACY, "owned_history") {
-            legacy.writeOwnedCoverage(host, conversation, position, previous, observed)
-        }
-
     override suspend fun readConversations(serverId: String): List<Conversation> = files.readConversations(serverId)
 
     override suspend fun writeConversations(
@@ -98,29 +72,6 @@ internal class MigratingConversationCache(
         serverId: String,
         positions: Map<String, ReadPosition>,
     ): Result<Unit> = files.writeReadPositions(serverId, positions)
-
-    override suspend fun readThread(
-        serverId: String,
-        conversationId: String,
-    ): List<ThreadItem> = read(serverId, conversationId, LEGACY) { legacy.readThread(serverId, conversationId) }
-
-    override suspend fun writeThread(
-        serverId: String,
-        conversationId: String,
-        rows: List<ThreadItem>,
-    ): Result<Unit> = write(serverId, conversationId, LEGACY, "write_thread") { legacy.writeThread(serverId, conversationId, rows) }
-
-    override suspend fun readHistoryPosition(
-        serverId: String,
-        conversationId: String,
-    ): HistoryPosition? = read(serverId, conversationId, LEGACY) { legacy.readHistoryPosition(serverId, conversationId) }
-
-    override suspend fun writeHistoryPosition(
-        serverId: String,
-        conversationId: String,
-        position: HistoryPosition?,
-    ): Result<Unit> =
-        write(serverId, conversationId, LEGACY, "write_history") { legacy.writeHistoryPosition(serverId, conversationId, position) }
 
     override suspend fun readAuthoritativeThread(
         serverId: String,
@@ -163,20 +114,6 @@ internal class MigratingConversationCache(
             authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
         }
 
-    /** Bounded pages, imported first so no page reader can bypass the saved file (#2068 activates readers). */
-    internal suspend fun newestLegacyPage(
-        serverId: String,
-        conversationId: String,
-        size: Int,
-    ): LegacyThreadPage? = read(serverId, conversationId, LEGACY) { legacy.newestPage(serverId, conversationId, size) }
-
-    internal suspend fun beforeLegacyPage(
-        serverId: String,
-        conversationId: String,
-        token: LegacyThreadPage.Continuation,
-        size: Int,
-    ): LegacyThreadPage? = read(serverId, conversationId, LEGACY) { legacy.beforePage(serverId, conversationId, token, size) }
-
     internal suspend fun newestAuthoritativePage(
         serverId: String,
         conversationId: String,
@@ -203,6 +140,17 @@ internal class MigratingConversationCache(
     ): SavedAuthoritativeThread? =
         read(serverId, conversationId, AUTHORITATIVE) {
             authoritative.parentClosure(serverId, conversationId, epoch, parents, evidence, placementRoots, structuralChanges)
+        }
+
+    override suspend fun beforeAuthoritativeWindow(
+        serverId: String,
+        conversationId: String,
+        cursor: AuthoritativeDisplayCursor,
+        admitted: Set<Pair<Long, Boolean>>,
+        size: Int,
+    ): AuthoritativeThreadWindow? =
+        read(serverId, conversationId, AUTHORITATIVE) {
+            authoritative.beforeDisplayWindow(serverId, conversationId, cursor, admitted, size)
         }
 
     internal suspend fun beforeAuthoritativePage(
@@ -313,22 +261,9 @@ internal class MigratingConversationCache(
             settled += key
             return Import.Ready
         }
-        val source =
-            if (family == LEGACY) {
-                files.legacySource(serverId, conversationId)
-            } else {
-                files.authoritativeSource(serverId, conversationId)
-            }
+        val source = files.authoritativeSource(serverId, conversationId)
         if (source is SavedSource.Unavailable) return unavailable(family, source.code)
         var attempt = importSource(serverId, conversationId, family, source)
-        val readable = (source as? SavedSource.Readable<*>)?.value as? LegacySource
-        if ((attempt as? CacheTransaction.Failed)?.code == INVALID_DATA && readable?.history != null) {
-            // Today's reader serves a retained history projection without validating it again; Room validates what
-            // it stores. Rejected claims certify nothing, so the rows stay readable without them, as the reader keeps
-            // rows beside any other invalid optional history.
-            logImport(family, "history_rejected")
-            attempt = importSource(serverId, conversationId, family, SavedSource.Readable(LegacySource(readable.rows, null)))
-        }
         if ((attempt as? CacheTransaction.Failed)?.code == INVALID_DATA) {
             attempt = commit { INVALID.also { database.imports().record(listOf(FileImport(serverId, conversationId, family, it))) } }
         }
@@ -347,24 +282,16 @@ internal class MigratingConversationCache(
         serverId: String,
         conversationId: String,
         family: String,
-        source: SavedSource<*>,
+        source: SavedSource<SavedAuthoritativeThread>,
     ): CacheTransaction<String> =
         commit {
-            val holds =
-                if (family == LEGACY) {
-                    database.legacy().header(serverId, conversationId) != null
-                } else {
-                    database.authoritative().header(serverId, conversationId) != null
-                }
+            val holds = database.authoritative().header(serverId, conversationId) != null
             val outcome =
                 when {
                     holds -> SUPERSEDED
                     source is SavedSource.Rejected -> if (source.code == "unsupported_version") UNSUPPORTED else INVALID
-                    source is SavedSource.Readable<*> -> {
-                        when (val value = source.value) {
-                            is LegacySource -> legacy.importThread(serverId, conversationId, value.rows, value.history)
-                            is SavedAuthoritativeThread -> authoritative.importThread(serverId, conversationId, value)
-                        }
+                    source is SavedSource.Readable -> {
+                        authoritative.importThread(serverId, conversationId, source.value)
                         IMPORTED
                     }
                     else -> ABSENT

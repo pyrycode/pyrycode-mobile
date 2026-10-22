@@ -648,7 +648,6 @@ internal fun PyryNavHost(
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                     onDemandOlderHistory = vm::onDemandOlderHistory,
-                    onDemandUnsignedHistoryGap = vm::onDemandUnsignedHistoryGap,
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,

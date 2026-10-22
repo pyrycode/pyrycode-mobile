@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -226,6 +227,8 @@ internal class SuiteConnections private constructor(
                 delay(10)
             }
             awaitIdle()
+            val pump = synchronized(this@SuiteConnections) { pumps[owner] }
+            pump?.awaitConsumedPrefix()
         }
     }
 
@@ -490,8 +493,23 @@ internal class SuiteConnections private constructor(
     ) : ManagedSessionPump {
         override val state = MutableStateFlow<PumpState>(PumpState.Handshaking)
         val frames = Channel<Envelope>(Channel.UNLIMITED)
-        override val inbound = frames.receiveAsFlow()
+        private val queuedFrames = AtomicLong()
+        private val consumedFrames = AtomicLong()
+        override val inbound =
+            flow {
+                for (frame in frames) {
+                    emit(frame)
+                    // Receipt in the channel is not application consumption. In particular, the
+                    // repository must apply a terminal history marker before its scope is cancelled.
+                    consumedFrames.incrementAndGet()
+                }
+            }
         private val started = AtomicBoolean()
+
+        suspend fun awaitConsumedPrefix() {
+            val boundary = queuedFrames.get()
+            while (consumedFrames.get() < boundary) delay(10)
+        }
 
         override fun start() {
             if (started.compareAndSet(false, true)) register(this)
@@ -526,6 +544,7 @@ internal class SuiteConnections private constructor(
                 "daemon" -> {
                     val frame = checkNotNull(step.message)
                     check(frames.trySend(frame).isSuccess)
+                    queuedFrames.incrementAndGet()
                     tape!!.delivered(connection.owner, frame)
                     enqueue(tape.initial())
                 }

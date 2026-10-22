@@ -1,0 +1,403 @@
+{
+  "ticket": 2367,
+  "scope": "Manual integration of newest-main suggestion consumer and retirement of orphan legacy fixture publishers. Complete configured independent acceptance remains required.",
+  "rejectedIntegratedCandidate": "9612cbc721903a3f67204c482e2335458ce5f345",
+  "integratedMain": "4cf670c96a5b586cf03a2997c5f27ed52e855cca",
+  "suggestionFixtureRevision": "9b8889b0132d1b043f8cd85ee2873ddc19928777",
+  "cleanupRevision": "f8b06240f1f1e5752c31b849a6e89fb806dc2e57",
+  "suggestionSourceSha256": "0f7663a5fcc3e325848ee4c486bce6b2c64dd18ce213019f0c405d59c031cea9",
+  "focusedClass": {
+    "name": "de.pyryco.mobile.e2e.ReplySuggestionReadsTest",
+    "methods": [
+      "offerArrivingOnlyOnReplacementDoesNotLeaveReadOnRetiredConnection",
+      "offerFollowsSessionSelection",
+      "offerFollowsReplacementAndRejectsRetiredUpdates",
+      "echoAndClearFollowReplacement"
+    ],
+    "executed": 4,
+    "passed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xmlSha256": "de70f5b3b237a6c46482500a61a7f3636e06f9415c7bb0fe24dead337b547c99"
+  },
+  "retainedFailedAttempts": [
+    {
+      "name": "suggestion-integration-first",
+      "executed": 4,
+      "passed": 3,
+      "failed": 1,
+      "skipped": 0,
+      "xmlSha256": "f8f5a9caaa4c8ea398e39ced4a9a449039cfd6f96d7a09d72e9056fb77841fce"
+    },
+    {
+      "name": "suggestion-integration-second",
+      "executed": 4,
+      "passed": 3,
+      "failed": 1,
+      "skipped": 0,
+      "xmlSha256": "f3e4691c21140e4053aa8d64c0b975ba435c216fc5d87b6c7e0d67825c0cbe15"
+    }
+  ],
+  "orphanRetirement": {
+    "declarations": 56,
+    "targets": [
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "sendAndAck",
+        "removedLines": 17,
+        "removedSha256": "bd434be9a0a43210ef7e025b0bdb6bbfb9af0bc043f38069113acbcf1eb964e5"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "startDropQueuedMessage",
+        "removedLines": 14,
+        "removedSha256": "e3e2d42b27a0c89f2a0fa02318b2ea759dc4e2504f5aa6562cf269add244a0ce"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "threadShape",
+        "removedLines": 18,
+        "removedSha256": "d272e277d5a0cc2203d503a2261e15b550415f67614e4eba83a9e5ab11239ebb"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "boundariesOf",
+        "removedLines": 3,
+        "removedSha256": "73c23e9a39968718ccd5fb7c094a7cdaa2437cc0914ce925725a9dc76c2f25bb"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "toolCallOf",
+        "removedLines": 10,
+        "removedSha256": "411e04838c3adc2a1c7bfa750c17fa6ff796755060b94889b863e0d6884978f9"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "assistantRowOf",
+        "removedLines": 9,
+        "removedSha256": "789aac69be154bde7973e6cab9c6ed01bf720a0c725524322324ffd6a387fa0e"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "chunkRow",
+        "removedLines": 7,
+        "removedSha256": "9f392fb3be4b529dc049025c4b6cb074d9c385f7c8da083487d2afba2ce70e4e"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "messageChunkEnvelope",
+        "removedLines": 11,
+        "removedSha256": "79ddfcaed3873fb47d91563e86c306c5510f673e59ed9e546ecdda2ebeb7be00"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "QueuedFixture",
+        "removedLines": 11,
+        "removedSha256": "4f5ada93f9bc7b7a91134e8ccaa754eb908b32b5dd44dd07674ebdd6a1e5bd85"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "queueStateEnvelope",
+        "removedLines": 21,
+        "removedSha256": "5788eb816e6f70e6202f6e3d0c1060e708dbf89efecdb19f9da9a1b832d1465c"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "unrecognizedMessageEnvelope",
+        "removedLines": 28,
+        "removedSha256": "9394cffdebec50a6109deed743ae9d201c90fb56cf7d215486265556f924ca77"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "unrecognizedProbe",
+        "removedLines": 5,
+        "removedSha256": "95dd43fc114005e3d70778bad8fcc2afb07b56eea5226b51cf80a5b6eb80d6e3"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "bannerEnvelope",
+        "removedLines": 23,
+        "removedSha256": "ccf45e3a00c3c2f9bd9cb6abcf803ead4d9eb45ff276fede1a48c5a7da026dc4"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "compactionEnvelope",
+        "removedLines": 17,
+        "removedSha256": "642277dbb693368244278aff8d4f171dabef548610802816c45b0b520be1c030"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "compactionProbe",
+        "removedLines": 6,
+        "removedSha256": "eab5efdc71950104204a3f5bca8595342caa2c99a97b078a8c90cf0f26e1df7b"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "compactionRowsOf",
+        "removedLines": 3,
+        "removedSha256": "358658935c6c3d5fff8004b212c3a47002586108d6c7b47fec22c313a7d9e1ff"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "refusalEnvelope",
+        "removedLines": 23,
+        "removedSha256": "75c8e742237bef325d8b6d0466730f43a226d9596703317d21eda599e97bd976"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "refusalProbe",
+        "removedLines": 7,
+        "removedSha256": "3b6f3684deefeaae1aad860080c928d5b1e0a5e422975ab59570c7950a8ce85a"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "refusalRowsOf",
+        "removedLines": 2,
+        "removedSha256": "41cb8fb03095628e6b45e93cdf075ffb32a63d5d3d633abf1dd31eb0caff116e"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "bannerRowsOf",
+        "removedLines": 2,
+        "removedSha256": "8b531330d2bad4fb2b638185d1d52821b603d3d2f20525e6568bdd493ac9aa5c"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "unrecognizedRowsOf",
+        "removedLines": 3,
+        "removedSha256": "67c0bc1824625267d079130fe4be5db09e779d59c526ffedcc9a0424488f1cf2"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "resyncEnvelope",
+        "removedLines": 11,
+        "removedSha256": "577e7802496c393dffaf2dec6993e55560c17507ba10dd1d618355d9490fe228"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "toolUseEnvelope",
+        "removedLines": 17,
+        "removedSha256": "91cd48ea7b5b829833d2b074d8f819b4ba2c471fff562bbf0f7ef202bbbf5871"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "toolResultEnvelope",
+        "removedLines": 17,
+        "removedSha256": "7525968d05d2e41d62bc83734147be06c223242a2046ae7b5f5cf703ed40c0e1"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "toolDeniedEnvelope",
+        "removedLines": 19,
+        "removedSha256": "9798a2366f1b4d7ecce8ef80778a68e1926d3fc35fdecb639d5c73a0c200f5dc"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt",
+        "symbol": "historyPageEnvelope",
+        "removedLines": 13,
+        "removedSha256": "acb1dafd05276e39301b39cd90f0a82d760f6a2ca1a0658475f3e6d7ada03c1c"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt",
+        "symbol": "messageIds",
+        "removedLines": 1,
+        "removedSha256": "cca62e1113ebe0cc60b1ed2794d7c1cc05fad1d0bd0e0aca2b0b6a702d0b5041"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt",
+        "symbol": "chunkRow",
+        "removedLines": 6,
+        "removedSha256": "dfd2fbb5f39a59e2ab44e7545ce66f5b1246e7643eb220583eeaa0d5f021c0fb"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt",
+        "symbol": "messageChunkEnvelope",
+        "removedLines": 7,
+        "removedSha256": "5c88082cc8ca66effa9ebb77f7a9bfcb9430bb5f6bf7763e40e40b7fefdd2bca"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt",
+        "symbol": "messageEnvelope",
+        "removedLines": 16,
+        "removedSha256": "b16dbcf3d94ba6839997a26ee4f7cebec9ed2762707d81563d0a34c52f654460"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAttachmentTest.kt",
+        "symbol": "pushedUserMessage",
+        "removedLines": 17,
+        "removedSha256": "6f8c46f29535041ffc1b2b666668f0342397d676e0219c1165e011017acd00b2"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryRunReadingsTest.kt",
+        "symbol": "sessionTransition",
+        "removedLines": 10,
+        "removedSha256": "77b1f95a3d49acf5bc98a3a17ee2879f220902f72d22dcded80635fc35e62116"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/StableConversationRepositoryTest.kt",
+        "symbol": "queued",
+        "removedLines": 1,
+        "removedSha256": "e4ea5f6972950252622522c07cabbf774b746b3d05502b425f6e6360b017a487"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/StableConversationRepositoryTest.kt",
+        "symbol": "pushQueue",
+        "removedLines": 3,
+        "removedSha256": "eb617a5c7b687f2e0188de270f826aa93e8509f4fe54adc71c2eb3191d2fa6d1"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/ConversationReadMarksTest.kt",
+        "symbol": "interactiveRepo",
+        "removedLines": 2,
+        "removedSha256": "2fb4ae625b022b7f2879f8e6ece76b1559892e04bfe0c7aedb240f78b8a7d13f"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/ConversationReadMarksTest.kt",
+        "symbol": "content",
+        "removedLines": 9,
+        "removedSha256": "c12d20ff298cd995e41a5a35d127c14f19a66503dd4ce6a0843c2796e2a0b81f"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/ConversationReadMarksTest.kt",
+        "symbol": "status",
+        "removedLines": 16,
+        "removedSha256": "762778921634cd926c5103c71574bf95c554b41cf0753854bcc9d5d890692512"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/ConversationReadMarksTest.kt",
+        "symbol": "excludedTypes",
+        "removedLines": 1,
+        "removedSha256": "4d86362538ccca0c9f66edceb62da642bf95b00ad9f395ebb79f15b52dfd4fdb"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt",
+        "symbol": "tool",
+        "removedLines": 6,
+        "removedSha256": "88ee91deed67a757d9026b467013d12d49c1ee60cdd3862aad103ee1a04a9be8"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/data/network/MessagePayloadTest.kt",
+        "symbol": "envelopeFor",
+        "removedLines": 5,
+        "removedSha256": "fb4d790a5077a2b959509645b9e1cd0a1fd30dad8f9642bdd53d8b893f417b1d"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/di/HostConversationSourceAttentionTest.kt",
+        "symbol": "durableMessage",
+        "removedLines": 5,
+        "removedSha256": "323fc49d6db472cac5ed7caf1ac0bb3a4e1ef21d2902e574ec20f8e98cc4e9bc"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/di/HostConversationSourceAttentionTest.kt",
+        "symbol": "sessionTransition",
+        "removedLines": 3,
+        "removedSha256": "e62eeccbc7b1ded12f373abce22c66d617216cc297ef59ba15bd973496e9d434"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentBlocksTest.kt",
+        "symbol": "finish",
+        "removedLines": 5,
+        "removedSha256": "382f189e33a92f529dce0a7c6bc2ca8080ace37b57da0fd48f93556d2020c5e7"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowIdentityTest.kt",
+        "symbol": "queuedKeys",
+        "removedLines": 1,
+        "removedSha256": "5a878968badfb3962abc6938e6add32648221b7845ffd6ca722ebdba37d10a8f"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "userMessage",
+        "removedLines": 7,
+        "removedSha256": "8796f998dfe6ee8bf5cff192626d98482fba6f4ccbf2c6431f23a6cc81118b08"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "assistantMessage",
+        "removedLines": 7,
+        "removedSha256": "26950dd2c82bf79355f08eb8f983f784f1d1f76da655f8d13f6169f9d71038a5"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "toolMessage",
+        "removedLines": 12,
+        "removedSha256": "9daae6c6865d388791b47c3baeeb5f3163e87b09176aedb8d10801aef94872cb"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "unrecognized",
+        "removedLines": 9,
+        "removedSha256": "511f1a6d248464adf549422022e226e8a304bdb08db4dc93af6abeda7cae0a45"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "queued",
+        "removedLines": 5,
+        "removedSha256": "a8fd6e87e348d76e367edd5517ed7f2c2d8374a4c157fd0fdfe655f1c91ffad6"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadRowsTest.kt",
+        "symbol": "queuedRows",
+        "removedLines": 1,
+        "removedSha256": "0688a1322e28614dc0f85f4e1fe136e5fe22cf6ccc5f75d63a374f5c722872b6"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt",
+        "symbol": "messageItem",
+        "removedLines": 11,
+        "removedSha256": "5235613b8a8e858b14c9ebb77c168fdf9ab7bafa04c19b8732d40217253014bd"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt",
+        "symbol": "assistantMessage",
+        "removedLines": 14,
+        "removedSha256": "054860db80c11b2649b2954e2bf6bcfd9c228488e6e2e292d3b499f0c236c22f"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt",
+        "symbol": "userMessage",
+        "removedLines": 14,
+        "removedSha256": "4fed8c95593e0b4512f4205949dc146134df6bddd0964774893bb333ff2815fa"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt",
+        "symbol": "messageIds",
+        "removedLines": 5,
+        "removedSha256": "1d385095414d4ddee6a1f53c70253bcbd6cacb12a4d018532e0faea9ae7fb84c"
+      },
+      {
+        "path": "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt",
+        "symbol": "streamingContents",
+        "removedLines": 6,
+        "removedSha256": "87741cb4f2b286e1cfb51168f68333fe446c61644628ea592634e607eebd4a84"
+      },
+      {
+        "path": "app/src/androidTest/java/de/pyryco/mobile/e2e/E2eTestApplication.kt",
+        "symbol": "passiveThreadOwner",
+        "removedLines": 16,
+        "removedSha256": "a4b256f8604122421cfe4c1bbbeb2f3b685623b3e4978c4821f94eb5c15739c0"
+      }
+    ],
+    "testMethodsUnchanged": 623,
+    "testBodiesByteIdentical": 623,
+    "testBodyInventorySha256": "088b51eee1936e6237d08ab6bb7f8136c619a813c25f8d78fb397870f822c9a2",
+    "newlyUnusedPrivateDependencies": [],
+    "method": "Kotlin compiler PSI parser selects only the reviewed declarations; before/after method names and SHA256 body hashes match. No test or rule declaration is removed."
+  },
+  "rejectedBuild": {
+    "jvmExecuted": 0,
+    "reason": "newly integrated double overrides removed observeMessages",
+    "gateExit": 1,
+    "rawGradleFailureSha256": "11e0910192a64ae3bba92a9652158578b73e5d7100866b9f218c8101dff25df7",
+    "formalVerdictSha256": "6f02a52bc1dac4fd9c21054766720d1e9cebf46a60461b9464494035c4299934",
+    "artifactLimit": "Managed worktree cleanup removed its temporary invocation JSON before the manual archive. Full raw build output and the accepted failed verdict remain retained."
+  },
+  "manualChecks": {
+    "allKotlinSourceSets": "passed",
+    "preVerifyWithGradle": "passed against integrated main 4cf670c96a5b586cf03a2997c5f27ed52e855cca",
+    "assemblyAndLint": "passed; repeat confirmation exit 0, incremental Gradle tasks reused. Complete independent gates remain required.",
+    "assemblyAndLintLogSha256": "83c74525c1c7733c597fbae737feb3f88fa4911d2dcb8f2e9025658583a9534d"
+  },
+  "privateEvidenceRoot": "pyrycode-mobile-agents/logs/evidence/2367/manual-takeover-20261021/main-integration-repair"
+}

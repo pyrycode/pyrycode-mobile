@@ -40,20 +40,20 @@ internal class ThreadItemDto private constructor(
     override fun toString(): String = "ThreadItemDto(content=***)"
 
     companion object {
+        private val replacementOptionalKeys = setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype")
+
         internal fun decode(raw: JsonObject): ThreadItemDto = ThreadItemDto(raw)
 
         /** Patch null clears retain exact raw presence while typed optional facts become unset. */
-        internal fun decodeReplacement(raw: JsonObject): ThreadItemDto =
-            ThreadItemDto(
-                raw,
-                JsonObject(
-                    raw.filterNot { (key, value) ->
-                        key in
-                            setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype") &&
-                            value == JsonNull
-                    },
-                ),
-            )
+        internal fun decodeReplacement(raw: JsonObject): ThreadItemDto {
+            val optionalFields =
+                if (replacementOptionalKeys.any { raw[it] == JsonNull }) {
+                    JsonObject(raw.filterNot { (key, value) -> value == JsonNull && key in replacementOptionalKeys })
+                } else {
+                    raw
+                }
+            return ThreadItemDto(raw, optionalFields)
+        }
     }
 }
 
@@ -154,6 +154,14 @@ private fun invalidThreadField(): Nothing = throw IllegalArgumentException("inva
 // Tree parsing admits some non-JSON numeric tokens. Preserve valid unknown numbers without coercion.
 private val threadJsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
 
+// Common routing integers prove a strict subset of the same grammar without allocating a matcher.
+private fun validThreadJsonNumber(token: String): Boolean =
+    token == "0" ||
+        token.isNotEmpty() &&
+        token[0] in '1'..'9' &&
+        token.all { it in '0'..'9' } ||
+        threadJsonNumber.matches(token)
+
 internal fun validThreadJson(root: JsonElement): Boolean {
     val remaining = ArrayDeque<JsonElement>()
     remaining.add(root)
@@ -162,11 +170,11 @@ internal fun validThreadJson(root: JsonElement): Boolean {
             is JsonObject -> remaining.addAll(value.values)
             is JsonArray -> remaining.addAll(value)
             is JsonPrimitive ->
-                if (!value.isString &&
-                    value.content !in setOf("null", "true", "false") &&
-                    !threadJsonNumber.matches(value.content)
-                ) {
-                    return false
+                if (!value.isString) {
+                    when (val token = value.content) {
+                        "null", "true", "false" -> Unit
+                        else -> if (!validThreadJsonNumber(token)) return false
+                    }
                 }
         }
     }

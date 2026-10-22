@@ -6,10 +6,15 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -30,7 +35,163 @@ class AuthoritativeFileCacheTest {
 
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun fullUnknownFactsPatchClearsAndCertificationRoundTripSeparatelyFromLegacy() =
+    @Test fun ownedDecodePreservesUnknownNumericLexemesAndSealsNestedArraysAndRetirements() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val raw = item(1, 2, 5, extra = "\"extension\":[-0,1e-400,1.234567890123456789,true,null,{\"nested\":[]}],").raw
+            val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 0, retirements = mapOf(2L to 3L))
+            FileConversationCache(temporary.root, dispatcher).writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            val owned = requireNotNull(FileConversationCache(temporary.root, dispatcher).readAuthoritativeThread("host", "c"))
+            assertEquals(
+                raw,
+                owned
+                    .toSnapshot()
+                    .items
+                    .single()
+                    .raw,
+            )
+            assertEquals(saved, owned)
+            val values = owned.items.single()["extension"] as kotlinx.serialization.json.JsonArray
+
+            @Suppress("UNCHECKED_CAST")
+            val iterator = values.listIterator() as MutableListIterator<kotlinx.serialization.json.JsonElement>
+            iterator.next()
+            assertThrows(UnsupportedOperationException::class.java) { iterator.remove() }
+            @Suppress("UNCHECKED_CAST")
+            val retirement = owned.retirements.entries.single() as MutableMap.MutableEntry<Long, Long>
+            assertThrows(UnsupportedOperationException::class.java) { retirement.setValue(9L) }
+            assertEquals(saved, owned)
+        }
+
+    @Test fun unknownSavedNumberTokensRoundTripWithoutNumericConversion() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val cache = FileConversationCache(temporary.root, dispatcher)
+            val tokens = listOf("-0", "1e-400", "1e400", "1.234567890123456789", "9007199254740993123456789", "0e+00", "-2.50E-06")
+            tokens.forEachIndexed { index, token ->
+                val raw =
+                    item(
+                        1,
+                        2,
+                        5,
+                        extra = "\"extension\":{\"number\":$token,\"text\":\"$token\",\"nested\":[null,true,{\"n\":$token}]},",
+                    ).raw
+                val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 10)
+                cache.writeAuthoritativeThread("host", "c$index", saved).getOrThrow()
+                val fresh = requireNotNull(FileConversationCache(temporary.root, dispatcher).readAuthoritativeThread("host", "c$index"))
+                assertEquals(
+                    "token=$token",
+                    raw,
+                    fresh
+                        .toSnapshot()
+                        .items
+                        .single()
+                        .raw,
+                )
+                assertEquals(saved, fresh)
+            }
+        }
+
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @Test
+    fun malformedNumericTokensAndKnownFieldViolationsCannotReplaceValidBytes() =
+        runTest {
+            val cache = FileConversationCache(temporary.root, StandardTestDispatcher(testScheduler))
+            val saved = SavedAuthoritativeThread("e", listOf(item(1, 2, 5).raw), 10, 10)
+            cache.writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            val document = temporary.root.walkTopDown().single { it.isFile }
+            val bytes = document.readText()
+            val invalid =
+                listOf("NaN", "Infinity", "-Infinity", "01", "1e", "0,\"injected\":true").map { token ->
+                    JsonObject(saved.items.single() + ("extension" to kotlinx.serialization.json.JsonUnquotedLiteral(token)))
+                } +
+                    listOf(
+                        JsonObject(saved.items.single() + ("id" to JsonPrimitive("1"))),
+                        JsonObject(saved.items.single() + ("rev" to JsonPrimitive(0))),
+                        JsonObject(saved.items.single() + ("order" to JsonPrimitive("5"))),
+                        JsonObject(saved.items.single() + ("id" to JsonPrimitive(9_007_199_254_740_992L))),
+                    )
+            invalid.forEach { raw ->
+                assertTrue(cache.writeAuthoritativeThread("host", "c", saved.copy(items = listOf(raw))).isFailure)
+                assertEquals(bytes, document.readText())
+            }
+        }
+
+    @Test fun unchangedAuthoritativeBytesReuseOneOwnedValidatedDecode() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val cache = FileConversationCache(temporary.root, dispatcher)
+            val original = SavedAuthoritativeThread("e", listOf(item(1, 2, 5, extra = "\"extension\":{\"clear\":null},").raw), 10, 10)
+            cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val first = requireNotNull(cache.readAuthoritativeThread("host", "c"))
+            val snapshot = first.toSnapshot()
+            assertSame(first, cache.readAuthoritativeThread("host", "c"))
+            assertSame(snapshot, first.toSnapshot())
+            assertEquals(original, first)
+            assertThrows(IllegalArgumentException::class.java) { first.copy(checkpoint = 11).toSnapshot() }
+            assertNotSame(snapshot, first.copy().toSnapshot())
+        }
+
+    @Test fun reusedDecodeNeverHidesSameSizeReplacementForeignOwnerCorruptionOrRemoval() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val cache = FileConversationCache(temporary.root, dispatcher)
+            val original = SavedAuthoritativeThread("e", listOf(item(1, 2, 5).raw), 10, 10)
+            cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+            val first = requireNotNull(cache.readAuthoritativeThread("host", "c"))
+            val document = temporary.root.walkTopDown().single { it.isFile }
+            val bytes = document.readText()
+            val changed = bytes.replace("\"rev\":2", "\"rev\":3")
+            assertEquals(bytes.length, changed.length)
+            document.writeText(changed)
+            val replacement = requireNotNull(cache.readAuthoritativeThread("host", "c"))
+            assertNotSame(first, replacement)
+            assertEquals(
+                3L,
+                replacement
+                    .toSnapshot()
+                    .items
+                    .single()
+                    .rev,
+            )
+            for (invalid in listOf(changed.replace("\"host\"", "\"evil\""), changed.replace("\"rev\":3", "\"rev\":0"))) {
+                document.writeText(invalid)
+                assertNull(cache.readAuthoritativeThread("host", "c"))
+                assertEquals(invalid, document.readText())
+            }
+            document.writeText(changed)
+            val reread = requireNotNull(cache.readAuthoritativeThread("host", "c"))
+            assertNotSame(replacement, reread)
+            assertTrue(document.delete())
+            assertNull(cache.readAuthoritativeThread("host", "c"))
+            cache.resetAuthoritativeThread("host", "c", original.copy(epoch = "replacement")).getOrThrow()
+            assertEquals("replacement", cache.readAuthoritativeThread("host", "c")?.epoch)
+        }
+
+    @Test fun ownedDecodeCannotBeMutatedAndOrdinaryMutableSavedValuesStillRevalidate() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val cache = FileConversationCache(temporary.root, dispatcher)
+            val fields = item(1, 2, 5, extra = "\"extension\":{\"clear\":null},").raw.toMutableMap()
+            val rows = mutableListOf(JsonObject(fields))
+            val ordinary = SavedAuthoritativeThread("e", rows, 10, 10)
+            ordinary.toSnapshot()
+            fields["rev"] = JsonPrimitive(0)
+            assertThrows(IllegalArgumentException::class.java) { ordinary.toSnapshot() }
+            fields["rev"] = JsonPrimitive(2)
+            cache.writeAuthoritativeThread("host", "c", ordinary).getOrThrow()
+            val owned = requireNotNull(cache.readAuthoritativeThread("host", "c"))
+            assertThrows(UnsupportedOperationException::class.java) { (owned.items as MutableList<*>).clear() }
+            val extension = owned.items.single()["extension"] as JsonObject
+
+            @Suppress("UNCHECKED_CAST")
+            val entry = extension.entries.single() as MutableMap.MutableEntry<String, kotlinx.serialization.json.JsonElement>
+            assertThrows(UnsupportedOperationException::class.java) { entry.setValue(JsonPrimitive("changed")) }
+            assertThrows(UnsupportedOperationException::class.java) { (owned.toSnapshot().items as MutableList<*>).clear() }
+            assertEquals(ordinary, cache.readAuthoritativeThread("host", "c"))
+        }
+
+    @Test fun fullUnknownFactsPatchClearsAndCertificationRoundTrip() =
         runTest {
             val dispatcher = StandardTestDispatcher(testScheduler)
             val cache = FileConversationCache(temporary.root, dispatcher)
@@ -52,7 +213,6 @@ class AuthoritativeFileCacheTest {
             assertEquals(snapshot.coverage, saved.toSnapshot().coverage)
             assertEquals(10L, saved.checkpoint)
             assertEquals(20L, saved.appliedVersion)
-            assertTrue(cache.readThread("../../host", "../c").isEmpty())
             assertNull(cache.readAuthoritativeThread("host", "c"))
             assertFalse(saved.toString().contains("private body"))
             assertFalse(saved.toString().contains("e" + "xtension"))

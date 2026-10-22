@@ -4,9 +4,216 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Testing
 
+### Integrated storage retirement acceptance (#2364)
+
+The [integrated verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2453#issuecomment-6334060284)
+accepts `00044b59ae134017d406a281e27260c0d4133901` on Linux/build-hp-1, central run
+`cc25d30defab310c6892faaf11921fd267cb290dbc01629cb30e22cbe94ca299`. The
+[requirement-to-evidence matrix](../../specs/architecture/2364-integrated-storage-retirement.md#requirement-to-evidence-matrix)
+maps every archived requirement and finding to merged delivery, accepted records, named checks
+and artifacts. #2385/#2386/#2387 merged through #2446/#2448/#2450 at `b6845bf5`, `2df547ab`
+and `206eb392`. Replacement closure of #2363 was followed to merged #2366/#2367 delivery.
+
+Acceptance reuses #2387 candidate `eda298fca8e0584107dbbb1ec3993ffd13b45eb6`, central run
+`1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`. Implementation,
+schema, fixtures, assertions and gate configuration are identical to the parent candidate;
+all eight source hashes in the
+[#2387 index](../../../app/src/test/resources/verification/storage-api-retirement-2387/results.json)
+match. Its focused JVM/shared checks passed **114/114/0/0/0**, including migration **3/3**,
+inert-source/import **13/13**, authoritative file **4/4**, Room **13/13**, owned upsert **17/17**,
+owned removal **18/18**, metadata **23/23**, read positions **3/3**, pending-send reconciliation
+**7/7** and factory/admission **3/3**. Counts throughout are executed/passed/failed/errors/skipped.
+
+| Linux configured invocation | Counts | Meaning |
+| --- | --- | --- |
+| #2387 JVM/build | 5259/5259/0/0/0 | Complete accepted child report |
+| #2387 original UI | 328/326/2/0/1 | Native preservation passed; original unrelated failures retained |
+| #2387 exact UI rerun | 2/2/0/0/0 | Accepted rerun of #2373/#2368 failures |
+| #2387 scripted-all | 24/24/0/0/0 | Zero real Claude turns |
+| #2364 JVM/build | 5259/5259/0/0/0 in cached report | FROM-CACHE; zero newly executed tests in this invocation |
+| #2364 UI | No execution | Documentation-only diff skipped UI; no new native result |
+| #2364 scripted-all | 24/24/0/0/0 | Current parent configured execution |
+
+The parent completed the configured build/check graph; pre-verify, docs guard and 211 script
+unit tests also passed per the accepted verifier. Its gate-report UI counts are unavailable
+because execution was skipped, not because a new native pass can be inferred from exit 0.
+
+The reused **configured** UI XML explicitly contains
+`LegacyDiscardMigrationDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen`,
+**1/1/0/0/0**. The accepted child review attests nine raw `exact=true` observations: schemas 2,
+11 and fresh creation, each initially opened and freshly reopened twice through the production
+no-backup opener. Documentation independently inspected the retained configured normalized XML
+and the separate focused native XML/phone log (**1/1/0/0/0**, nine exact observations); it does
+not claim to have reread the original configured phone captures. The all-schema/fresh/production
+shared methods are present and passed in the cached JVM XML, with 45 exact observations.
+The builder's separate current-parent focused migration run was **3/3/0/0/0**; neither it nor
+replay substitutes for the configured native method. Packaging a shared test alone does not
+prove device selection; #2386's earlier zero-native discovery FAIL remains failed, with its
+accepted device-entry repair recorded below.
+
+Retained indexes are `legacy-import-2385/results.json`, `legacy-discard-2386/{results,rework-results}.json`
+and `storage-api-retirement-2387/results.json` under `app/src/test/resources/verification/`.
+Raw focused files were at `$AGENTS_REPO_PATH/logs/evidence/2387/builder-20261022-ddce853b4/`:
+`focused/TEST-de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest.xml`,
+`ui-3hg5a2c8/dispatcher.xml`, `native/TEST-pixel2Api33Atd_0-_app-.xml` and the method's
+`native/shard_0/logcat-*.txt`. Accepted #2387 bundle digest
+`9333794885bccfb789b342ec160b879816d7d4d4359528f35e2e19c78d95dd6c` retains configured
+normalized XML in `logs/verifier-gate__2387_5.log` and its exact-rerun log; configured raw
+`ui-oczy52g5/0-TEST-pixel2Api33Atd_0-_app-.xml` and `22-logcat-*.txt` remain references from
+the accepted review. Parent run above retains `handoff/verifier-2364.md`, gate logs and
+`pointers.json`; the pointer-retained JVM log SHA-256 is
+`cfdd3efa0905977d32f883e3f6a2f7f50b31f9088e81271699529120c6c96234`.
+These are locations at acceptance time, subject to retention, not surviving gate-worktree links.
+
+Original expected-red, fixture-development, #2386 discovery and #2368/#2373 flaky failures
+retain their own results; accepted reruns do not rewrite them. The unrelated rename capture
+remains skipped. #2447's `needs-human:manual-takeover` hold and absent #2334/#2437 replacement
+timing probes remain independent of this storage proof. #2175/#2246 retain activation/restart
+acceptance. No operator, privacy, recording, approval or design-owner hold is released. No
+current-provider live scenario is required or claimed; macOS is outside this Linux ticket's
+verification scope. Documentation generated no test evidence.
+
+### Legacy-discard upgrades and reopen proof (#2386)
+
+`LegacyDiscardMigrationTest.preservationInvariant_allShippedSchemasUpgradeAndReopen`
+constructs on-disk databases from every exported schema 1–11, opens through
+`openConversationCacheDatabase`, then closes and reopens fresh database/cache instances twice.
+`preservationInvariant_freshCreationAndReopen` checks the same supported schema on fresh
+creation. Each source includes colliding ids under case-distinct `Host`/`host` owners and two
+conversations per host, obsolete content/evidence and every supported authoritative/import/
+retirement field. Compare original columns exactly, including raw unknown fields, revisions,
+order, epoch/incarnation, progress and header/certification values; check newly introduced
+defaults and derived placement separately. Nested agents make the placement backfills
+nontrivial. Malformed legacy bytes exercise the historical 3 → 4 path before final discard.
+
+The matrix also proves upgraded save/read and isolated conversation/host removal, item-retirement
+rejection, inert known/unknown-owner legacy sources, one-time authoritative import and newer
+Room content surviving stale source files. Retirement fixtures intentionally have zero
+checkpoint/no coverage; certified siblings keep nonzero evidence. Metadata and supported read
+state retain independent ownership. Pending feedback crosses authoritative restoration and
+acceptance in memory; this establishes no provisional-send persistence across process death.
+Keep the retained import failure/cancellation/unobserved-write and factory no-backup/saved-pairing
+assertions alongside the matrix.
+
+`LegacyDiscardMigrationDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen`
+reuses the shared oracle on native Android SQLite for schema 2 (oldest authoritative), schema 11
+(latest before removal) and fresh creation, with two reopens each. Its `androidTest` entry point
+is necessary for configured UI-gate discovery: packaging the shared class into the test APK
+alone did not select it. A focused pass cannot replace counted configured-gate execution.
+Likewise, a historical fixture must restore its exported table/index DDL before changing its
+version; a version-only downgrade of schema 12 omits legacy tables and cannot test their drop.
+The repaired nested-agent storage probe keeps its structural-write and repeated-reopen assertions.
+
+The [initial evidence index](../../../app/src/test/resources/verification/legacy-discard-2386/results.json)
+records Linux x86_64, OpenJDK 21, Robolectric API 33 and managed Android 13, exact commands,
+source/APK/report hashes and raw preservation observations. At final focused JVM revision
+`c1f2ce9d6047d8afa51993010671889946e7891a`, individually selected classes executed/passed:
+
+| Class | Executed / passed | Failed / skipped |
+| --- | --- | --- |
+| `LegacyDiscardMigrationTest` | 3 / 3 | 0 / 0 |
+| `AuthoritativeRoomStorageTest` | 13 / 13 | 0 / 0 |
+| `MigratingConversationCacheTest` | 13 / 13 | 0 / 0 |
+| `ConversationCacheFactoryTest` | 3 / 3 | 0 / 0 |
+| `AuthoritativeSendReconciliationTest` | 7 / 7 | 0 / 0 |
+| `AuthoritativeOwnedRemovalTest` | 18 / 18 | 0 / 0 |
+| `FileConversationCacheReadPositionTest` | 3 / 3 | 0 / 0 |
+
+All 60 executed/passed with zero errors. The original focused native shared method executed/
+passed **1, 0 failed/errors/skipped**, using production/schema/shared sources
+`129144c6f6bb93614a52dfc5d03a33e112079524` at execution head
+`9866c8e209e26e6ee7dea85ad56a0759c8e3e790`; the final shared fixture differs only in whitespace.
+Raw XML and phone logs were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-20261022-129144c6f/`.
+The expected legacy-table red remains **1 executed, 0 passed, 1 failed, 0 skipped**;
+fixture-development failures and the optional-index fixture failure (**13 executed, 12 passed,
+1 failed, 0 skipped**) remain failed evidence. The repaired nested-agent method passed **1/1**.
+
+The [discovery-repair evidence index](../../../app/src/test/resources/verification/legacy-discard-2386/rework-results.json)
+at source `4ed26f221093f66d5be4c07d6371906154d21f96` records separate shared JVM **3/3** and
+focused device **1/1** passes, each with **0 failed/errors/skipped**. Raw XML, source/APK hashes
+and nine native exact-preservation observations were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-rework-20261022-4ed26f221/`.
+The earlier [verifier FAIL](https://github.com/pyrycode/pyrycode-mobile/pull/2448#issuecomment-6331855857)
+at `5a241432f05a351f64dc6916566c4f562165dafc` remains valid: its configured UI run reported
+328, executed/passed 327, failed 0 and skipped 1, with zero native preservation cases.
+
+The final [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2448#issuecomment-6332464426)
+for `6f2f74a9d1d62f5dec3b0298fdbe23ea607b8531` supersedes the manifests' pending-acceptance
+notes. Linux `python3 scripts/jvm-test-gate.py --with-build-checks` executed/passed **5321,
+0 failed/errors/skipped**, including all three shared migration methods. Complete configured
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` executed the device
+entry point above **once, passed, 0 failed/errors/skipped**. Raw and normalized XML agree;
+the raw XML SHA-256 is `c5fdc6f428e2935994dc069619542ba161663948ea8897707b618c2e8d10fcf6`.
+Its phone log records all nine `exact=true` observations (sources 2, 11 and fresh, each opened
+then reopened twice).
+
+Preserve that full UI invocation's actual result: **329 reported, 328 executed, 327 passed,
+1 failed, 0 errors, 1 skipped**. `RecordedMobileSuiteTest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+failed; the dispatcher accepted its unchanged rerun (**1 executed/passed, 0 failed/errors/skipped**),
+tracked on #2368. `RenameDialogCaptureTest.renameAtFigmaViewport` was skipped. This is accepted
+verification with a retained failure/rerun, not an all-pass original invocation.
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` executed/
+passed **24, 0 failed/errors/skipped**. The retained verifier evidence run is
+`8818f8f91c255157d9cc81347b6cbcfd1be49add2a13a36081d758790eb1f18d` on `build-hp-1`;
+counts are copied here because gate-worktree build paths are removed. These complete-gate
+results are separate from focused builder runs. macOS is outside this Linux ticket's scope;
+no real-Claude scenario was required and documentation ran no tests.
+
+See [supported layout/backfills](conversation-cache-layout.md#layout),
+[retained removal fences](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
+and the [plan](../../specs/architecture/2386-drop-legacy-room-tables.md).
+The [integrated acceptance below](#integrated-storage-retirement-acceptance-2364) completes the storage fold.
+
+### Authoritative import and inert legacy files (#2385)
+
+`MigratingConversationCacheTest.ownershipInvariant_legacyFilesStayInertAcrossReopens`
+seeds both file families for two case-distinct hosts sharing conversation ids, unknown-owner
+hashed legacy files. Two fresh cache/database reopens must preserve source bytes without
+creating legacy tables or legacy import bookkeeping. Schema 12 removes the pre-existing
+legacy Room rows that #2385 originally preserved. The same probe checks exact
+owner-scoped authoritative content/certification, metadata and supported read state.
+`idempotenceInvariant_committedImportIsNeverRepeatedOrOverwritten` additionally keeps a newer
+Room save across restart despite its older authoritative source.
+
+Keep the authoritative `classificationInvariant_*` probes for invalid, unsupported and
+wrong-owner sources, retryable access/IO failures, inaccessible parents across restart,
+deferred-import write refusal and cancelled read/write result delivery after commit.
+`atomicityInvariant_interruptedImportKeepsSourceAndRetries` checks rollback/retry and
+pre-commit cancellation; `certificationInvariant_importAndPagesKeepSavedCheckpoint` retains
+exact page certification. Conversation/host `retirementInvariant_*` probes keep leftover-file
+and held-work fences. Check the other host's legacy source bytes directly: expecting those
+files to import would reintroduce the retired behavior. Pending sends remain independent.
+`ConversationCacheFactoryTest` uses authoritative snapshots to prove production no-backup
+custody and saved-pairing admission, including cancellation while waiting for the cache mutex.
+
+The [retained Linux manifest and sibling XML/raw output](../../../app/src/test/resources/verification/legacy-import-2385/results.json)
+record **89 executed/passed, 0 failed/errors/skipped**, with each class selected separately:
+`MigratingConversationCacheTest` 13, `ConversationCacheFactoryTest` 3,
+`OwnedLegacyMigrationTest` 1, `LegacyRoomStorageTest` 18, `AuthoritativeRoomStorageTest` 14
+and `FileConversationCacheThreadTest` 40. The cache/factory runs used the recorded pre-format
+source hashes; the other four used implementation revision
+`4854376725a204030779deffd8865a2eeb976b3f`. Formatting left production hashes unchanged.
+Historical red evidence at `f7b5aee1484fd4d2feb47ce83b6a2b3318c23b24` remains
+**1 executed, 0 passed, 1 failed, 0 errors/skips**, failing on unexpected legacy import bookkeeping.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2446#issuecomment-6330757434)
+at `7c60f58390f9e66ee102788bda8b088bdce17675` records complete Linux JVM/build evidence:
+**5338 executed/passed, 0 failed/errors/skipped**. All 13 cache methods and both named
+pairing-admission methods executed and passed; the six classes above account for 89 passes
+in this full-suite run as well. Configured UI evidence records **327 executed/passed,
+0 failed/errors, 1 skipped** (`renameAtFigmaViewport`); scripted-all records **24 executed/passed,
+0 failed/errors/skipped**. These dispatcher results are separate from the focused builder runs.
+Native production-opener upgrade proof is [recorded above](#legacy-discard-upgrades-and-reopen-proof-2386);
+[final integrated acceptance](#integrated-storage-retirement-acceptance-2364) is recorded below;
+macOS is outside this Linux ticket's verification scope. Documentation ran no tests.
+
 ### Indexed legacy disk probes (#2162)
 
-`LegacyRoomStorageTest` uses Robolectric with a real on-disk Room database and fresh database/
+The following preserves historical #2162 evidence. #2386 removed `LegacyRoomStorageTest`
+with its exclusive backend; these counts do not describe the current suite.
+
+`LegacyRoomStorageTest` used Robolectric with a real on-disk Room database and fresh database/
 storage instances between persistence assertions. An in-memory database or a same-instance
 read cannot establish restart fidelity. Its 18 probes cover all six persisted row kinds and
 fields, exact owner isolation, equal/misleading timestamp order, stale continuations, unsigned
@@ -16,7 +223,7 @@ cancellation. Metadata-only reads assert zero row payload reads/decodes.
 
 Bounded probes measure actual row payload reads/decodes, ordinal-only probes and evidence
 reads/decodes at the DAO/codec boundaries. Equal returned row counts alone do not establish
-bounded work. Retain these independent cases:
+bounded work. The retired suite distinguished these independent cases:
 
 - `boundedEvidenceInvariant_fragmentedFixtureDoesNotDecodeOutsideWindow` keeps the unchanged
   `fragmentedHistoryFixture`: 18000 rows, 36000 durable entries and 18000 spans. Newest-200 reads/
@@ -48,9 +255,8 @@ The [builder's focused report](https://github.com/pyrycode/pyrycode-mobile/pull/
 `LegacyRowCodecTest`, `FileConversationCacheThreadTest`, `DecodedThreadRestoreTest`,
 `HistoryHashCompatibilityTest`, `UnsignedHistoryCacheTest` and `HistoryDurabilityTest`:
 102 executed/passed, 0 failed/errors, 0 skipped, including 18 Room tests. These retain canonical
-file-codec/proof compatibility, unsigned/history durability and existing restore/timing/exact-row
-regressions; Room probes supplement them. Keep full-retention admission rather than shrinking
-the shared fixture or replacing full-cap disk tests with count-only assertions.
+file-codec/proof compatibility, unsigned/history durability and the then-active restore/timing/
+exact-row regressions. These historical selections are not current acceptance commands.
 
 The [final verifier report](https://github.com/pyrycode/pyrycode-mobile/pull/2164#issuecomment-6179402443)
 for `9f939dd05333da04c104c71522c3baabf02fed72` (2026-10-14) records the fresh unit XML from
@@ -105,9 +311,56 @@ at `1d510460bf81bacf6aaf2b9730670192a3e3df3a` records the complete Linux JVM gat
 **5994 executed/passed, 0 failures/errors/skips**, including all 17 class methods and this
 named probe. This full-suite result is separate from the focused runs. macOS was outside this
 ticket's verification scope. See the [probe repair plan](../../specs/architecture/2263-held-retry-atomic-probe.md)
-and [wrapper scheduling tests](caching-conversation-repository-testing.md#testing).
+and [wrapper scheduling tests](caching-conversation-repository-testing.md).
+
+### Full-cap retention certification proof (#2439)
+
+`AuthoritativeOwnedUpsertTest.retentionInvariant_trimClearsCertification` seeds a fresh,
+disk-backed Room database with all 100000 retained rows. Overflow must retain exactly the
+newest rows and revisions while clearing durable checkpoint/coverage. A later revision and
+metadata-only catch-up/page completion must not reinstall that invalid certificate after
+reopen. A fresh conservative baseline must still certify a fully durable window. Keep all
+four independent full-record reads, cancellation/final-flush joins and write-work assertions;
+smaller fixtures, same-instance reads or count-only assertions would weaken this proof.
+
+Bounded writes do not imply a short full-cap read/assertion phase. The original-deadline
+diagnostic measured four independent reads/assertions at 10.357, 10.674, 10.816 and 10.467
+seconds, about 86% of the 49.146-second body. Seeding took 5.577 seconds, first observation
+114 ms and final flushes 4–41 ms. Every boundary completed. The unchanged method passed in
+51.312 seconds and the instrumented method in 50.841 seconds. These measurements justify
+only this method's finite two-minute `runTest` allowance, below the 180-second outer watchdog.
+Measure read work separately from observer cancellation and writer flush before extending
+a deadline; neither `UncompletedCoroutinesError` alone nor these measurements establishes
+deadlock or host starvation. Static phase codes use monotonic wall time, not scheduler time.
+
+The [retained Linux evidence and sibling raw XML/output](../../../app/src/test/resources/verification/retention-2439/evidence.txt)
+preserve the failed main run at `d2130e229e5ae7382cf7f6cebe790db6ae8574d5`:
+**1 executed, 0 passed, 1 failed, 0 skipped**, 68.685 seconds, after all five write checkpoints.
+The original gate path was overwritten; the committed failed XML and gate excerpt came from
+the retained #2373 verifier bundle. Keep those failures distinct from subsequent passes.
+Separate repaired focused method/class runs with `-PfullRetentionTests=true` executed/passed
+**1/1** and **17/17**, respectively, with **0 failures/errors/skips**. The method took
+51.529 seconds alone and 43.871 seconds in the class. The class source revision was
+`5643be8abb991820b06fbf80aa1b70e87d1b10c9`; the evidence records both runs' source hashes.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2443#issuecomment-6328796989)
+for candidate `75afa8d5a2c55cef6f46b1d5059938a1ba007404` confirms complete Linux JVM
+acceptance: `python3 scripts/jvm-test-gate.py --with-build-checks`, invocation `jvm-dq3to5jr`,
+**6447 executed/passed, 0 failures/errors/skips**. All **17** affected-class methods passed;
+the exact retention method passed in **45.861 seconds**. This complete-gate result supersedes
+the builder's pending-dispatcher note. macOS was outside this ticket's verification scope;
+no device or real-Claude acceptance is required for this Room-backed proof.
+
+When reconciling #2334/PR #2372, preserve this allowance, diagnostics and every assertion in
+its overlapping method hunk. Its broader paging feature and #2437/PR #2438's Retry-generation
+repair are independent of this completion repair. See the
+[repair plan](../../specs/architecture/2439-retention-certification-completion.md).
 
 ### Owned coverage snapshot acceptance (#2291)
+
+This section preserves the retired legacy suite's results and scheduling rationale. Its row/
+history APIs and exclusive fixtures were removed in #2387; these are not current acceptance
+instructions. Supported authoritative writer/rollback assertions remain enabled as mapped above.
 
 `OwnedLegacyCoverageConcurrencyTest` keeps real disk-backed Room while distinguishing history
 read, publication, writer acceptance, row commit, evidence failure and cancellation. A
@@ -202,11 +455,14 @@ was required. See the [diagnosis plan](../../specs/architecture/2291-owned-cover
 
 ### Received-gap subtraction runtime (#2269)
 
+The following is historical legacy-suite evidence; #2387 retired these exclusive fixtures.
+It supplies no current row/history compatibility requirement.
+
 `OwnedLegacyCoverageTest.anchorInvariant_subtractingProducerKeepsValidReceivedGapWalk`
 combines change/removal cases at 20 and 18000 rows under one `runTest` deadline. Its
 24-statement localized mutation counters precede substantial real-disk restore, repeated-save
 and reopened-reader verification work. Equal bounded SQL work does not bound the whole fixture's
-runtime. Keep both sizes, real disk-backed Room and production repository integration, exact
+runtime. Both historical sizes used real disk-backed Room and repository integration, exact
 rows/spans/gaps/walks/cursors, withdrawn proofs, conservative unknown/start state and unrelated
 evidence equality. The [owned coverage contract](conversation-cache-legacy-mutations.md#owned-coverage-and-received-evidence-2254)
 and invalid-anchor companion control remain unchanged.
@@ -246,8 +502,8 @@ verification scope; no device or real-Claude acceptance was required. See the
 ### Cancelled committed import cleanup (#2260)
 
 `MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites`
-observes the Room commit before cancelling its paused reader. Preserve all four combinations of
-read/write import and legacy/authoritative storage, the cancelled-child assertion,
+observes the Room commit before cancelling its paused reader. Since #2385, preserve both
+authoritative read/write import cases, the cancelled-child assertion,
 `import_unobserved` rejection, exact imported content and fresh-instance restart/no-replacement
 checks. Letting the reader observe the committed result before cancellation would miss the fence
 these assertions exercise.
@@ -293,114 +549,18 @@ repair establishes no production cache defect.
 
 ### File-cache regressions
 
-[`FileConversationCacheTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheTest.kt)
-is a plain JVM unit test on a `TemporaryFolder` — no Robolectric, no device — because the
-implementation takes a root `File` rather than a `Context`. 20 cases cover field-for-field and
-null-field round-trips, write-order preservation, every graceful-empty-read shape (never
-written, truncated, non-JSON, unsupported version, unparseable timestamp, duplicate id), host
-and conversation isolation, replace semantics, the traversal-shaped server id, absence of any
-identifier from the filesystem namespace, absence of credential-shaped strings and identifiers
-from stored bytes, absence of identifiers from `RelayLog` output across both success and
-failure paths, and a coded, causeless exception on a forced write failure.
+`FileConversationCacheTest` retains metadata round trips, owner isolation, malformed input,
+atomic write failure and static diagnostics. `FileConversationCacheReadPositionTest` retains
+supported read-state round trips and exact scoped removal. Persistence assertions use a fresh
+cache instance over the same root; a same-instance result cannot establish restart fidelity.
+`AuthoritativeFileCacheTest`, `MigratingConversationCacheTest` and the authoritative Room/owned
+mutation suites retain supported content restoration, cancellation/rollback, import refusal,
+retirement and owned-write assertions. See the integrated counts above and the
+[repository's supported opening and older-demand contract](caching-conversation-repository.md).
 
-**Every persistence assertion reads through a second `FileConversationCache` constructed over
-the same root**, not the instance that wrote it. The one-entry validated thread decode
-(#1949) makes this distinction concrete: a same-instance read alone proves nothing about
-"a fresh process that did not write it." Every thread read still checks freshly read bytes,
-but persistence and reuse need separate assertions. This is the JVM-root equivalent of the paired-server
-store's ["recreating the store over the same DataStore can pass on cached preferences"](paired-server-store.md#testing)
-lesson. `RelayLog.sink`/`enabled` are captured and restored around each test, the same idiom
-`SettingsViewModelTest` uses, which is what makes the "no identifier reaches a log" assertion
-real rather than a convention.
-
-[`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
-(#797) is a sibling file rather than an extension of the test above, with the same second-instance
-and log-capture discipline. 23 cases cover: a field-for-field round trip (message, a tool call in
-both a settled and a failed status, a boundary with and without `workspaceCwd`); that unrecognized,
-streaming and running-tool rows are dropped on write; per-conversation and per-host isolation;
-whole-thread replace on a second write; that two boundaries sharing a session pair but differing in
-`occurredAt` read back rather than being rejected (#775, a double idle-evict of the same session);
-every graceful-empty-read shape including a duplicate message id, a duplicate boundary identity
-(the full triple, not the pair) and a running-status document (left on disk, unrepaired);
-`removeConversation` removing one thread and leaving siblings; removal still working against host
-metadata that was never written; `removeHost` removing every thread under it and no other host's;
-no conversation id in a path or a log line, success or failure; and a coded, causeless exception on
-a forced write failure. #1353 added: a field-for-field round trip of a banner (both levels,
-`truncated` true), a compaction row (null and non-null token counts, `manual` true/false) and a
-refusal, in their original positions among a message and a boundary; a refusal with and a refusal
-without a fallback model on one shared `occurredAt` both reading back, since their key also carries
-`fallbackModel != null`; a literal pre-#1353 document holding only a message and a boundary still
-reading; a document repeating a banner, compaction or refusal key, or a row setting two kinds, each
-reading empty; the 100000 limit on `MAX_CACHED_THREAD_ROWS`; and that `cacheableThreadRows`, called
-directly rather than through a 100k-row file write, keeps the newest rows past the limit.
-
-[`FileConversationCacheReadPositionTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheReadPositionTest.kt)
-(#877) is a third sibling file, same second-instance and log-capture discipline. It covers a
-round trip; host isolation, with `removeHost` dropping a host's positions and leaving a sibling
-host's untouched; `removeConversation` dropping exactly one conversation's entry; and every
-graceful-empty-read shape (never written, corrupt, duplicate conversation id) reading back empty
-rather than throwing or repairing.
-
-[`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
-also carries #1354's position cases: a round trip through a fresh instance; a row write keeping an
-existing position and a position write keeping existing rows; a thread fed only live rows storing
-none; a literal pre-#1354 document (rows, no `history` key) still reading as rows with no
-position; `null` clearing a stored position; a write trimmed at `MAX_CACHED_THREAD_ROWS` dropping
-a legacy position (coverage-bearing positions reset backwards state and invalidate lost claims);
-`removeConversation` and `removeHost` removing it along with the rows; and no cursor
-reaching `RelayLog` on either the read or the write-side re-read failure path.
-
-[`CachingConversationRepositoryTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt)
-proves the same rules through the wrapper, against a real `FileConversationCache`: a position
-written through `writeHistoryPosition` survives a concurrent row write from `observeMessages` and
-reads back under the wrapper's own `serverId`; a deleted conversation's position write is skipped,
-the same guard the row writer already has; and — added after the first verifier pass flagged that
-the production path never exercised the trim rule — a drawn thread trimmed at
-`MAX_CACHED_THREAD_ROWS` drops a legacy saved position when written through
-`CachingConversationRepository.observeMessages` itself, not only through a direct call to the
-cache. See [Caching conversation repository](caching-conversation-repository.md) for why
-`observeMessages` now hands `writeThread` the untrimmed drawn rows rather than pre-trimming them.
-
-`DecodedThreadRestoreTest` (#1949) checks shared row/position decode reuse, mutation
-invalidation, host isolation, same-length/same-time external replacement, malformed
-optional metadata, unreadable replacement and removal. Typed row reads also preserve
-arbitrary field order and unknown-field handling. File size and modification time are
-not content evidence. `HistoryHashCompatibilityTest` compares identities and row proofs
-with the previous formatter and persisted representation, including multiple independent
-inputs in a reused digest and maximum-unsigned restore order. Keep stale-claim and
-legacy-alias tests alongside the matching-coverage identity-preservation regression:
-reusing immutable coverage must never bypass proof checks.
-
-`HistoryDurabilityTest` (#1832) covers fresh-instance coverage/high-water and cursor restore,
-partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
-between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
-order, saved cursor/stop trim reset and deletion during suspended writers; see
-[wrapper testing](caching-conversation-repository-testing.md#testing).
-
-Real app process death is proved on a device: [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833)'s
-external force-stop proof stops the app without clearing data, and a post made meanwhile appears
-once after relaunch without scrolling. See the [evidence](../../e2e-interactive-stream.md#verification-status).
-
-The two `HistoryCacheReworkTest` trim-reset cases reconcile 100,001 rows, write the production
-100,000-row retained file and restore through fresh cache/repository instances. Keep that full-cap
-fixture and its saved cursor/stop, coverage and reader-demand assertions. Its real disk work can
-exceed `runTest`'s default one-minute wall deadline under load without a suspended ViewModel
-handoff; [#1842](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomment-6038977116)
-scopes a bounded three-minute timeout to `trimmingResetsWalk`, rather than shrinking the fixture
-or changing cache production behavior.
-
-The original storage-family checks did not include Compose or emulator scenarios: #796's
-restored conversation rows
-and #797's restored thread rows both draw through the same composables a live row does.
-That establishes shared rendering, not restore latency. The production-wired
-[saved-thread first-draw device check](thread-screen-testing-saved-first-draw.md#saved-thread-first-draw-1949)
-now covers real cache/repository/ViewModel restoration and committed drawing. See [dependency injection §
-Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
-cases and for why every other instrumented container built from `appModule` overrides this binding
-with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
-conversation repository § Testing](caching-conversation-repository-testing.md#testing) for the restore
-merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
-readable while its host link is cut and reconciling a peer's turn once the link is restored — is
-proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
-(`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`), not this
-cache's or the wrapper's own unit suite.
+The former `FileConversationCacheThreadTest`, `DecodedThreadRestoreTest`, legacy hash/alias,
+row-history and codec-only fixtures were retired with #2387, including obsolete skipped cases.
+Their earlier results remain historical in past specs and retained evidence. They are no longer
+file-compatibility acceptance instructions. Native storage upgrade proof does not replace
+[authoritative first-draw/offline acceptance](thread-screen-testing-saved-first-draw.md) or its
+independent #2447 timing-restoration hold.

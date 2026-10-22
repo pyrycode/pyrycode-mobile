@@ -5,7 +5,6 @@ import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
 import de.pyryco.mobile.data.network.ThreadUpdateDecoder
@@ -54,6 +53,52 @@ class RemoteConversationRepositoryAuthoritativeTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test fun obsoleteContentCannotPopulateAnUnboundRepositoryOrRequestLegacyRecovery() =
+        runTest {
+            val pump = Pump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { both })
+            val obsolete =
+                listOf(
+                    "message",
+                    "message_chunk",
+                    "assistant_delta",
+                    "tool_use",
+                    "tool_result",
+                    "turn_end",
+                    "session_transition",
+                    "unrecognized_message",
+                    "banner",
+                    "compaction_boundary",
+                    "model_refusal_fallback",
+                    "model_refusal_no_fallback",
+                    "history_page",
+                    "resync",
+                )
+            obsolete.forEach { type ->
+                pump.push(
+                    Envelope(
+                        1,
+                        type,
+                        "2026-10-21T00:00:00Z",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c","message_id":"obsolete","role":"user","text":"legacy","is_streaming":false}""",
+                        ),
+                        eventId = 7,
+                        historyEntryId = 8u,
+                    ),
+                )
+            }
+            runCurrent()
+            assertNull("obsolete content cannot become a conversation preview", repo.observeLastMessage("c").first())
+            assertTrue(
+                repo.authoritativeThreads
+                    .current("", "c")
+                    .items
+                    .isEmpty(),
+            )
+            assertTrue(pump.sent.none { it.type in setOf("request_history", "backfill_since") })
+        }
 
     @Test fun childCompletionRefreshesSummaryWithoutOpeningAnAttentionQuery() =
         runTest {
@@ -118,13 +163,6 @@ class RemoteConversationRepositoryAuthoritativeTest {
                         .current("host", "c")
                         .items.size,
                 )
-                assertTrue(
-                    repo
-                        .observeThreadSnapshot("c")
-                        .first()
-                        .rows
-                        .isEmpty(),
-                )
             }
             val pump = Pump()
             val repo =
@@ -146,16 +184,13 @@ class RemoteConversationRepositoryAuthoritativeTest {
     @Test fun suppliedUpdatesKeepRawReadEvidenceAndReplayCursorUntouched() =
         runTest {
             val pump = Pump()
-            val cursor = ReplayCursor()
             val repo =
                 RemoteConversationRepository(
                     pump,
                     backgroundScope,
                     negotiatedCapabilities = { both },
-                    replayCursor = cursor,
                     authoritativeHostId = "host",
                 )
-            val before = repo.observeThreadSnapshot("c").first()
             pump.push(frame(added(item())).copy(eventId = 77, historyEntryId = 88u))
             pump.push(frame(patch(TYPE_THREAD_TEXT_APPEND, 2, 3, "\"text\":\" tail\"")))
             runCurrent()
@@ -168,8 +203,6 @@ class RemoteConversationRepositoryAuthoritativeTest {
                         .single(),
                 ),
             )
-            assertEquals(before, repo.observeThreadSnapshot("c").first())
-            assertNull(cursor.latest)
             assertTrue(pump.sent.none { it.type.startsWith("thread_") })
         }
 
@@ -292,38 +325,6 @@ class RemoteConversationRepositoryAuthoritativeTest {
             assertTrue(store.current("host", "c").repairNeeded)
             assertEquals("start", text(store.current("host", "c").items.single()))
             expiry.cancel()
-        }
-
-    @Test fun legacyUnnegotiatedMessagesStillProduceRawRows() =
-        runTest {
-            val pump = Pump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            pump.push(
-                Envelope(
-                    1,
-                    "message",
-                    "2026-10-11T10:00:00Z",
-                    MobileJson.parseToJsonElement(
-                        """
-            {"conversation_id":"c","message_id":"raw","role":"user","text":"legacy","is_streaming":false}
-            """,
-                    ),
-                ),
-            )
-            runCurrent()
-            assertEquals(
-                1,
-                repo
-                    .observeThreadSnapshot("c")
-                    .first()
-                    .rows.size,
-            )
-            assertTrue(
-                repo.authoritativeThreads
-                    .current("", "c")
-                    .items
-                    .isEmpty(),
-            )
         }
 
     @Test fun suppliedRepairStaysStickyThroughLaterLiveUpdatesAndUnknownFacts() =
