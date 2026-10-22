@@ -61,6 +61,14 @@ None. Follow actual consumers during removal; record any design change under Rev
 
 Pending documentation stage: update `docs/knowledge/features/conversation-cache-contract.md` and `caching-conversation-repository.md` to expose only supported storage APIs. Update `thread-screen-testing-saved-first-draw.md` to remove obsolete file compatibility instructions while retaining authoritative opening, paging and timing requirements. Link #2385/#2386 import/schema evidence. #2364 owns the final integrated fold. Preserve past specs, archives, exported schemas and all historical evidence.
 
+## Revisions
+
+### 2026-10-22: measured retirement and retained proof
+
+The implementation at `ddce853b46e9e7b7679d2e366a5a4af528abed6a` writes 165 lines and removes 2900 lines across 22 source/test files, including six production files. The raw added/deleted count exceeds 1600; the existing depth-two sizing exception and `needs-human:sizing` marker apply. Most removed lines are exclusive codecs, coverage models and their tests. Retained mixed consumers use supported facts; historical discarded files are literal test data. No exported production declarations or runtime reject branches are added. The design and security verdict remain unchanged.
+
+The existing recorded attachment-history replay executes the adapted cache-clearing helper and original native assertions. The focused scripted `stream` selection also exercises its existing queued-echo companion. These checks supplement the upgrade oracle; they do not replace complete configured acceptance.
+
 ## Security review
 
 **Verdict:** PASS
