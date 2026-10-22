@@ -255,7 +255,8 @@ internal class SuiteReadReceipts(
                         resolve(JsonPrimitive(it.key.conversation)).jsonPrimitive.content == conversation
                 }.sortedByDescending { it.key.action }
                 .flatMap { it.value.snapshots }
-                .filter { it.readUpTo >= stored }
+                // Peer progress cannot move an earlier phone request onto a later snapshot's queries.
+                .filter { it.readUpTo >= minOf(target, ceiling) }
                 .minByOrNull { it.readUpTo }
                 ?: group?.snapshots?.last()
         val original = captured?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))

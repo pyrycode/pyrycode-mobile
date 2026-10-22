@@ -34,6 +34,7 @@ class SuiteReadReceiptsTest {
         queryBeforeRead: String? = null,
         queryConversation: String = "chat",
         intermediateRead: Boolean = false,
+        terminateAfterRead: Boolean = false,
     ): RecordedSuiteTape {
         val item = """{
             "id":11,"kind":"assistant_message","rev":13,"order":11,"status":"done",
@@ -153,6 +154,18 @@ class SuiteReadReceiptsTest {
                     readerOwner,
                     frame(4, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":11}""", 2),
                 ),
+                *if (terminateAfterRead) {
+                    arrayOf(
+                        SuiteStep(
+                            "daemon",
+                            readerOwner,
+                            frame(9, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":11}"""),
+                        ),
+                        SuiteStep("inbound_end", readerOwner),
+                    )
+                } else {
+                    emptyArray()
+                },
             ),
             coalescedReadReceipts = true,
             retainedPhoneHistory = true,
@@ -209,6 +222,47 @@ class SuiteReadReceiptsTest {
             assertEquals(JsonPrimitive(11), acknowledgement.payload.jsonObject["read_up_to"])
             tape.assertComplete()
         }
+    }
+
+    @Test fun readyReadAcknowledgementsPrecedeTheirOwnersInboundEnd() {
+        for (type in listOf("thread_catch_up", "list_conversations")) {
+            val tape = authoritativeTape(queryBeforeRead = type, intermediateRead = true, terminateAfterRead = true)
+            deliverInitial(tape)
+            authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+            val immediate = authoritativeRead(tape, target = 10).deliveries.single()
+            assertEquals(91L, immediate.message!!.inReplyTo)
+            assertTrue(
+                "the later acknowledgement still requires its captured query",
+                tape
+                    .send(
+                        "phone/host0/0",
+                        frame(93, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}"""),
+                    ).deliveries
+                    .isEmpty(),
+            )
+            val payload = if (type == "list_conversations") "{}" else """{"conversation_id":"chat","epoch":"e","version":15}"""
+            val released = tape.send("phone/host0/0", frame(92, type, payload)).deliveries
+            val acknowledgement = released.single { it.message?.inReplyTo == 93L }
+            assertEquals("phone/host0/0", acknowledgement.owner)
+            assertEquals(JsonPrimitive(11), acknowledgement.message!!.payload.jsonObject["read_up_to"])
+            assertTrue(
+                "the live channel must receive the acknowledgement before closing",
+                released.indexOf(acknowledgement) < released.indexOfFirst { it.direction == "inbound_end" },
+            )
+            tape.assertComplete()
+        }
+    }
+
+    @Test fun peerReadProgressCannotChooseAFutureSnapshotForAnEarlierPhoneRead() {
+        val tape = authoritativeTape(queryBeforeRead = "thread_catch_up", intermediateRead = true)
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        tape.delivered("peer/host0/0", frame(80, "conversation_updated", """{"id":"chat","read_up_to":11}"""))
+        val reply = authoritativeRead(tape, target = 10).deliveries.single().message!!
+        assertEquals(91L, reply.inReplyTo)
+        assertEquals("confirmed peer progress remains monotonic", JsonPrimitive(11), reply.payload.jsonObject["read_up_to"])
+        tape.request("phone/host0/0", frame(92, "thread_catch_up", """{"conversation_id":"chat","epoch":"e","version":15}"""))
+        tape.assertComplete()
     }
 
     @Test fun aForeignConnectionOrConversationCannotHoldAQualifiedRead() {

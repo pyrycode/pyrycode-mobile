@@ -121,6 +121,10 @@ Findings 2 and 3 are branch-confirmed native regressions, not established conseq
 
 Security re-review: PASS. Prerequisite checks remain same-owner exact requests; acknowledgements retain captured payloads and correlation, and cannot gain authority from a connection's termination. No transport, credential, storage or Android surface changes; diagnostics remain content-free and private captures retain owner-only permissions. Test-only ordering remains synchronized, without a new coroutine or cancellation path. New transition coverage: prerequisite matching then inbound termination, and immediately qualified read then termination, in `SuiteReadReceiptsTest`.
 
+### 2026-10-23 — Peer progress must not change snapshot causality
+
+The focused permission method reproduced the same 30000 ms timeout with its captured checkpoint-13 query outstanding. Its recording delivers peer read progress 14 before the older phone read's acknowledgement. The controlled `peerReadProgressCannotChooseAFutureSnapshotForAnEarlierPhoneRead` fails because `SuiteReadReceipts.send` selects a later snapshot using globally confirmed progress, making the earlier acknowledgement wait for the query it should cause. Select captured metadata using the phone's requested/clamped target instead; keep the response's confirmed read monotonic and every selected snapshot's same-owner prerequisites mandatory. The corrected termination regression also fails at its intended ordering assertion (19 executed, 17 passed, 2 failed). The earlier fixture failure is retained separately and is not causal proof. This remains the same replay-causality invariant, with no new production behaviour.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.

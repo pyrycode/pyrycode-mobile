@@ -1035,6 +1035,10 @@ internal class RecordedSuiteTape(
 
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
+        val ready = pendingReadReplies.filter { (reply, queries) -> queries.all { reply.owner to it in requests } }
+        pendingReadReplies.removeAll(ready.toSet())
+        // A matched prerequisite can also release termination; acknowledge while its channel is open.
+        result += ready.map { it.first }
         val blockedOwners = mutableSetOf<String>()
         val blockedReplies = mutableSetOf<String>()
         for (index in 0 until commandBoundary()) {
@@ -1092,9 +1096,6 @@ internal class RecordedSuiteTape(
             }
             released += index
         }
-        val ready = pendingReadReplies.filter { (reply, queries) -> queries.all { reply.owner to it in requests } }
-        pendingReadReplies.removeAll(ready.toSet())
-        result += ready.map { it.first }
         return result
     }
 
