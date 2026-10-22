@@ -33,12 +33,13 @@ class FinishedSelectionReplyTest {
         RelayLog.sink = oldSink
     }
 
-    private class Source : ConversationRepository by FakeConversationRepository(), SyntheticThreadEvidenceProducer {
+    private class Source :
+        ConversationRepository by FakeConversationRepository(),
+        SyntheticThreadEvidenceProducer {
         override val negotiatedThread = FixtureThread("selection-host", "chat")
         val rows get() = negotiatedThread.facts
 
         override fun evidenceSnapshots(conversationId: String) = negotiatedThread.observe(conversationId)
-
     }
 
     private fun reply(

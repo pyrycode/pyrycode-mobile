@@ -135,7 +135,9 @@ class ReplySuggestionReadsTest {
             assertTrue(echo.await().owner.connection === replacement)
         }
 
-    private class Source : ConversationRepository by FakeConversationRepository(), SyntheticThreadEvidenceProducer {
+    private class Source :
+        ConversationRepository by FakeConversationRepository(),
+        SyntheticThreadEvidenceProducer {
         val conversations = MutableStateFlow(listOf(conversation))
         val offer = MutableStateFlow<ReplySuggestion?>(null)
         val items = MutableStateFlow<List<ThreadItemDto>>(emptyList())
