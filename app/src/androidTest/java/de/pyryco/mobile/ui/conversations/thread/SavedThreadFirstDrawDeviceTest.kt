@@ -420,6 +420,14 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen() {
+        measureDatabasePages()
+    }
+
+    @Test fun slowOlderDatabaseRead_negativeControlRejectsTheSameRetryFrameBound() {
+        measureDatabasePages(successfulOlderReadDelayMs = 3000)
+    }
+
+    private fun measureDatabasePages(successfulOlderReadDelayMs: Long = 0) {
         installHost()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "database-pages-${SystemClock.elapsedRealtimeNanos()}")
@@ -456,6 +464,7 @@ class SavedThreadFirstDrawDeviceTest {
                     val db = database()
                     val disk = MigratingConversationCache(File(root, "files"), db)
                     val attempts = AtomicInteger()
+                    val successfulReadMs = AtomicLong()
                     val release = CompletableDeferred<Unit>()
                     var fail = true
                     val cache =
@@ -468,7 +477,10 @@ class SavedThreadFirstDrawDeviceTest {
                                 size: Int,
                             ): AuthoritativeThreadWindow? {
                                 attempts.incrementAndGet()
+                                val started = SystemClock.elapsedRealtimeNanos()
+                                if (!fail) delay(successfulOlderReadDelayMs)
                                 val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                                if (!fail) successfulReadMs.set((SystemClock.elapsedRealtimeNanos() - started) / 1_000_000)
                                 release.await()
                                 return if (fail) null else page
                             }
@@ -581,6 +593,16 @@ class SavedThreadFirstDrawDeviceTest {
                                 "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())} " +
                                 "older=$olderBounds viewport=$viewport",
                         )
+                        Log.i(
+                            "SavedThreadPaging",
+                            "event=older_read_control case=${probe.name} injected_ms=$successfulOlderReadDelayMs " +
+                                "successful_read_ms=${successfulReadMs.get()} opening_drawn_ms=${probe.elapsed(probe.drawn.get())}",
+                        )
+                        if (successfulOlderReadDelayMs > 0) {
+                            assertTrue(successfulReadMs.get() >= successfulOlderReadDelayMs)
+                            // Red: the existing opening probe cannot reject a delayed successful older read.
+                            assertThrows(AssertionError::class.java) { probe.assertBound() }
+                        }
                     } finally {
                         composeRule.runOnUiThread {
                             selected.value = null
