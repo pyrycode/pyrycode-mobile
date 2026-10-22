@@ -9,13 +9,19 @@ Since #2161, `appModule` binds `MigratingConversationCache` through
 `<noBackupFilesDir>/conversation-cache.db`, including its sidecars. Lists and read
 positions still use `FileConversationCache` under `<noBackupFilesDir>/conversations`;
 settings and attachment storage are unchanged. The paths below describe those metadata
-files and the version-1 thread sources retained for migration and downgrade compatibility.
+files and the retained version-1 thread files. Since #2385, only authoritative files are import
+sources. Legacy `threads/` files are ignored during opening, reading and import, including
+unknown-owner hashes; ownership is never inferred from filenames. Retained legacy entry points
+access Room only, leaving existing rows unchanged by opening/import. Explicit scoped removal
+still cleans up the corresponding files.
 
 Database version 3 adds `file_imports` through additive `AutoMigration(from = 2, to = 3)`;
 the complete upgrade chain is 1 → 2 → 3, with exported `1.json`, `2.json` and `3.json`
 schemas and no destructive fallback. The ledger's primary key is `(host, conversation,
 family)`, with static `outcome` values. Families are `legacy`, `authoritative` and `host`;
-a host-wide retirement uses family `host` and conversation `""`. Imported content/evidence
+a host-wide retirement uses family `host` and conversation `""`. Historical legacy ledger
+records and both thread families' retirement fences remain; legacy operations no longer read
+or create import completion records. Authoritative imported content/evidence
 and its completion marker commit in one transaction. Completed imports leave their source
 bytes intact until explicit conversation or host removal; the ledger prevents a leftover
 file from replacing a newer database save. See [import classification and write

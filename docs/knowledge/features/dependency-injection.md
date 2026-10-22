@@ -106,9 +106,12 @@ that stack.
 (#2161), replacing the direct `FileConversationCache` binding. The factory constructs
 `MigratingConversationCache` over `noBackupFilesDir/conversations` and Room's
 `noBackupFilesDir/conversation-cache.db`; all database sidecars stay in the same backup-excluded
-directory, with no destructive upgrade or empty-cache substitute. Both thread families import
-through validated source codecs before Room serves them. Lists and read positions still use
-the file cache; attachment/settings storage and repository/protocol selection are unchanged.
+directory, with no destructive upgrade or empty-cache substitute. Since #2385, authoritative
+threads import through the validated owner-scoped source codec before Room serves them.
+Retained legacy entry points use Room only; opening/import ignores leftover legacy files and
+preserves existing legacy rows. Explicit scoped removal retains file cleanup and retirement fences.
+Lists and read positions still use the file cache; attachment/settings storage and
+repository/protocol selection are unchanged.
 Bounded screen reading and owned partial writes remain #2068's responsibility. See
 [cache layout](conversation-cache-layout.md#layout).
 

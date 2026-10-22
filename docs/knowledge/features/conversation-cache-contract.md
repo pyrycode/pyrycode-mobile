@@ -39,17 +39,22 @@ fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem>
 class ConversationCacheException(message: String) : Exception(message)
 ```
 
-**File-to-Room import (#2161).** The active `MigratingConversationCache` attempts import for each
-exact host/conversation and family before its full reads, replacements, owned mutations or internal
-page wrappers use Room. Owner ids come from cache operations; hashed filenames cannot recover
-owners, so unknown-owner sources stay untouched. Legacy and authoritative version-1 codecs
-remain separate: legacy rows never become authoritative facts or certify their checkpoint.
-Held row order, fields, unsigned evidence through `ULong.MAX_VALUE`, fragment bindings and
-marker anchors survive valid legacy import. Authoritative import keeps raw facts, epoch,
-revisions, applied progress (including progress beyond the checkpoint), coverage and continuation.
+**File-to-Room import (#2161, authoritative-only since #2385).** The active
+`MigratingConversationCache` attempts authoritative import for each exact host/conversation
+before its full reads, replacements, owned mutations or internal page wrappers use Room.
+Owner ids come from cache operations; hashed filenames cannot recover owners.
+Legacy entry points use Room only, bypassing source classification and import bookkeeping.
+Opening, reading and importing leave legacy files untouched, including unknown-owner hashes,
+and preserve existing legacy Room content. Legacy files supply no rows to either Room family
+and cannot certify authoritative content. Explicit host/conversation removal retains its scoped
+cleanup and durable fences. Dormant legacy storage/codecs remain for sibling retirement work;
+the complete retirement fold belongs to #2364/#2387.
+Authoritative import keeps raw facts, identities, order, epoch, revisions, applied progress
+(including progress beyond the checkpoint), coverage and continuation.
 Local page exhaustion adds no certification and never supplies a daemon cursor.
 
-The durable ledger uses these static outcomes:
+Authoritative import uses these static outcomes in the retained shared ledger; historical
+legacy records and both families' retirement records remain intact:
 
 | Outcome | Meaning |
 | --- | --- |
@@ -69,14 +74,9 @@ fail with the causeless static code `import_unavailable`, preserving recoverable
 Cancellation before commit rolls back content and marker together; repeated imports and restart
 respect committed markers. Cancellation and unclassified programming errors propagate.
 
-Invalid optional legacy history does not invalidate readable rows. If the file reader's retained
-history projection is subsequently rejected by Room validation, import retries with rows and no
-history, logs static `outcome=history_rejected` and records `imported`. Only a rows-only retry
-also rejected as `invalid_data` settles as `invalid`. Rejected claims certify nothing.
-
 A successful deferred import must not let a writer built from an earlier empty restore replace
-it. The cache remembers families read or refused while unavailable. If imported content later
-arrives, writes of that family fail with `import_unobserved` for the rest of this cache instance;
+it. The cache remembers authoritative reads or refusals while unavailable. If imported content later
+arrives, authoritative writes fail with `import_unobserved` for the rest of this cache instance;
 a write that itself imports content is refused too. Later reads cannot prove that every active
 writer observed the import and do not lift this refusal. Cancelled import callers also count as
 unobserved: Room can commit before cancellation suppresses result delivery, so retry checks the
