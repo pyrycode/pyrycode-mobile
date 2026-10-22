@@ -98,3 +98,12 @@ Pending documentation stage:
 The mounted read regression observes the viewport's actual content-free revision ledger through an optional composition-local test probe. It asserts older sight before opening and absence of hidden-body sight. A sending-feedback tail keeps the newest ordered tool above the composer without supplying read evidence; opening then qualifies without revisiting older rows. The probe performs no copying or callback when absent in production. Parent ownership/depth calculation also memoises shared walks so the deep-chain regression avoids quadratic transient work as well as retained ancestor metadata.
 
 2026-10-21 test-caller rework: the seven dispatcher regressions in `RelayConnectionFactoryTest`, `NegotiatedThreadViewModelTest` and `ThreadViewModelRefusalOfferTest` inspected structural summaries as full display contents. Resolve demanded rows through their published presentation before asserting text/type or submitting sight. The sight helper carries the resolved row's scoped key and its exact revision from that same presentation. Keep all collision, settlement, replacement, queued-attempt, generation, frame-pacing and retained-refusal assertions. This repairs callers of the existing deferred contract without changing production or its security boundaries. Existing summary/stale/binding rejection probes must still pass. One behaviour slice remains; approximately 1150 total written lines, no new exported declarations or production consumer changes. Other in-flight branches share these test files through earlier activation/harness changes; #2367 changes separate legacy-observation assertions. Keep this repair local and additive. Run all three affected JVM classes, deferred read/presentation regressions, the mounted deferred Android class and scripted `tool`, then the required static/final gates on macOS. Complete suites remain dispatcher-owned.
+
+2026-10-22 manual integration: main `ecad147dd8a2` removed legacy history helpers;
+retain `foldToolRuns` followed by presentation-owned `demandRows`. The integrated
+JVM gate exposed six new `AuthoritativeReaderPagingTest` caller failures. Exact
+comparison: six fail on `27ea5e29d`, all six pass on that merged main. Bounded repair
+#2475 resolves asserted messages from the same published presentation, including
+streaming and reopened paging assertions. Preserve exact content/identity/order,
+certification, retirement, request and work-budget assertions; no production change.
+Run the affected class, then complete configured acceptance on the committed repair.

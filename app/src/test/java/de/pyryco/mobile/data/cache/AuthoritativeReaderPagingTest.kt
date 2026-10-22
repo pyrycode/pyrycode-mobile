@@ -12,7 +12,9 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.harnessThreadEvidence
+import de.pyryco.mobile.ui.conversations.thread.AuthoritativeThreadPresentation
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +91,9 @@ class AuthoritativeReaderPagingTest {
             put("content", buildJsonObject { put("text", "Saved exact $id") })
         }
 
+    private fun AuthoritativeThreadPresentation.displayItems(): List<ThreadItem> =
+        demandRows(rows, emptySet()).filterIsInstance<ThreadRow.Delivered>().map { it.item }
+
     private suspend fun TestScope.destination(
         cache: ConversationCache,
         online: Boolean = false,
@@ -164,9 +169,17 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(10L, snapshot.completedVersion)
                 assertEquals(0L, snapshot.checkpoint)
                 assertEquals(null, snapshot.coverage)
-                assertEquals(listOf("Saved exact 1"), state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
+                assertEquals(
+                    listOf(
+                        "Saved exact 1",
+                    ),
+                    requireNotNull(state.authoritativeThread).displayItems().filterIsInstance<ThreadItem.MessageItem>().map {
+                        it.message.content
+                    },
+                )
                 assertTrue(
-                    state.items
+                    requireNotNull(state.authoritativeThread)
+                        .displayItems()
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .single()
                         .message.isStreaming,
@@ -215,7 +228,9 @@ class AuthoritativeReaderPagingTest {
             assertTrue("a completed secondary read must not retire the established UI reader", state != null)
             assertEquals(
                 listOf("Saved exact 1", "Saved exact 2"),
-                requireNotNull(state).items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content },
+                requireNotNull(requireNotNull(state).authoritativeThread).displayItems().filterIsInstance<ThreadItem.MessageItem>().map {
+                    it.message.content
+                },
             )
             assertEquals(100L, retained.checkpoint)
             assertFalse(retained.repairNeeded)
@@ -441,7 +456,7 @@ class AuthoritativeReaderPagingTest {
                     assertEquals(snapshot.items.size, snapshot.items.distinctBy { it.id }.size)
                     assertEquals(
                         snapshot.items.map { it.id to "Saved exact ${it.id}" },
-                        vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                        vm.state.value.authoritativeThread?.displayItems()?.filterIsInstance<ThreadItem.MessageItem>()?.map {
                             it.message.id
                                 .substringAfterLast(':')
                                 .toLong() to it.message.content
@@ -627,7 +642,7 @@ class AuthoritativeReaderPagingTest {
                     vm.state.first { it.authoritativeThread?.rows?.size == expected.size + standalone.size }
                     assertEquals(
                         (standalone + expected).map { it["id"].toString().toLong() to "Saved exact ${it["id"]}" },
-                        vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                        vm.state.value.authoritativeThread?.displayItems()?.filterIsInstance<ThreadItem.MessageItem>()?.map {
                             it.message.id
                                 .substringAfterLast(':')
                                 .toLong() to it.message.content
@@ -666,7 +681,7 @@ class AuthoritativeReaderPagingTest {
                 }
                 assertEquals(
                     (standalone + children.dropLast(1)).map { it["id"].toString().toLong() },
-                    vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                    vm.state.value.authoritativeThread?.displayItems()?.filterIsInstance<ThreadItem.MessageItem>()?.map {
                         it.message.id
                             .substringAfterLast(':')
                             .toLong()
@@ -716,7 +731,7 @@ class AuthoritativeReaderPagingTest {
                         vm.state.first { it.authoritativeThread?.rows?.size == expected.size + 200 }
                         assertEquals(
                             (standalone.takeLast(200) + expected).map { it["id"].toString().toLong() to "Saved exact ${it["id"]}" },
-                            vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                            vm.state.value.authoritativeThread?.displayItems()?.filterIsInstance<ThreadItem.MessageItem>()?.map {
                                 it.message.id
                                     .substringAfterLast(':')
                                     .toLong() to it.message.content
@@ -761,7 +776,7 @@ class AuthoritativeReaderPagingTest {
                     }
                     assertEquals(
                         (standalone + children).map { it["id"].toString().toLong() },
-                        vm.state.value.authoritativeThread?.items?.filterIsInstance<ThreadItem.MessageItem>()?.map {
+                        vm.state.value.authoritativeThread?.displayItems()?.filterIsInstance<ThreadItem.MessageItem>()?.map {
                             it.message.id
                                 .substringAfterLast(':')
                                 .toLong()
