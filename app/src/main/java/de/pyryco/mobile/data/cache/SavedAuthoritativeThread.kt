@@ -7,6 +7,12 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.encoding.CompositeDecoder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -16,7 +22,7 @@ import java.util.Collections
 @Serializable
 data class SavedAuthoritativeThread(
     val epoch: String,
-    val items: List<JsonObject>,
+    @Serializable(with = OwnedThreadFactsSerializer::class) val items: List<JsonObject>,
     val appliedVersion: Long,
     val checkpoint: Long,
     val coverage: SavedThreadCoverage? = null,
@@ -32,11 +38,11 @@ data class SavedAuthoritativeThread(
         val start = System.nanoTime()
         val owned =
             copy(
-                items = Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
+                items = if (items is OwnedThreadFacts) items else Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
                 retirements = Collections.unmodifiableMap(LinkedHashMap(retirements)),
             )
         val frozen = System.nanoTime()
-        val validated = owned.decodeSnapshot()
+        val validated = owned.decodeSnapshot(trace = true)
         val decoded = System.nanoTime()
         RelayLog.d { "event=authoritative_owned_validation freeze_ns=${frozen - start} validate_ns=${decoded - frozen}" }
         owned.ownedSnapshot = validated.copy(items = Collections.unmodifiableList(validated.items))
@@ -45,21 +51,24 @@ data class SavedAuthoritativeThread(
 
     internal fun toSnapshot(): AuthoritativeThreadSnapshot = ownedSnapshot ?: decodeSnapshot()
 
-    private fun decodeSnapshot(): AuthoritativeThreadSnapshot {
+    private fun decodeSnapshot(trace: Boolean = false): AuthoritativeThreadSnapshot {
+        val start = if (trace) System.nanoTime() else 0L
         require(epoch.isNotEmpty() && appliedVersion in 0..MAX_THREAD_NUMBER && checkpoint in 0..appliedVersion)
         require(incarnation.length <= 64)
         require(retirements.all { (id, revision) -> id in 1..MAX_THREAD_NUMBER && revision in id..appliedVersion })
         require(retirements.isEmpty() || (checkpoint == 0L && coverage == null))
+        items.forEach { require(validThreadJson(it)) }
+        val tree = if (trace) System.nanoTime() else 0L
         val decoded =
             items.map { raw ->
-                require(validThreadJson(raw))
                 ThreadItemDto.decodeReplacement(raw).also { item ->
                     require(item.id > 0 && item.rev >= item.id && item.rev <= appliedVersion)
                 }
             }
+        val typed = if (trace) System.nanoTime() else 0L
         require(decoded.distinctBy { it.id }.size == decoded.size)
         require(decoded.none { it.id in retirements })
-        return AuthoritativeThreadSnapshot(
+        val snapshot = AuthoritativeThreadSnapshot(
             epoch = epoch,
             items = decoded.sortedBy { it.order?.takeIf { order -> order > 0 } ?: Long.MAX_VALUE },
             completedVersion = appliedVersion,
@@ -69,6 +78,9 @@ data class SavedAuthoritativeThread(
             incarnation = incarnation,
             retirements = retirements,
         )
+        val complete = if (trace) System.nanoTime() else 0L
+        if (trace) RelayLog.d { "event=authoritative_validation_phases tree_ns=${tree - start} typed_ns=${typed - tree} rest_ns=${complete - typed}" }
+        return snapshot
     }
 
     internal fun retained(): SavedAuthoritativeThread {
@@ -79,6 +91,45 @@ data class SavedAuthoritativeThread(
             checkpoint = if (trimmed) 0 else checkpoint,
             coverage = if (trimmed) null else coverage,
         )
+    }
+}
+
+/** Only the serializer owns the builder; AbstractList's mutation methods reject changes. */
+private class OwnedThreadFacts(private val values: List<JsonObject>) : java.util.AbstractList<JsonObject>() {
+    override val size: Int get() = values.size
+
+    override fun get(index: Int): JsonObject = values[index]
+}
+
+/** Freeze each complete decoded fact before the streaming decoder starts the next one. */
+private object OwnedThreadFactsSerializer : KSerializer<List<JsonObject>> {
+    private val delegate = ListSerializer(JsonObject.serializer())
+    override val descriptor = delegate.descriptor
+
+    override fun serialize(encoder: Encoder, value: List<JsonObject>) = delegate.serialize(encoder, value)
+
+    @OptIn(ExperimentalSerializationApi::class)
+    override fun deserialize(decoder: Decoder): List<JsonObject> {
+        val input = decoder.beginStructure(descriptor)
+        val owned = ArrayList<JsonObject>()
+        fun read(index: Int) {
+            val raw = input.decodeSerializableElement(descriptor, index, JsonObject.serializer())
+            owned.add(frozenThreadJson(raw) as JsonObject)
+        }
+        if (input.decodeSequentially()) {
+            val size = input.decodeCollectionSize(descriptor)
+            require(size >= 0)
+            repeat(size, ::read)
+        } else {
+            while (true) {
+                val index = input.decodeElementIndex(descriptor)
+                if (index == CompositeDecoder.DECODE_DONE) break
+                require(index == owned.size)
+                read(index)
+            }
+        }
+        input.endStructure(descriptor)
+        return OwnedThreadFacts(owned)
     }
 }
 
