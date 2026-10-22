@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
+import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConnectionReading
@@ -1024,6 +1025,12 @@ class ThreadViewModel(
                     hasMessages = presentation?.rows?.isNotEmpty() == true,
                     sessionCostUsd = current?.reportedSessionCost(session),
                 )
+            }
+        }.combine(negotiated?.localHistory(conversationId) ?: flowOf(AuthoritativeHistoryLoad.Idle)) { uiState, local ->
+            when (local) {
+                AuthoritativeHistoryLoad.Loading -> uiState.copy(historyTail = ThreadHistoryTail.Loading)
+                AuthoritativeHistoryLoad.Retry -> uiState.copy(historyTail = ThreadHistoryTail.Retry)
+                AuthoritativeHistoryLoad.Idle -> uiState
             }
         }.combine(contextSheetOpen) { uiState, open ->
             uiState.copy(contextSheetOpen = open)

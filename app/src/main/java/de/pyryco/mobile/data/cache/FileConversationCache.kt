@@ -9,8 +9,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.decodeFromStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -63,6 +66,17 @@ class FileConversationCache(
 ) : ConversationCache {
     private val mutex = Mutex()
 
+    private class DecodedAuthoritative(
+        val document: File,
+        val serverId: String,
+        val conversationId: String,
+        val bytes: ByteArray,
+        val saved: SavedAuthoritativeThread,
+    )
+
+    // One owner-checked decode, guarded by mutex. Every read still compares the complete current disk bytes.
+    private var decodedAuthoritative: DecodedAuthoritative? = null
+
     override suspend fun readConversations(serverId: String): List<Conversation> =
         withContext(ioDispatcher) {
             mutex.withLock { readOrEmpty(serverId, "read") }
@@ -81,11 +95,26 @@ class FileConversationCache(
             mutex.withLock {
                 try {
                     val document = authoritativeDocumentFor(serverId, conversationId)
-                    if (!document.isFile) return@withLock null
-                    val saved = decodeAuthoritative(document.readText(), serverId, conversationId)
+                    val bytes = Files.readAllBytes(document.toPath())
+                    val held = decodedAuthoritative
+                    val saved =
+                        if (held?.document == document &&
+                            held.serverId == serverId &&
+                            held.conversationId == conversationId &&
+                            held.bytes.contentEquals(bytes)
+                        ) {
+                            held.saved
+                        } else {
+                            decodedAuthoritative = null
+                            decodeAuthoritative(bytes, serverId, conversationId).also {
+                                decodedAuthoritative = DecodedAuthoritative(document, serverId, conversationId, bytes, it)
+                            }
+                        }
                     RelayLog.d { "conversation_cache operation=read_authoritative status=ok" }
                     saved
                 } catch (error: Exception) {
+                    decodedAuthoritative = null
+                    if (error is NoSuchFileException) return@withLock null
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_authoritative status=failed code=$code" }
                     null
@@ -99,7 +128,7 @@ class FileConversationCache(
         conversationId: String,
     ): SavedSource<SavedAuthoritativeThread> =
         source(authoritativeDocumentFor(serverId, conversationId)) { bytes ->
-            decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId)
+            decodeAuthoritative(bytes, serverId, conversationId)
         }
 
     /** Reads never repair: a rejected document keeps its bytes, and only IO or access failures stay retryable. */
@@ -128,15 +157,18 @@ class FileConversationCache(
             }
         }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun decodeAuthoritative(
-        text: String,
+        bytes: ByteArray,
         serverId: String,
         conversationId: String,
     ): SavedAuthoritativeThread {
-        val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(text)
+        val start = System.nanoTime()
+        val record = ByteArrayInputStream(bytes).use { MobileJson.decodeFromStream<CachedAuthoritativeThread>(it) }
+        val parsed = System.nanoTime()
         require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
-        record.saved.toSnapshot()
-        return record.saved
+        RelayLog.d { "event=authoritative_file_decode parse_ns=${parsed - start}" }
+        return record.saved.ownedValidated()
     }
 
     override suspend fun writeAuthoritativeThread(
@@ -166,7 +198,7 @@ class FileConversationCache(
                         null
                     } else {
                         try {
-                            decodeAuthoritative(Files.readAllBytes(document.toPath()).toString(Charsets.UTF_8), serverId, conversationId)
+                            decodeAuthoritative(Files.readAllBytes(document.toPath()), serverId, conversationId)
                         } catch (_: java.nio.file.NoSuchFileException) {
                             null
                         }
@@ -340,6 +372,7 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
+                    decodedAuthoritative = null
                     block()
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)

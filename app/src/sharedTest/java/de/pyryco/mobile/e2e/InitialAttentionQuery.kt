@@ -63,6 +63,8 @@ internal class InitialAttentionQueryGate private constructor(
                 override val support = delegate.support
                 override val store = delegate.store
 
+                override fun localHistory(conversationId: String) = delegate.localHistory(conversationId)
+
                 override fun observe(conversationId: String) = delegate.observe(conversationId)
 
                 override fun progress(
