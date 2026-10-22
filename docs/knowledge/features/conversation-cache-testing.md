@@ -105,7 +105,7 @@ at `1d510460bf81bacf6aaf2b9730670192a3e3df3a` records the complete Linux JVM gat
 **5994 executed/passed, 0 failures/errors/skips**, including all 17 class methods and this
 named probe. This full-suite result is separate from the focused runs. macOS was outside this
 ticket's verification scope. See the [probe repair plan](../../specs/architecture/2263-held-retry-atomic-probe.md)
-and [wrapper scheduling tests](caching-conversation-repository-testing.md#testing).
+and [wrapper scheduling tests](caching-conversation-repository-testing.md).
 
 ### Full-cap retention certification proof (#2439)
 
@@ -418,7 +418,7 @@ reusing immutable coverage must never bypass proof checks.
 partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
 between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
 order, saved cursor/stop trim reset and deletion during suspended writers; see
-[wrapper testing](caching-conversation-repository-testing.md#testing).
+[wrapper testing](caching-conversation-repository-testing.md).
 
 Real app process death is proved on a device: [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833)'s
 external force-stop proof stops the app without clearing data, and a post made meanwhile appears
@@ -441,7 +441,7 @@ now covers real cache/repository/ViewModel restoration and committed drawing. Se
 Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
 cases and for why every other instrumented container built from `appModule` overrides this binding
 with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
-conversation repository § Testing](caching-conversation-repository-testing.md#testing) for the restore
+conversation repository § Testing](caching-conversation-repository-testing.md) for the restore
 merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
 readable while its host link is cut and reconciling a peer's turn once the link is restored — is
 proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)

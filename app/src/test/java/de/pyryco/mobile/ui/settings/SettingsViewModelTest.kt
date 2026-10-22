@@ -23,7 +23,6 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.DebugBundleTransfer
-import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -1395,8 +1394,6 @@ class SettingsViewModelTest {
             }
 
             override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
-
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 

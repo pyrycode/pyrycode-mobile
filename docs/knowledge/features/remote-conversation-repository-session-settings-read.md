@@ -108,7 +108,7 @@ fun bumpSettingsRevision(conversationId: String) { /* … */ }
   reads them until a later context-figure ticket; carried now because the all-zero/dormant reply naming
   their zero state as decodable is part of this ticket's acceptance.
 - **`StableConversationRepository`** delegates `observeSessionSettings` through `switchToLive<SessionSettings?>(null)`
-  (the [`observeLastMessage`](remote-conversation-repository-reads-and-thread-store.md#observelastmessageconversationid--the-live-last-message-preview-329)
+  (the [`observeLastMessage`](remote-conversation-repository-reads-and-thread-store.md)
   shape) — here the connection switch **is** the host-isolation mechanism, not just plumbing:
   `flatMapLatest` drops the previous connection's read the instant the connection changes. `refreshSessionSettings`
   is routed through `currentRepository.value?.refreshSessionSettings(id)`, deliberately **not** through the

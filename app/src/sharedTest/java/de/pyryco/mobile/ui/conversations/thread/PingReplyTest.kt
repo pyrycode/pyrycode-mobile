@@ -126,12 +126,14 @@ class PingReplyTest {
             PyrycodeMobileTheme {
                 ThreadScreen(
                     state =
-                        ThreadUiState(
-                            conversationId = "conversation",
-                            displayName = "conversation",
-                            hasMessages = true,
-                            items = reply.records.map { ThreadItem.MessageItem(it.message) },
-                        ),
+                        (
+                            ThreadUiState(
+                                conversationId = "conversation",
+                                displayName = "conversation",
+                                hasMessages = true,
+                                items = reply.records.map { ThreadItem.MessageItem(it.message) },
+                            )
+                        ).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -180,12 +182,14 @@ class PingReplyTest {
             PyrycodeMobileTheme {
                 ThreadScreen(
                     state =
-                        ThreadUiState(
-                            conversationId = "conversation",
-                            displayName = "conversation",
-                            hasMessages = true,
-                            items = listOf(ThreadItem.MessageItem(message)),
-                        ),
+                        (
+                            ThreadUiState(
+                                conversationId = "conversation",
+                                displayName = "conversation",
+                                hasMessages = true,
+                                items = listOf(ThreadItem.MessageItem(message)),
+                            )
+                        ).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -222,7 +226,7 @@ class PingReplyTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,

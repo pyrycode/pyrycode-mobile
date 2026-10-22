@@ -1,6 +1,5 @@
 package de.pyryco.mobile.data.repository
 
-import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
@@ -68,33 +67,32 @@ class ShownVersionReadMarksTest {
             }
         }
 
-    @Test fun threadAttentionUsesShownAndRetainsPromptRunningPrecedenceAndLegacyFallback() {
+    @Test fun threadAttentionUsesShownAndRetainsPromptAndRunningPrecedence() {
         fun attention(marks: ConversationReadMarks) =
             HostAttentionState(readMarks = mapOf("c" to marks)).resolve(emptyList(), emptyList())["c"]
                 ?: ConversationAttention.Idle
         assertEquals(ConversationAttention.Unread, attention(ConversationReadMarks(3u, 0u, 4u, true)))
         assertEquals(ConversationAttention.Idle, attention(ConversationReadMarks(3u, 100u, 3u, true)))
         assertEquals(ConversationAttention.Idle, attention(ConversationReadMarks(3u, 100u, null, true)))
-        assertEquals(ConversationAttention.Unread, attention(ConversationReadMarks(3u, 4u)))
+        assertEquals(ConversationAttention.Idle, attention(ConversationReadMarks(3u, 4u)))
         val running = HostAttentionState(running = setOf("c"), readMarks = mapOf("c" to ConversationReadMarks(3u, 100u, null, true)))
         assertEquals(ConversationAttention.Running, running.resolve(emptyList(), emptyList())["c"])
     }
 
-    @Test fun unavailableAuthoritativeMetadataWithholdsLocalFallbackWithoutHidingPrompt() {
+    @Test fun unavailableAuthoritativeMetadataKeepsPromptVisible() {
         val held =
             HostAttentionState(
-                positions = mapOf("c" to ReadPosition("local", null)),
                 readMarks = mapOf("c" to ConversationReadMarks(null, 100u, null, true)),
             )
         assertEquals(ConversationAttention.Idle, held.resolve(emptyList(), emptyList())["c"] ?: ConversationAttention.Idle)
-        assertEquals(held, held.opened("c"))
         assertEquals(
             ConversationAttention.WaitingForAnswer,
             held.resolve(emptyList(), listOf(QuestionBatch("c", "batch", emptyList())))["c"],
         )
         assertEquals(
-            ConversationAttention.Unread,
-            held.copy(readMarks = mapOf("c" to ConversationReadMarks(null, 100u))).resolve(emptyList(), emptyList())["c"],
+            ConversationAttention.Idle,
+            held.copy(readMarks = mapOf("c" to ConversationReadMarks(null, 100u))).resolve(emptyList(), emptyList())["c"]
+                ?: ConversationAttention.Idle,
         )
     }
 

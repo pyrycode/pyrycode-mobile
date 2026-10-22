@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -44,9 +43,6 @@ internal const val MAX_TAP_ID_CHARS = 256
 
 /** Enough recent alerts to recognise any replay a reconnect or a wake window can deliver. */
 internal const val MAX_LEDGER_ENTRIES = 512
-
-/** Metadata belongs to the posted completion, so replacement and process restart cannot lose its identity. */
-private const val EXTRA_COMPLETION_ENTRY_ID = "de.pyryco.mobile.notification.COMPLETION_ENTRY_ID"
 
 /**
  * Posts one Android notification per new [AttentionAlert] (#685) while the app is in the background.
@@ -91,7 +87,6 @@ class AttentionNotifier(
     private val pendingAlerts = mutableMapOf<String, AttentionAlert>()
 
     /** Android readback can lag notify; a present null records a prompt or unidentified completion replacement. */
-    private val postedCompletionEntries = mutableMapOf<String, ULong?>()
 
     init {
         scope.launch { alerts.collect { handle(it) } }
@@ -107,22 +102,10 @@ class AttentionNotifier(
                         conversations.forEach { (conversationId, marks) ->
                             if (marks != previous[serverId]?.get(conversationId)) {
                                 val tag = digest(serverId, conversationId)
-                                val completionEntryId =
-                                    if (tag in postedCompletionEntries) {
-                                        postedCompletionEntries[tag]
-                                    } else {
-                                        posted
-                                            .firstOrNull { it.tag == tag && it.id == 0 }
-                                            ?.notification
-                                            ?.extras
-                                            ?.getString(EXTRA_COMPLETION_ENTRY_ID)
-                                            ?.toULongOrNull()
-                                    }
-                                if (marks.coversCompletion(completionEntryId) &&
-                                    readMarksOf(serverId, conversationId)?.coversCompletion(completionEntryId) == true
+                                if (marks.coversLatest() &&
+                                    readMarksOf(serverId, conversationId)?.coversLatest() == true
                                 ) {
                                     manager.cancel(tag, 0)
-                                    postedCompletionEntries.remove(tag)
                                     RelayLog.d { "event=attention_alert_cancelled reason=daemon_read" }
                                 }
                             }
@@ -163,7 +146,7 @@ class AttentionNotifier(
                     isMuted(alert.serverId, alert.conversationId) -> "muted"
                     !permitted() -> "no_permission"
                     alert.kind == AttentionAlert.Kind.TurnCompleted &&
-                        readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true -> "read"
+                        readMarksOf(alert.serverId, alert.conversationId)?.coversLatest() == true -> "read"
                     else -> {
                         val tag = digest(alert.serverId, alert.conversationId)
                         val sequence =
@@ -192,7 +175,7 @@ class AttentionNotifier(
                                                     readMarksOf(
                                                         alert.serverId,
                                                         alert.conversationId,
-                                                    )?.coversCompletion(alert.historyEntryId) == true -> "read"
+                                                    )?.coversLatest() == true -> "read"
                                                 else -> post(alert, preview)
                                             }
                                         }
@@ -267,16 +250,9 @@ class AttentionNotifier(
                 .setPublicVersion(public)
                 .setAutoCancel(true)
                 .setContentIntent(NotificationTap.pendingIntent(context, tag, alert.serverId, alert.conversationId))
-                .addExtras(
-                    Bundle().apply {
-                        if (alert.kind == AttentionAlert.Kind.TurnCompleted) {
-                            alert.historyEntryId?.let { putString(EXTRA_COMPLETION_ENTRY_ID, it.toString()) }
-                        }
-                    },
-                ).build()
+                .build()
         return try {
             manager.notify(tag, 0, notification)
-            postedCompletionEntries[tag] = alert.historyEntryId.takeIf { alert.kind == AttentionAlert.Kind.TurnCompleted }
             "posted"
         } catch (e: SecurityException) {
             // The permission can be revoked between the check and the post.
@@ -295,10 +271,6 @@ private fun ConversationReadMarks.coversLatest(): Boolean {
     val latest = unreadWatermark ?: return false
     return confirmed >= latest
 }
-
-/** A read replay stays read even when the conversation already holds newer unread activity. */
-private fun ConversationReadMarks.coversCompletion(historyEntryId: ULong?): Boolean =
-    if (!threadSupported && historyEntryId != null) readUpTo?.let { it >= historyEntryId } == true else coversLatest()
 
 /**
  * The notification tap's contract with `MainActivity` (#685). `MainActivity` is exported, so any app can

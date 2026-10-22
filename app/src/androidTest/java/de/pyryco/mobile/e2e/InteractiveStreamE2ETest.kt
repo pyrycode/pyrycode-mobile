@@ -109,7 +109,6 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.EffectiveEffort
-import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
@@ -117,7 +116,6 @@ import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
-import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSource
@@ -130,7 +128,6 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLI
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.notifications.NotificationTap
-import de.pyryco.mobile.notifications.completionReply
 import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.notifications.nameOf
 import de.pyryco.mobile.notifications.notificationPreview
@@ -199,7 +196,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -1380,12 +1376,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
 
                 val held = currentThread(serverId, conversationId) { true }
-                val boundaryItems =
-                    if (held.owner.kind == ThreadEvidenceKind.Authoritative) {
-                        projectAuthoritativeThread(serverId, conversationId, checkNotNull(held.sourceSnapshot)).items
-                    } else {
-                        repository.observeMessages(conversationId).first()
-                    }
+                val boundaryItems = projectAuthoritativeThread(serverId, conversationId, checkNotNull(held.sourceSnapshot)).items
                 val boundary = boundaryItems.filterIsInstance<ThreadItem.SessionBoundary>().single()
                 assertTrue("reset must replace the conversation's session", boundary.newSessionId != boundary.previousSessionId)
                 resetContext.replaced(boundary)
@@ -3701,7 +3692,6 @@ class InteractiveStreamE2ETest {
             assertDrawnOnce(inThreadList(PING_PROMPT), *retainedFirst.records.map(::ownedReplyMatcher).toTypedArray())
         } finally {
             peer.close()
-            DurableHistoryProbe.end()
         }
     }
 
@@ -4789,25 +4779,11 @@ class InteractiveStreamE2ETest {
                         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
                     } catch (error: ComposeTimeoutException) {
                         val repository = checkNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(serverId))
-                        val snapshot =
-                            (repository as de.pyryco.mobile.data.repository.ThreadSnapshotSource)
-                                .observeThreadSnapshot(
-                                    chatA,
-                                ).first()
-                        val evidence = snapshot.readEvidence
+                        val snapshot = checkNotNull(repository.negotiatedThread).observe(chatA).first()
                         val marks = repository.observeReadMarks(chatA).first()
                         throw AssertionError(
-                            "event=phone_read_probe rows=${snapshot.rows.size} " +
-                                "unidentified=${evidence.unidentified.size} malformed=${evidence.facts.values.count { it == null }} " +
-                                "gaps=${evidence.gaps.size} versions=${evidence.versions.size} " +
-                                "checkpoint_reaches_target=${snapshot.rows.any {
-                                    (
-                                        evidence.checkpoint(
-                                            it,
-                                            marks?.readUpTo ?: 0u,
-                                        ) ?: 0u
-                                    ) >= replyCheckpoint
-                                }} " +
+                            "event=phone_read_probe items=${snapshot.items.size} checkpoint=${snapshot.checkpoint} " +
+                                "repair=${snapshot.repairNeeded} reset=${snapshot.resetNeeded} " +
                                 "read_reaches_target=${(marks?.readUpTo ?: 0u) >= replyCheckpoint}",
                             error,
                         )
@@ -5691,7 +5667,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 val stopped =
                     if (taskBaseline == null) {
-                        coordinator.backgroundTasks.value[chat]?.liveCount == 0
+                        error("authoritative task baseline is required")
                     } else {
                         val current = checkNotNull(stopRepository)
                         val snapshot = runBlocking { current.observeAuthoritativeThread(chat).first() }
@@ -6340,11 +6316,11 @@ class InteractiveStreamE2ETest {
             val completed =
                 peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             val turn = MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), completed.payload)
-            val history = peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
-            val rows = reduceHistoryPage(history.map { HistoryEntry(it.type, it.payload, Instant.parse(it.ts), it.id) }, interactive = true)
+            val history =
+                peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
             val preview =
                 requireNotNull(
-                    notificationPreview(completionReply(rows, turn.turnId)),
+                    notificationPreview(completedProducerReply(history, turn.turnId)),
                 ) { "the completed real turn supplied no reply preview" }
             assertNotEquals("completion evidence must contain a reply", string(R.string.notification_turn_completed), preview)
 
@@ -6732,7 +6708,11 @@ class InteractiveStreamE2ETest {
             assertEquals("attachment ids named by X's user message", 2, ids.distinct().size)
             val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
             assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
-            assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+            assertEquals(
+                "user messages in the other conversation",
+                0,
+                userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }),
+            )
         } finally {
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)
@@ -8930,20 +8910,9 @@ class InteractiveStreamE2ETest {
     private fun cachedThreadEvidence(reply: CompletedReplyObservation): ThreadEvidence? =
         runBlocking {
             val cache = GlobalContext.get().get<ConversationCache>()
-            when (reply.owner.kind) {
-                ThreadEvidenceKind.Legacy ->
-                    legacyThreadEvidence(
-                        reply.host,
-                        reply.owner.conversation,
-                        Any(),
-                        cache.readThread(reply.host, reply.owner.conversation),
-                    )
-                ThreadEvidenceKind.Authoritative ->
-                    cache
-                        .readAuthoritativeThread(reply.host, reply.owner.conversation)
-                        ?.let {
-                            authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot())
-                        }
+            check(reply.owner.kind == ThreadEvidenceKind.Authoritative) { "cache evidence requires authoritative content" }
+            cache.readAuthoritativeThread(reply.host, reply.owner.conversation)?.let {
+                authoritativeThreadEvidence(reply.host, reply.owner.conversation, Any(), it.toSnapshot())
             }
         }
 

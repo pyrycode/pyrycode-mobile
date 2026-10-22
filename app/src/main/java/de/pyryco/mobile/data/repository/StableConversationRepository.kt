@@ -61,8 +61,7 @@ class StableConversationRepository(
     private val readRetries: ReadCheckpointRetries? = null,
     /** The host coordinator's negotiated thread route (#2175); it outlives connection churn like this facade. */
     override val negotiatedThread: NegotiatedThread? = null,
-) : ConversationRepository,
-    ThreadSnapshotSource {
+) : ConversationRepository {
     override val runConfigurationReadings: RunConfigurationReadings =
         object : RunConfigurationReadings {
             override val currentConnection: Any? get() = currentRepository.value
@@ -115,12 +114,6 @@ class StableConversationRepository(
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         switchToLive(emptyList()) { it.observeConversations(filter) }
 
-    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        switchToLive(emptyList()) { it.observeMessages(conversationId) }
-
-    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
-        switchToLive(ThreadSnapshot(emptyList())) { it.threadSnapshots(conversationId) }
-
     override fun observeLastMessage(conversationId: String): Flow<Message?> =
         switchToLive<Message?>(null) { it.observeLastMessage(conversationId) }
 
@@ -128,9 +121,6 @@ class StableConversationRepository(
 
     override fun observeSessionError(conversationId: String): Flow<String?> =
         switchToLive<String?>(null) { it.observeSessionError(conversationId) }
-
-    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
-        switchToLive(emptyList()) { it.observeQueue(conversationId) }
 
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> =
         switchToLive(ApiRetryStatus.NotRetrying) { it.observeApiRetry(conversationId) }
@@ -356,18 +346,6 @@ class StableConversationRepository(
         return repository.markConversationRead(conversationId, upTo)
     }
 
-    override suspend fun acknowledgeReadCheckpoint(
-        conversationId: String,
-        checkpoint: ULong,
-    ) {
-        if (negotiatedThread != null) return
-        if (readRetries != null) {
-            readRetries.qualify(currentRepository, conversationId, checkpoint)
-        } else {
-            markConversationRead(conversationId, checkpoint)
-        }
-    }
-
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
 
     override suspend fun acknowledgeAuthoritativeReadCheckpoint(
@@ -465,18 +443,6 @@ class StableConversationRepository(
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = live.dropQueuedMessage(conversationId, queuedMessageId)
-
-    /**
-     * One-shot delegation with the cursor and limit forwarded **verbatim** (#623) — a page is per-ask
-     * data, so there is nothing to project, switch or cache here. With no connection live this throws
-     * [IllegalStateException] before any frame is built, the same type the delegate throws on a
-     * not-`Open` pump, so a walking caller handles one type either way.
-     */
-    override suspend fun requestHistory(
-        conversationId: String,
-        cursor: String,
-        limit: Int,
-    ): HistoryPage = live.requestHistory(conversationId, cursor, limit)
 
     /** Host settings are live-only; snapshot once so reconnect cannot redirect an operation. */
     override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> {

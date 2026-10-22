@@ -170,7 +170,7 @@ open class BackgroundAgentViewportTest {
         mount(collapsed = false, second = true, tall = true, secondTall = true)
         compose.runOnUiThread { finish(setOf("b")) }
         compose.waitForIdle()
-        val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
+        val rows = fixtureBackgroundRows(fixtureQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
         list().performScrollToIndex(rows.indexOfFirst { it.listKey(0) == "msg:tall-b" })
         val info = listState.layoutInfo
         val child = info.visibleItemsInfo.first { it.key == "msg:tall-b" }
@@ -231,7 +231,7 @@ open class BackgroundAgentViewportTest {
         mount(collapsed)
         compose.runOnUiThread { finishRoster() }
         compose.waitForIdle()
-        val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, state.value.backgroundTasks)
+        val rows = fixtureBackgroundRows(fixtureQueuedRows(state.value.items, emptyList()), state.value.items, state.value.backgroundTasks)
         val displayed = if (collapsed) foldToolRuns(rows, emptySet()) else rows
         val key = if (collapsed) "msg:a-1" else "msg:a-2"
         val index = displayed.asReversed().indexOfFirst { it.listKey(0) == key }
@@ -386,7 +386,7 @@ open class BackgroundAgentViewportTest {
         expanded: Boolean = false,
     ) {
         mount(collapsed = false, second = true, tall = true, secondTall = true)
-        val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
+        val rows = fixtureBackgroundRows(fixtureQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
 
         fun index(key: String) = rows.indexOfFirst { it.listKey(0) == key }
         if (expanded) {
@@ -602,7 +602,7 @@ open class BackgroundAgentViewportTest {
                 ) {
                     PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
-                            state.value,
+                            state.value.withLiteralRows(),
                             {},
                             {},
                             ConnectionState.Connected,

@@ -68,7 +68,7 @@ regardless of which `tool_result` arrives afterwards. Correlation for `tool_resu
 ([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350)).** `withToolUse`'s "if absent" guard
 checks whether *any* `Message` — tool, user or assistant — already carries this `toolUseId`, not only an
 existing `Role.Tool` row. This is the mirror image of the segment-key guard
-[Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+[Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md)
 needed once a turn's text can be keyed `"<turnId>#<seq>"`: a hostile or buggy daemon could otherwise send a
 `tool_use` whose id equals an assistant segment's key (or another message's id), and the thread's `"msg:<id>"`
 `LazyColumn` key would collide. Widening the check costs nothing on the honest path — an id a `tool_use`
@@ -239,14 +239,14 @@ tool, then wrote more text drew one bubble above the tool row. `HistoryPageReduc
 extends the thread's **last** row only when that row is already an assistant segment of the same turn — a
 tool row (or any other row) in between makes the next delta open a new segment at the end, so the second
 piece of text draws **below** the tool row this call opened. See
-[Streaming assistant turns § Finished rows are now per-segment](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
-and [Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+[Streaming assistant turns § Finished rows are now per-segment](streaming-assistant-turns.md)
+and [Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md).
 
 ## Chronological interleave (AC #4) — why it's free
 
 Tool rows **are** thread rows, so they fold into the **same** `threadByConversation` the live
 `message` arm writes (a tool row is a `ThreadItem.MessageItem` wrapping a `Role.Tool` `Message`).
-[`observeMessages`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313)'s
+[`observeMessages`](remote-conversation-repository-reads-and-thread-store.md)'s
 projection exposes that `List<ThreadItem>` **in arrival order, with no re-sort** (since #336 the store
 already holds `ThreadItem`s — no per-row wrap) — so a tool row interleaves chronologically with
 messages by **arrival position**, with **no merge, no second flow, no timestamp sort**. A ViewModel-side merge could not satisfy AC #4 because ordering is owned by
@@ -257,7 +257,7 @@ re-emits and the status transition propagates.
 
 ## How it surfaces in the repository
 
-All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult--applytooldenied-387-811)
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md)
 on the **single existing** inbound collector — see that doc for the dispatch and the two folds. In
 short: the `tool_use`/`tool_result` dispatch is folded into the **existing** #385 live-session demux
 arm (alongside the unchanged #395 stall-clear and the #385 `tryEmit` — **no second subscription**), and

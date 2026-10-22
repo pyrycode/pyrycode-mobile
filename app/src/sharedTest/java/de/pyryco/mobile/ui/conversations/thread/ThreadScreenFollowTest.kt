@@ -402,7 +402,7 @@ class ThreadScreenFollowTest {
         CompositionLocalProvider(LocalOverscrollFactory provides null) {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = onSend,
                     connectionState = ConnectionState.Connected,

@@ -129,6 +129,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO:-}" = "background-agent" ] && [ -z "${E2E_BACKGROUND_AGENT_CASE:-}" ]; then
   exec python3 "${REPO_ROOT}/scripts/e2e-background-agent-scenarios.py"
 fi
+if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO:-}" = "stream" ] && [ -z "${E2E_STREAM_CASE:-}" ]; then
+  exec python3 "${REPO_ROOT}/scripts/e2e-stream-scenarios.py"
+fi
 # A LIVE run started by hand fetches the long-term Claude login when it has none (2026-10-05), instead of
 # stalling on a missing or expired shell login. scripts/with-claude-login.sh explains when it fetches.
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
@@ -810,7 +813,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=phone-checkpoint
       ;;
     stream-queued-echo)
-      # Manual ignored reproduction owned by #2078, separate from the display-only stream gate.
+      # Also runs in the managed stream scenario after #2367's authoritative fixture migration.
       TEST_METHOD="interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"

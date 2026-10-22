@@ -44,6 +44,7 @@ import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.ui.conversations.thread.ThreadRunConfig
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
+import de.pyryco.mobile.ui.conversations.thread.withLiteralRows
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.userBubbleContainer
 import kotlinx.datetime.Instant
@@ -254,26 +255,28 @@ class QueuedMessageRowGeometryTest {
                         // Exercise ThreadScreen's actual radial gradient, scrim and queued-row placement.
                         ThreadScreen(
                             state =
-                                ThreadUiState(
-                                    conversationId = "contrast-fixture",
-                                    displayName = "Queued contrast",
-                                    isPromoted = true,
-                                    hasMessages = true,
-                                    queuedMessages =
-                                        if (showRows) {
-                                            rows.mapIndexed { index, text ->
-                                                QueuedMessage(index.toLong(), text, Instant.parse("2026-10-07T12:00:00Z"))
-                                            }
-                                        } else {
-                                            emptyList()
-                                        },
-                                    runConfig =
-                                        ThreadRunConfig(
-                                            sessionId = "contrast-session",
-                                            settingsAvailable = true,
-                                            capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = paired),
-                                        ),
-                                ),
+                                (
+                                    ThreadUiState(
+                                        conversationId = "contrast-fixture",
+                                        displayName = "Queued contrast",
+                                        isPromoted = true,
+                                        hasMessages = true,
+                                        queuedMessages =
+                                            if (showRows) {
+                                                rows.mapIndexed { index, text ->
+                                                    QueuedMessage(index.toLong(), text, Instant.parse("2026-10-07T12:00:00Z"))
+                                                }
+                                            } else {
+                                                emptyList()
+                                            },
+                                        runConfig =
+                                            ThreadRunConfig(
+                                                sessionId = "contrast-session",
+                                                settingsAvailable = true,
+                                                capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = paired),
+                                            ),
+                                    )
+                                ).withLiteralRows(),
                             onBack = {},
                             onSendMessage = {},
                             connectionState = ConnectionState.Connected,

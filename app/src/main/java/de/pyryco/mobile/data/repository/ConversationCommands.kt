@@ -61,7 +61,6 @@ internal class ConversationCommands(
     private val requests: RelayRequests,
     private val send: (Envelope) -> Boolean,
     private val conversationList: ConversationListProjection,
-    private val threadProjection: ThreadProjection,
     private val deviceName: String,
     negotiatedCapabilities: () -> Set<String>,
 ) {
@@ -549,7 +548,6 @@ internal class ConversationCommands(
      */
     private fun removeConversation(conversationId: String) {
         conversationList.remove(conversationId)
-        threadProjection.remove(conversationId)
     }
 
     /**

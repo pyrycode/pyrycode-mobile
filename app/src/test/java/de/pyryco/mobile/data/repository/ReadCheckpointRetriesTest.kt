@@ -39,51 +39,43 @@ class ReadCheckpointRetriesTest {
         }
     }
 
-    @Test fun pendingMaximumSurvivesOfflineAndScreenClosureWithoutCrossingHosts() =
+    @Test fun qualificationRequiresTheExactLiveOwnerAndCurrentSight() =
         runTest {
             val retry = ReadCheckpointRetries(StandardTestDispatcher(testScheduler))
             try {
-                val a = MutableStateFlow<ConversationRepository?>(null)
-                val bPeer = Peer()
-                val b = MutableStateFlow<ConversationRepository?>(bPeer)
-                retry.qualify(a, "same", 41u)
-                retry.qualify(a, "same", 43u)
-                retry.qualify(a, "same", 42u)
-                retry.qualify(b, "same", 12u)
-                runCurrent()
-                assertEquals(listOf("same" to 12uL), bPeer.writes)
-                val first = Peer().apply { hold = true }
-                a.value = first
+                val first = Peer()
+                val other = Peer()
+                val source = MutableStateFlow<ConversationRepository?>(first)
+                val foreign = MutableStateFlow<ConversationRepository?>(other)
+                retry.qualify(source, "same", 41u, other) { true }
+                retry.qualify(source, "same", 42u, first) { false }
+                retry.qualify(source, "same", 43u, first) { true }
+                retry.qualify(foreign, "same", 12u, other) { true }
                 runCurrent()
                 assertEquals(listOf("same" to 43uL), first.writes)
-                a.value = null
+                assertEquals(listOf("same" to 12uL), other.writes)
+                val replacement = Peer()
+                source.value = replacement
                 runCurrent()
-                val second = Peer().apply { response = 43u }
-                a.value = second
+                retry.qualify(source, "same", 44u, first) { true }
                 runCurrent()
-                assertEquals(listOf("same" to 43uL), second.writes)
-                a.value = null
+                assertEquals(emptyList<Pair<String, ULong>>(), replacement.writes)
+                retry.qualify(source, "same", 45u, replacement) { true }
                 runCurrent()
-                val third = Peer()
-                a.value = third
-                retry.qualify(a, "same", 42u)
-                runCurrent()
-                assertEquals(emptyList<Pair<String, ULong>>(), third.writes)
-                assertEquals(listOf("same" to 12uL), bPeer.writes)
+                assertEquals(listOf("same" to 45uL), replacement.writes)
             } finally {
                 retry.dispose()
             }
         }
 
-    @Test fun failuresAndClampedRepliesRetainPendingButDoNotRepeatOnRecomposition() =
+    @Test fun clampedReplyWaitsForFreshSightAndRetirementDropsOwnedWork() =
         runTest {
             val retry = ReadCheckpointRetries(StandardTestDispatcher(testScheduler))
             try {
                 val first = Peer().apply { response = 9u }
                 val source = MutableStateFlow<ConversationRepository?>(first)
-                retry.qualify(source, "c", 10u)
+                retry.qualify(source, "c", 10u, first) { true }
                 runCurrent()
-                repeat(3) { retry.qualify(source, "c", 10u) }
                 first.facts.value = ConversationReadMarks(9u, 100u)
                 runCurrent()
                 assertEquals(listOf("c" to 10uL), first.writes)
@@ -92,26 +84,21 @@ class ReadCheckpointRetriesTest {
                 val next = Peer()
                 source.value = next
                 runCurrent()
+                assertEquals(emptyList<Pair<String, ULong>>(), next.writes)
+                retry.qualify(source, "c", 10u, next) { true }
+                runCurrent()
                 assertEquals(listOf("c" to 10uL), next.writes)
-                next.facts.value = ConversationReadMarks(11u, 100u)
-                runCurrent()
-                source.value = null
-                runCurrent()
-                val final = Peer()
-                source.value = final
-                runCurrent()
-                assertEquals(emptyList<Pair<String, ULong>>(), final.writes)
             } finally {
                 retry.dispose()
             }
         }
 
-    @Test fun olderDaemonNeverReceivesPendingCommand() =
+    @Test fun unavailableReadMarksNeverReceiveACommand() =
         runTest {
             val retry = ReadCheckpointRetries(StandardTestDispatcher(testScheduler))
             try {
                 val peer = Peer().apply { facts.value = ConversationReadMarks(null, 100u) }
-                retry.qualify(MutableStateFlow(peer), "c", 10u)
+                retry.qualify(MutableStateFlow(peer), "c", 10u, peer) { true }
                 runCurrent()
                 assertEquals(emptyList<Pair<String, ULong>>(), peer.writes)
             } finally {

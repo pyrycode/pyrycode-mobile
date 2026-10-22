@@ -39,10 +39,6 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.network.Envelope
-import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.repository.BackgroundTaskProjection
-import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.assertFinishedAgentMarker
 import de.pyryco.mobile.e2e.questionAnswerTarget
@@ -110,7 +106,7 @@ class BackgroundAgentBlocksScreenTest {
         val content: @Composable () -> Unit = {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -174,7 +170,7 @@ class BackgroundAgentBlocksScreenTest {
                     val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a")
                     val composed = compose.onAllNodes(ownedMarker).fetchSemanticsNodes().size
                     val projected =
-                        foldBackgroundAgentBlocks(foldQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
+                        fixtureBackgroundRows(fixtureQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
                             .filterIsInstance<ThreadRow.AgentStartMarker>()
                             .single { it.agentId == "a" }
                     assertTrue("the held Agent must still be running", !projected.finished)
@@ -435,52 +431,6 @@ class BackgroundAgentBlocksScreenTest {
                 }
             }
         assertEquals("tap target left the projected list", failure.message)
-    }
-
-    @Test fun finishedRosterReplacementKeepsMarkerAndNavigationInCollapsedRun() {
-        val tasks = BackgroundTaskProjection(FinishedBackgroundTasks().apply { mark("c", "t") })
-
-        fun rosterFrame(rows: List<String>): Envelope {
-            val payload = """{"conversation_id":"c","tasks":[${rows.joinToString(",")}],""" + """"dropped_tasks":0}"""
-            return Envelope(id = 1L, type = "background_task_roster", ts = ts.toString(), payload = MobileJson.parseToJsonElement(payload))
-        }
-        val roster =
-            rosterFrame(
-                listOf(
-                    """{"task_id":"t","tool_call_id":"a","task_type":"local_agent","description":"Launch description","truncated_fields":null}""",
-                ),
-            )
-        tasks.apply(roster)
-        state = state.copy(backgroundTasks = tasks.rosters.value["c"])
-        // Two children, so "a"'s own run ("read"+"child2") can still collapse below it -- the root "a"
-        // itself never folds into it (#1827 follow-up).
-        mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")), true)
-        compose.onNodeWithText("Agent finished").assertIsDisplayed()
-        val unrelated = """{"task_id":"other","tool_call_id":"","task_type":"local_agent","description":"","truncated_fields":null}"""
-        for (replacement in listOf(emptyList(), listOf(unrelated))) {
-            tasks.apply(rosterFrame(replacement))
-            compose.runOnIdle { state = state.copy(backgroundTasks = tasks.rosters.value["c"]) }
-            compose.onNodeWithText("Agent finished").assertIsDisplayed()
-            compose.onAllNodesWithText("Agent started, still working").assertCountEquals(0)
-            marker().performClick()
-            // "Go to agent" only scrolls (this PR); the children's run stays exactly as collapsed as
-            // before the tap.
-            compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-            compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
-            assertTrue(
-                compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top <
-                    compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top,
-            )
-        }
-        compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
-        marker().performClick()
-        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-        assertTrue(
-            compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top < compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top,
-        )
-        assertTrue(
-            compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top < compose.onNodeWithText("Later").getUnclippedBoundsInRoot().top,
-        )
     }
 
     @Test fun lateJoinPreservesExpandedRunAndToolBodyAcrossSplitAndFinish() {

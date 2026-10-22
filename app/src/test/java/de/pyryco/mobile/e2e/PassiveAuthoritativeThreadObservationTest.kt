@@ -7,7 +7,6 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.i
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.NegotiatedThread
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,9 +42,6 @@ class PassiveAuthoritativeThreadObservationTest {
             val repository =
                 object : ConversationRepository by FakeConversationRepository() {
                     override val negotiatedThread = source
-
-                    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-                        error("passive observation cannot read legacy content")
                 }
             val tapped = checkNotNull(TappingConversationRepository(repository, tapNegotiated = true).negotiatedThread)
             val fact =

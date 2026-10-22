@@ -93,7 +93,14 @@ class BackgroundAgentRestGapTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
-                        state = ThreadUiState("c", "Thread", hasMessages = true, items = items, backgroundTaskCount = taskCount),
+                        state =
+                            ThreadUiState(
+                                "c",
+                                "Thread",
+                                hasMessages = true,
+                                items = items,
+                                backgroundTaskCount = taskCount,
+                            ).withLiteralRows(),
                         onBack = {},
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,

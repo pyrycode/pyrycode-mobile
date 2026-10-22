@@ -278,7 +278,7 @@ an arbitrary "Using tools: N" label (#1904). `BackgroundAgentProseScreenTest`'s
 two tools so their labels really match, and derives the owned run from loaded child ownership.
 The control hides and reveals its prose; collapse never drops it. With collapse off the prose
 is visible as a nested child. Gaps inside a block are covered under
-[the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+[the oldest-end history demand](thread-screen-oldest-end-history-demand.md).
 
 `BackgroundAgentProseTest` probes the production projection: two agents and a main lane; empty,
 unknown, untracked and cyclic parents; running to finished; roster replacement; late parent joins;

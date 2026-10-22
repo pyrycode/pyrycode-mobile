@@ -40,14 +40,7 @@ data class InnerFrameV2(
  * `JsonNull` represents absent payloads for bare control frames and is omitted on encode;
  * existing payload consumers keep their non-null [JsonElement] contract.
  *
- * [eventId] is the durable, per-conversation, strictly-increasing replay cursor (#412),
- * stable across reconnects — distinct from [id], the per-connection id that resets each
- * reconnect. It rides only the interactive structured-stream frames and is absent on every
- * other frame, so it is modeled nullable-defaulted exactly like [inReplyTo]: `explicitNulls
- * = false` omits it on encode (every outbound frame, including `hello`, stays byte-identical
- * to today), and the default tolerates its per-frame absence on decode. Mirrors the server's
- * `omitempty *uint64` (pyrycode#649); a pathological `uint64 > 2^63` decodes to a negative
- * [Long] and is rejected downstream by [ReplayCursor.record]'s positive guard.
+ * Optional obsolete durable identity is retained only to reject it on session-owned live frames.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -109,16 +102,6 @@ internal const val MOBILE_CLIENT_FEATURES =
  * `["interactive", "multi_agent", "stop_background_task", "thread"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
  * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
  *
- * [lastEventId] is the replay cursor (#416): on reconnect the phone advertises the latest
- * structured-stream [Envelope.eventId] it observed (#412's [ReplayCursor]) so the daemon replays the
- * conversation's missed tail (events with id `> last_event_id`) before the live stream resumes. It is
- * modeled exactly like [Envelope.eventId] — nullable-defaulted, so `explicitNulls = false` omits it on
- * encode: a fresh connection that observed nothing leaves the field absent (never `0`/`null`), keeping
- * that `hello` byte-identical to today, while a positive value rides as the server's `omitempty
- * *uint64`. The phone advertises only the cursor it itself recorded through [ReplayCursor.record]'s
- * positive guard — never a conversation id, never an unvalidated server value. Non-secret (an event
- * ordinal), so [toString] surfaces it alongside [capabilities].
- *
  * [clientFeatures] is an optional, verbatim self-report, independent of negotiated capabilities.
  * Missing decodes as empty; empty is omitted on encode, matching the daemon's `omitempty` string.
  */
@@ -131,13 +114,12 @@ data class HelloClientPayload(
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
     val capabilities: List<String> = MOBILE_CAPABILITIES,
-    @SerialName("last_event_id") val lastEventId: Long? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("client_features") val clientFeatures: String = "",
 ) {
     override fun toString(): String =
         "HelloClientPayload(role=$role, deviceName=$deviceName, " +
             "clientVersion=$clientVersion, protocolVersions=$protocolVersions, " +
-            "capabilities=$capabilities, lastEventId=$lastEventId, token=***)"
+            "capabilities=$capabilities, token=***)"
 }
 
 /**

@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -130,7 +132,7 @@ def normalized_contract(recording):
     return groups
 
 
-def execute(serial, arguments, progress=None):
+def execute(serial, arguments, progress=None, evidence=None):
     command = [os.environ.get('ADB', 'adb'), '-s', serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', CLASS]
     for key, value in arguments.items():
         command += ['-e', key, value]
@@ -151,6 +153,18 @@ def execute(serial, arguments, progress=None):
             time.sleep(.1)
         diagnostic_output.seek(0)
         stdout = diagnostic_output.read()
+        if evidence is not None:
+            evidence.mkdir(parents=True, mode=0o700)
+            private_write(evidence / 'instrumentation.txt', stdout)
+            spec = importlib.util.spec_from_file_location('instrument_report', ROOT / 'scripts/instrument-report.py')
+            reporter = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(reporter)
+            cases, _ = reporter.parse(stdout.decode(errors='replace'))
+            private_write(evidence / 'results.xml', (reporter.report(cases) + '\n').encode())
+            try:
+                private_write(evidence / 'phone.log', adb(serial, 'logcat', '-d', timeout=30))
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                private_write(evidence / 'phone-log-unavailable.txt', b'Phone log collection failed; native result retained.\n')
         # A shell exit of zero alone does not establish any test execution.
         if process.returncode or b'OK (1 test)' not in stdout or b'FAILURES!!!' in stdout:
             # Keep the private Android diagnostic on the host, without printing pairing args or raw frames.
@@ -168,17 +182,17 @@ def execute(serial, arguments, progress=None):
         diagnostic_output.close()
 
 
-def replay(serial, fixture):
+def replay(serial, fixture, evidence=None):
     name = 'recorded-' + uuid.uuid4().hex + '.json'
     data = fixture.read_bytes()
     validate_recording(json.loads(data))
     adb(serial, 'shell', 'run-as', PACKAGE, 'sh', '-c', f"'umask 077; cat > files/{name}'", data=data)
     # Instrumentation gets no test credentials. This mode does not resolve daemon or Claude programs.
-    elapsed = execute(serial, {'replayName': name})
+    elapsed = execute(serial, {'replayName': name}, evidence=evidence)
     return {'executed': 1, 'failed': 0, 'skipped': 0, 'seconds': round(elapsed, 3), 'fixtureSha256': hashlib.sha256(data).hexdigest()}
 
 
-def capture(serial, destination, pyry):
+def capture(serial, destination, pyry, evidence=None):
     if destination.exists():
         raise ValueError('Candidate already exists')
     if not (os.environ.get('CLAUDE_CODE_OAUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY')):
@@ -238,7 +252,7 @@ def capture(serial, destination, pyry):
                         adb(serial, 'shell', 'run-as', PACKAGE, 'touch', 'files/' + name + '.confirm')
                         granted = True
                 elapsed = execute(serial, {'recordExchange': 'true', 'recordingName': name, 'relayUrl': relay,
-                    'serverId': fields['server'], 'token': fields['token'], 'serverStaticPublicKey': fields['server_static_pubkey']}, progress)
+                    'serverId': fields['server'], 'token': fields['token'], 'serverStaticPublicKey': fields['server_static_pubkey']}, progress, evidence)
                 if not granted or not (work / 'mobile-recorded-witness.txt').exists():
                     raise RuntimeError('Required permission file effect was not proved')
                 document = json.loads(adb(serial, 'exec-out', 'run-as', PACKAGE, 'cat', 'files/' + name))
@@ -277,16 +291,98 @@ def capture(serial, destination, pyry):
                     try: daemon.wait(timeout=10)
                     except subprocess.TimeoutExpired:
                         os.killpg(daemon.pid, signal.SIGKILL); daemon.wait()
+                if evidence is not None:
+                    evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    log.flush()
+                    private_write(evidence / 'daemon.log', (private / 'daemon.log').read_bytes())
+
+
+def refresh(serial, fixture, output, pyry):
+    """Keep genuine capture, both strict replays and comparison even when migration differs."""
+    output.mkdir(parents=True, mode=0o700)
+    private_write(output / 'reviewed.json', fixture.read_bytes())
+    candidate = output / 'candidate.json'
+    report = {'capture': {'result': 'not-run'}, 'reviewedReplay': {'result': 'not-run'},
+              'freshReplay': {'result': 'not-run'}, 'comparison': 'NOT_RUN'}
+    try:
+        try:
+            report['capture'] = capture(serial, candidate, pyry, evidence=output / 'capture')
+        except Exception as error:
+            report['capture'] = {'result': 'failed', 'category': type(error).__name__}
+            return report
+        for stage, path in [('reviewedReplay', fixture), ('freshReplay', candidate)]:
+            try:
+                report[stage] = replay(serial, path, evidence=output / stage)
+            except Exception as error:
+                report[stage] = {'result': 'failed', 'category': type(error).__name__}
+        old, fresh = normalized_contract(json.loads(fixture.read_text())), normalized_contract(json.loads(candidate.read_text()))
+        report['comparison'] = 'IDENTICAL' if old == fresh else 'CHANGED'
+        private_write(output / 'comparison.json', json.dumps({'reviewed': old, 'fresh': fresh}, indent=2).encode())
+        return report
+    finally:
+        private_write(output / 'verification.json', (json.dumps(report, indent=2) + '\n').encode())
+
+
+def managed_refresh(args):
+    """The standalone method uses the suite's existing host admission and device custody."""
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    gate = load('managed_android_gate', ROOT / 'scripts/android-test-gate.py')
+    suite = load('managed_recording', ROOT / 'scripts/recorded-mobile-suite.py')
+    gate.check_selection(ROOT, 'android', ['live', '--tests', CLASS + '#capturedPermissionReachesTheClientAndCompletes'])
+    if 'PYRY_TEST_ADMISSION_FD' not in os.environ:
+        os.execv(sys.executable, [sys.executable, str(ROOT / 'scripts/test-admission.py'), '--',
+                                sys.executable, str(ROOT / 'scripts/recorded-exchanges.py'), *sys.argv[1:]])
+    suite.require_host_admission(os.environ)
+    if run(['git', 'status', '--porcelain']).strip():
+        raise RuntimeError('Commit source before recording refresh')
+    env = gate.live_claude_environment(dict(os.environ))
+    if not gate.claude_authenticated(env):
+        raise RuntimeError('Configured Claude authentication required')
+    env.update(PYRY_FORCE_TEST_RUN='1', LIVE_RELAY_HOST='pyrycode-relay.pyryco.de')
+    env['GRADLE_OPTS'] = (env.get('GRADLE_OPTS', '') + ' -Dorg.gradle.daemon=false').strip()
+    env['ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy'] = 'in-process'
+    args.output.mkdir(parents=True, mode=0o700)
+    with gate.device_hold('live', float(env.get('ANDROID_GATE_WAIT_SECONDS', gate.DEFAULT_DEVICE_WAIT_SECONDS))):
+        if gate.build_apks(env, 'live') != 0:
+            raise RuntimeError('APK build failed; no capture started')
+        avd = gate.managed_avd('pixel2Api33Atd')
+        if avd is None:
+            raise RuntimeError('Managed Android device required')
+        serial = process = None
+        previous = {sig: signal.signal(sig, gate.raise_interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            with (args.output / 'emulator.log').open('w') as log:
+                serial, process = gate.boot_emulator(env, *avd, cold=True, log=log)
+            if serial is None or gate.install_once(env, serial) is None:
+                raise RuntimeError('Managed emulator setup failed; no capture started')
+            return gate.run_device_command([sys.executable, str(ROOT / 'scripts/recorded-exchanges.py'), 'refresh',
+                '--serial', serial, '--fixture', str(args.fixture), '--output', str(args.output / 'verification'),
+                '--pyry', str(args.pyry)], cwd=ROOT, env=env).returncode
+        finally:
+            try:
+                gate.stop_emulator(env, serial, process)
+            finally:
+                for sig, handler in previous.items(): signal.signal(sig, handler)
 
 
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['capture', 'replay', 'verify'])
-    parser.add_argument('--serial', required=True, help='An explicitly owned test device')
+    parser.add_argument('mode', choices=['capture', 'replay', 'verify', 'refresh', 'managed-refresh'])
+    parser.add_argument('--serial', help='An explicitly owned test device')
     parser.add_argument('--fixture', type=Path, default=ASSET)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--pyry', default=os.environ.get('PYRY_BIN', 'pyry'))
     args = parser.parse_args()
+    if args.mode in {'refresh', 'managed-refresh'} and args.output is None:
+        parser.error('Refresh requires a new private output directory')
+    if args.mode == 'managed-refresh':
+        raise SystemExit(managed_refresh(args))
+    if args.serial is None: parser.error('An explicitly owned test device is required')
     if adb(args.serial, 'shell', 'getprop', 'sys.boot_completed').strip() != b'1':
         raise RuntimeError('Owned Android device is not booted')
     adb(args.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
@@ -296,6 +392,12 @@ def main():
     elif args.mode == 'capture':
         if args.output is None: parser.error('Capture requires a new --output candidate')
         print(json.dumps(capture(args.serial, args.output, args.pyry)))
+    elif args.mode == 'refresh':
+        report = refresh(args.serial, args.fixture, args.output, args.pyry)
+        print(json.dumps(report))
+        if report['comparison'] != 'IDENTICAL' or any(report[stage].get('executed') != 1 or report[stage].get('failed') != 0
+            for stage in ['capture', 'reviewedReplay', 'freshReplay']):
+            raise RuntimeError('Recording refresh differs or failed; retained evidence requires explicit review')
     else:
         with tempfile.TemporaryDirectory(prefix='mobile-verify-') as directory:
             candidate = Path(directory) / 'candidate.json'
