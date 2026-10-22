@@ -147,16 +147,19 @@ class FileConversationCache(
                     val document = authoritativeDocumentFor(serverId, conversationId)
                     val bytes = Files.readAllBytes(document.toPath())
                     val held = decodedAuthoritative
-                    val saved = if (held?.document == document && held.serverId == serverId &&
-                        held.conversationId == conversationId && held.bytes.contentEquals(bytes)
-                    ) {
-                        held.saved
-                    } else {
-                        decodedAuthoritative = null
-                        decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId).also {
-                            decodedAuthoritative = DecodedAuthoritative(document, serverId, conversationId, bytes, it)
+                    val saved =
+                        if (held?.document == document &&
+                            held.serverId == serverId &&
+                            held.conversationId == conversationId &&
+                            held.bytes.contentEquals(bytes)
+                        ) {
+                            held.saved
+                        } else {
+                            decodedAuthoritative = null
+                            decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId).also {
+                                decodedAuthoritative = DecodedAuthoritative(document, serverId, conversationId, bytes, it)
+                            }
                         }
-                    }
                     RelayLog.d { "conversation_cache operation=read_authoritative status=ok" }
                     saved
                 } catch (error: Exception) {

@@ -28,10 +28,11 @@ data class SavedAuthoritativeThread(
 
     // Only a deeply owned, read-only decode may reuse validation. Generated copy() starts without this memo.
     internal fun ownedValidated(): SavedAuthoritativeThread {
-        val owned = copy(
-            items = Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
-            retirements = Collections.unmodifiableMap(LinkedHashMap(retirements)),
-        )
+        val owned =
+            copy(
+                items = Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
+                retirements = Collections.unmodifiableMap(LinkedHashMap(retirements)),
+            )
         val validated = owned.decodeSnapshot()
         owned.ownedSnapshot = validated.copy(items = Collections.unmodifiableList(validated.items))
         return owned
@@ -78,25 +79,36 @@ data class SavedAuthoritativeThread(
 
 /** Explicit stack preserves arbitrarily nested extension containers without adding recursive traversal. */
 private fun frozenThreadJson(root: JsonElement): JsonElement {
-    class Frame(val source: JsonElement) {
+    class Frame(
+        val source: JsonElement,
+    ) {
         val entries = (source as? JsonObject)?.entries?.iterator()
         val values = (source as? JsonArray)?.iterator()
         val fields = if (entries != null) LinkedHashMap<String, JsonElement>() else null
         val elements = if (values != null) ArrayList<JsonElement>() else null
         var key: String? = null
 
-        fun next(): JsonElement? = if (entries != null) {
-            if (entries.hasNext()) entries.next().let { key = it.key; it.value } else null
-        } else {
-            if (values?.hasNext() == true) values.next() else null
-        }
+        fun next(): JsonElement? =
+            if (entries != null) {
+                if (entries.hasNext()) {
+                    entries.next().let {
+                        key = it.key
+                        it.value
+                    }
+                } else {
+                    null
+                }
+            } else {
+                if (values?.hasNext() == true) values.next() else null
+            }
 
         fun accept(value: JsonElement) {
             if (fields != null) fields[requireNotNull(key)] = value else requireNotNull(elements).add(value)
         }
 
-        fun finish(): JsonElement = fields?.let { JsonObject(Collections.unmodifiableMap(it)) }
-            ?: JsonArray(Collections.unmodifiableList(requireNotNull(elements)))
+        fun finish(): JsonElement =
+            fields?.let { JsonObject(Collections.unmodifiableMap(it)) }
+                ?: JsonArray(Collections.unmodifiableList(requireNotNull(elements)))
     }
     if (root !is JsonObject && root !is JsonArray) return root
     val stack = ArrayDeque<Frame>()

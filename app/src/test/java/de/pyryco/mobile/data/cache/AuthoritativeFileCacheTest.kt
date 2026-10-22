@@ -6,11 +6,13 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -19,8 +21,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 class AuthoritativeFileCacheTest {
     private val originalSink = RelayLog.sink
@@ -64,7 +64,14 @@ class AuthoritativeFileCacheTest {
             document.writeText(changed)
             val replacement = requireNotNull(cache.readAuthoritativeThread("host", "c"))
             assertNotSame(first, replacement)
-            assertEquals(3L, replacement.toSnapshot().items.single().rev)
+            assertEquals(
+                3L,
+                replacement
+                    .toSnapshot()
+                    .items
+                    .single()
+                    .rev,
+            )
             for (invalid in listOf(changed.replace("\"host\"", "\"evil\""), changed.replace("\"rev\":3", "\"rev\":0"))) {
                 document.writeText(invalid)
                 assertNull(cache.readAuthoritativeThread("host", "c"))
@@ -94,6 +101,7 @@ class AuthoritativeFileCacheTest {
             val owned = requireNotNull(cache.readAuthoritativeThread("host", "c"))
             assertThrows(UnsupportedOperationException::class.java) { (owned.items as MutableList<*>).clear() }
             val extension = owned.items.single()["extension"] as JsonObject
+
             @Suppress("UNCHECKED_CAST")
             val entry = extension.entries.single() as MutableMap.MutableEntry<String, kotlinx.serialization.json.JsonElement>
             assertThrows(UnsupportedOperationException::class.java) { entry.setValue(JsonPrimitive("changed")) }
