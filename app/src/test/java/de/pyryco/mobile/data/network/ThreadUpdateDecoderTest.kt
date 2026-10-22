@@ -74,11 +74,31 @@ class ThreadUpdateDecoderTest {
             layer = layer.flatMap { prefix -> alphabet.map { prefix + it } }
             tokens.addAll(layer)
         }
-        tokens += listOf(
-            "9007199254740993123456789", "1".repeat(1000), "-0", "0e+00", "-2.50E-06", "1e-400", "1e400",
-            "1.234567890123456789", "01", "-01", " 1", "1 ", "１", "١", "NaN", "Infinity", "-Infinity",
-            "0,\"injected\":true", "0}", "[0]", "1\n2", "1\u0000",
-        )
+        tokens +=
+            listOf(
+                "9007199254740993123456789",
+                "1".repeat(1000),
+                "-0",
+                "0e+00",
+                "-2.50E-06",
+                "1e-400",
+                "1e400",
+                "1.234567890123456789",
+                "01",
+                "-01",
+                " 1",
+                "1 ",
+                "１",
+                "١",
+                "NaN",
+                "Infinity",
+                "-Infinity",
+                "0,\"injected\":true",
+                "0}",
+                "[0]",
+                "1\n2",
+                "1\u0000",
+            )
         for (token in tokens) {
             val literal = kotlinx.serialization.json.JsonUnquotedLiteral(token)
             val nested = JsonObject(mapOf("future" to JsonArray(listOf(literal, JsonObject(mapOf("again" to literal))))))
