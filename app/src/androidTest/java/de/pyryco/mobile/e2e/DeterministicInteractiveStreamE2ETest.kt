@@ -541,7 +541,9 @@ class DeterministicInteractiveStreamE2ETest {
                         )} epoch=${hash(value?.epoch)} generation=${value?.generation}"
                 val supportedConnection = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
                 val proved =
-                    current != null && currentEvidence != null && current === coordinator.currentRepository.value &&
+                    current != null &&
+                        currentEvidence != null &&
+                        current === coordinator.currentRepository.value &&
                         pingReadMarkConfirmed(reply.owner, replyFact, currentEvidence, currentMarks, supportedConnection)
                 val sample =
                     "captured_owned=${ownsConnection()} owner_match=${held.owner.matches(reply.owner)} " +
@@ -557,7 +559,8 @@ class DeterministicInteractiveStreamE2ETest {
                     readSamples++
                     previousReadSample = sample
                 }
-                proved && current === coordinator.currentRepository.value &&
+                proved &&
+                    current === coordinator.currentRepository.value &&
                     (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current
             }
         try {
