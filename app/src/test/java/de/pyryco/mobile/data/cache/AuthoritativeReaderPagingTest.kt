@@ -1064,7 +1064,8 @@ class AuthoritativeReaderPagingTest {
                     assertTrue("replacement must own reader slot", readers["c"] !== oldReader)
                     assertTrue("old hydration must already be cancelled", !requireNotNull(oldHydration).isActive)
                     assertEquals(before, store.current("host", "c"))
-                    println("race_replacement=registered old_hydration_cancelled=true generation=${store.current("host", "c").generation}")
+                    val generation = store.current("host", "c").generation
+                    println("race_replacement=registered old_hydration_cancelled=true generation=$generation")
                 }
                 requireNotNull(oldHydration).join()
                 runCurrent()
