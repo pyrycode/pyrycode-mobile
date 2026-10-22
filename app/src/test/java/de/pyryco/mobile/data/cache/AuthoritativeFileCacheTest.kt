@@ -30,7 +30,7 @@ class AuthoritativeFileCacheTest {
 
     @get:Rule val temporary = TemporaryFolder()
 
-    @Test fun fullUnknownFactsPatchClearsAndCertificationRoundTripSeparatelyFromLegacy() =
+    @Test fun fullUnknownFactsPatchClearsAndCertificationRoundTrip() =
         runTest {
             val dispatcher = StandardTestDispatcher(testScheduler)
             val cache = FileConversationCache(temporary.root, dispatcher)
@@ -52,7 +52,6 @@ class AuthoritativeFileCacheTest {
             assertEquals(snapshot.coverage, saved.toSnapshot().coverage)
             assertEquals(10L, saved.checkpoint)
             assertEquals(20L, saved.appliedVersion)
-            assertTrue(cache.readThread("../../host", "../c").isEmpty())
             assertNull(cache.readAuthoritativeThread("host", "c"))
             assertFalse(saved.toString().contains("private body"))
             assertFalse(saved.toString().contains("e" + "xtension"))

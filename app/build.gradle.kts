@@ -158,7 +158,9 @@ android {
     // every check, and on the emulator for an in-depth device run.
     sourceSets {
         getByName("test").kotlin.srcDir("src/sharedTest/java")
+        getByName("test").resources.srcDir("src/main/roomSchemas")
         getByName("androidTest").kotlin.srcDir("src/sharedTest/java")
+        getByName("androidTest").assets.srcDir("src/main/roomSchemas")
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
