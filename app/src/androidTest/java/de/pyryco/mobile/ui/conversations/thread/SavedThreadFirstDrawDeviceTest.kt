@@ -790,29 +790,47 @@ class SavedThreadFirstDrawDeviceTest {
                 val state = vm.state.value
                 val presentation = requireNotNull(state.authoritativeThread)
                 val snapshot = presentation.sourceSnapshot
-                assertEquals(facts, snapshot.items.map { it.raw })
+                assertEquals(facts.size, snapshot.items.size)
+                var previousOrder: Long? = null
+                for (index in snapshot.items.indices) {
+                    val item = snapshot.items[index]
+                    assertEquals("Exact raw compatibility fact", facts[index], item.raw)
+                    assertEquals((index + 1).toLong(), item.id) // Fixture ids are 1..N, proving uniqueness too.
+                    val order = requireNotNull(item.order)
+                    val before = previousOrder
+                    if (before == null || order != before + 1) islands++
+                    previousOrder = order
+                }
                 assertEquals(100_000L, snapshot.completedVersion)
                 assertEquals(90_000L, snapshot.checkpoint)
                 assertEquals(null, snapshot.coverage)
                 var displayedCount = 0
-                presentation.rows.asSequence().filterIsInstance<ThreadRow.Delivered>().chunked(200).forEach { rows ->
-                    val displayed = presentation.demandRows(rows, emptySet()).filterIsInstance<ThreadRow.Delivered>().map { it.item }
-                    assertEquals(
-                        expectedText.subList(displayedCount, displayedCount + displayed.size),
-                        displayed.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content },
+                // Probe the snapshot-owned resolver directly; demandRows rebuilds whole-window visibility sets.
+                for (row in presentation.rows) {
+                    if (row !is ThreadRow.Delivered) continue
+                    val key = row.listKey(0)
+                    val expected =
+                        (row.item as ThreadItem.MessageItem).message.copy(
+                            content = expectedText[displayedCount],
+                            parentToolUseId = "", // This fixture contains only root messages.
+                        )
+                    val revision = presentation.shownRowRevisions[key]
+                    assertTrue(
+                        "Exact resolved compatibility message $displayedCount",
+                        presentation.matchesReadContents(key, ThreadItem.MessageItem(expected), revision),
                     )
-                    displayedCount += displayed.size
+                    if (displayedCount == 0) {
+                        assertFalse(
+                            presentation.matchesReadContents(
+                                key,
+                                ThreadItem.MessageItem(expected.copy(content = "wrong compatibility content")),
+                                revision,
+                            ),
+                        )
+                    }
+                    displayedCount++
                 }
                 assertEquals(expectedText.size, displayedCount)
-                assertEquals(
-                    facts.size,
-                    snapshot.items
-                        .map { it.id }
-                        .distinct()
-                        .size,
-                )
-                val orders = snapshot.items.map { requireNotNull(it.order) }
-                islands = 1 + orders.zipWithNext().count { (before, after) -> after != before + 1 }
                 assertEquals(if (fragmented) 18_000 else 1, islands)
                 assertTrue("Retired cache read APIs must remain absent", retiredApis.isEmpty())
                 // Full-file fallback restores for observation and again before the live lease.

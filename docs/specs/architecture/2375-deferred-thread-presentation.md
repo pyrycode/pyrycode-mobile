@@ -123,3 +123,17 @@ model beside the full file fixture and hit the emulator's 192 MiB heap limit;
 retain that failed run. Compare identical ordered content in batches of 200 from
 the same presentation, then assert the complete count. This bounds assertion-only
 memory without changing production, first-draw measurement, facts or deadlines.
+
+The complete-suite bounded-helper run retained one further compatibility OOM:
+the stack identifies `demandRows` rebuilding a whole-window HashSet inside the
+assertion. Validate each expected complete root message through the presentation's
+snapshot-owned `matchesReadContents` resolver instead. This retains exact ordered
+content, type, identity/revision and total-count checks while holding one resolved
+model at a time, without a whole-window visibility allocation. A wrong-content
+negative control guards the equality path. Keep the failed batched run too.
+
+Keep the same complete raw-fact equality, typed fixture id uniqueness and order-
+island checks in a single streaming pass as well. Avoid assertion-only full-file
+map/distinct/zip collections beside the mounted fixture. Every source fact and
+every displayed expected message is still compared; counts and certification stay
+explicit, and first-draw timing/production are untouched.
