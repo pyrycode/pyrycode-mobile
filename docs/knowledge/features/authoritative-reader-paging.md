@@ -4,6 +4,59 @@ The production [repository](caching-conversation-repository.md#older-authoritati
 uses bounded saved pages before the existing daemon history coordinator. The full
 [cache contract](conversation-cache-contract.md) retains storage, ownership and writer rules.
 
+## Current DB and file acceptance scope — approved 2026-10-22
+
+Juhana explicitly approved separating full-file latency from #2334. Normal channel opening
+uses MigratingConversationCache and AuthoritativeRoomStorage to load roughly200 display
+contributions plus required parent/active facts. FileConversationCache still supports
+conversation metadata/read positions and one-time authoritative snapshot import. The direct
+36000-fact FileConversationCache fixture is a compatibility stress case; its frame time is
+neither normal bounded DB opening latency nor an actual file-to-Room import measurement.
+
+The1000ms product target and2000ms SwiftShader assertion remain binding for DB opening and
+reader demand/retry/reopen. Both file compatibility methods retain exact raw facts, numeric
+spelling, ownership, immutability,36000facts/18000islands/18000visiblemessages and exact
+read/request assertions. Their positive timing bound is enabled only by the test-only
+requireFullFileLatencyBound=true instrumentation argument and belongs to separate
+[#2456](https://github.com/pyrycode/pyrycode-mobile/issues/2456), which is not a #2334 blocker.
+The actual3000ms slow-read negative control now uses DB newest-window reads in all four
+offline/held-newest first/reopen arms and must reject the same renderer bound. The retired
+projection/API mapping remains as documented below; no unused dispatcher delay is claimed.
+
+This approved scope supersedes earlier positive full-file timing requirements in this
+companion and the six issue contracts. Historical failures remain failures of their original
+runs. Retained #2449 optimization code still requires independent correctness/security review
+before merging; no further file-latency implementation is needed for DB acceptance. Every
+child and the final parent retain independent complete configured JVM/UI/scripted gates,
+actual documentation and reviewed merge/Done requirements.
+
+### Last integrated run before the scope amendment
+
+Source b5618a873fcc795133bbb99cd0feb27022c0964e passed333/333affectedJVM methods across21classes,
+zero failures/errors/skips, plus build,lint,native compilation and formatting. Native
+ui-fkym3jib executed6/pass4/fail2/errors0/skips0 under the earlier file timing contract.
+DB first-draw frames258/243/228/215ms passed, each with200payloadresults/decodes,5queries and
+zero full reads. Paging/retry/reopen,descriptor cancellation and the earlier file slow control
+passed. Both file methods completed all exact content/read/request arms without heap
+exhaustion, but guarded frames2561/2260/2359/2187ms and ordinary frames2106/2301/2415/2437ms
+missed2000ms. Tree validation measured97–145ms after the equivalence-tested positive-integer
+allocation change. This attempt remains failed; the amended fixture must execute afresh.
+Complete raw reports/phone/APKs/sources/image/runtime and receipt are retained at
+logs/evidence/2452/manual-20261022/integrated-b561, manifest
+a3e05366ced8ae79d5fc5bbd3711acf251a1ffe3b92f18ff34400ac981d66761.
+The six selected native methods use the production registry/coordinator/repository/ViewModel
+with controlled transport; they do not execute an external daemon. The amended native pass and subsequent independent #2452 acceptance are recorded below.
+
+
+## Approved-scope native validation
+
+Source324df55be6a3978a5a166aac3bcfec3af1cd0acf passed forced formatting and native compilation/SpotlessCheck, then ui-maqwbx4h selected/executed6/pass6/fail0/error0/skip0. DB first-draw frames247/244/243/207ms retained200payloadresults/decodes,5queries,oneevidence row and nofullreads. The actualDB3000ms slow-control frames3868/3403/3343/3320ms all rejected the same2000ms bound while retaining identical counts. Paging/retry/reopen and descriptor cleanup passed. Both complete file compatibility methods logged required=false/followup2456, each8ordinary/fragmented offline/held-newest first/reopen arms, exact36000facts/18000islands/18000visiblemessages and fullreads offline1/online2/retiredAPIs0. File fragmented frames2166–2646ms remain measurements for2456, never normal DB latency or actual one-time import timing. Raw XML/phone/APKs/source/plan/image/runtime/receipt:2452/manual-20261022/db-file-separated-324d, manifestffce81fc6fb25b0fb76309e20130c9b9c8c29168ed1deea44ef14b935c33ad4c. The selected native runtime uses production destination/repository/ViewModel with controlled transport, no external daemon. Independent #2452 acceptance is recorded below; parent acceptance and reviewed merges remain separate.
+
+
+### Independent opt-in file benchmark
+
+On the same324df55be6 source, normal admitted native gate ui-562olv0x with requireFullFileLatencyBound=true selected/executed1/pass0/fail1/errors0/skips0. Phone records confirmed required=true/followup2456 after all8exact compatibility arms completed. Fragmented file frames2501/2246/2825/2687ms; the actual failure was Probe.assertBound at2501ms versus2000ms. This is retained as a separate2456 latency failure, not DB acceptance or real import latency. Complete XML/phone/APKs/source/image/runtime are under logs/evidence/2456/manual-20261022/optin-324d, manifestb54f7a09902a6c63af9dbbe2c341d0e5f67a561aec3962c992391b160827d949. Together with default required=false in both six-suite file methods, this verifies effective scope selection rather than silently disabling the benchmark. No production change followed the failure.
+
 ## Storage continuation contract
 
 `beforeAuthoritativeWindow` returns up to 200 additional display contributions plus validated
@@ -340,9 +393,128 @@ Native ui-k_00y57r executed6/pass3/fail3/errors0/skips0. The guarded full-file m
 
 Source33516287c3 plus formatter-only6a3a05479d passed340/340affectedJVM methods across20classes, zero failures/errors/skips; all10AuthoritativeFileCacheTest methods passed, including exact-number preservation and invalid-token rejection. Lint, assembly, native compilation and forced formatting passed. Native ui-qpyy9qa8 executed6/pass3/fail3/errors0/skips0. Both complete file methods ran every ordinary/fragmented offline/held-newest first/reopen arm, retaining exact36000rawfacts/18000islands/18000visiblemessages/read/request/zero-retired-read assertions without heap exhaustion. Fragmented draws still missed2000ms: guarded3251/3396/3294/3149ms, ordinary2909/3222/3169/3542ms. Parse1051–1542ms, treevalidation799–858ms, typed136–144ms, remainder10–30ms; ownedfreeze~0.01ms. No timing target or workload is relaxed. Database first draw passed all four arms232–295ms; actual3000msread slow control drew3784ms and correctly rejected the bound; descriptor cancellation passed. Full raw XML/phone/APKs/source/image/runtime are retained in logs/evidence/2451/manual-20261022/green-3351, manifest25ef9e1c4117f197164e49e018edcef0cf29f22bccf2aa30fd4816d9b70bc8bf.
 
-The paging failure repeated expecteditemDecodes200/actual400 on offlineopening1 after offlineopening0 passed. Chronological phone records show each of the two explicit attempts decoding200, then a separate read_parent_closure after successful reader_page in the failing arm only. Protected child2452 owns its causal investigation; it blocks2451 and all parents. Preserve the earlier d87e failure and unchanged-tree named pass; this repeat is not accepted flakiness. Parent2449 retains latency ownership; numeric2451 stays limited to exact validated number encoding. No current independent candidate is accepted.
+The paging failure repeated expecteditemDecodes200/actual400 on offlineopening1 after offlineopening0 passed. Chronological phone records show each of the two explicit attempts decoding200, then a separate read_parent_closure after successful reader_page in the failing arm only. Child #2452 subsequently confirmed and repaired this publication race, with independent acceptance recorded below. These two historical count failures remain failures; the unchanged-tree pass is not a flaky waiver. Numeric #2451 stays limited to exact validated number encoding; positive file latency belongs to independent non-blocking #2456 under the approved scope above. Parent acceptance remains separate.
 
 Numeric2451's additional real FileConversationCache→SavedAuthoritativeDestination/registry/coordinator/repository/ViewModel exact opaque-number cold-reopen probe ran on59f2079541 plus formatter-only7694aeb3af:1selected/executed/passed,0failures/errors/skips, four offline/held-newest first/reopen arms with exact raw values and no extra request at rest. Evidence logs/evidence/2451/manual-20261022/reopen-59f2, manifest0d7dac300d6aab6f12770f11a77080ac2603e7adaddd0145f4e073ad3164d46c. It supplements340green without claiming current native or independent acceptance. Every child and parent still requires its own independent complete configured Linux gates, actual documentation and reviewed merge/Done.
+
+## Retry publication and baseline ownership (#2452)
+
+A restored store and its committed baseline must publish as one observation boundary.
+`applyAuthoritativeRestore` publishes the store before computing `persistedAuthoritative`,
+under the `authoritativeThreads` monitor. Reading that map without the monitor allowed an
+observer on another worker to see 400 restored facts against the previous 200-fact baseline.
+It classified the extra facts as uncommitted and scheduled redundant parent closure: the
+successful requested page decoded 200 facts, then closure decoded them again. The phone
+sequence and controlled regression establish product duplicate work rather than cumulative
+counter lifetime, an extra reader demand or a waived synchronization assertion.
+
+The observer now reads the baseline on `processingDispatcher` under the same publication
+monitor before deciding whether closure is needed. It releases the monitor before validation,
+disk, suspension, writer or coordinator work. Existing historyWrites → store ordering and
+reader/generation/cancellation, retirement and ownership fences remain binding. A concurrent
+map alone does not make store publication and baseline computation atomic to readers.
+
+`AuthoritativeReaderPagingTest.retryPublicationCannotExposeAnOlderBaselineToTheObserver`
+uses real disk/repository/ViewModel and a two-worker dispatcher. A private replacement map
+pauses its existing compute immediately after store publication, exposing the exact boundary
+without a production test seam. Latches release in finally. The test retains failed demand,
+settled Retry, explicit success, exact 400 facts, two attempts and no extra requests or demand
+at rest through offline/held-newest openings and cold reopens. An unchanged-tree rerun alone
+cannot cover this edge.
+
+### Test-first and focused receipts
+
+The earlier d87e failure and 3351 repeat above remain retained. Between them, unchanged-tree
+paging rerun `ui-kjku5emj` on formatted `c0bdcd8ad2` selected/executed/passed **1/1/1**, zero
+failures/errors/skips, with all four arms passing exact counts. Historical raw location:
+`logs/evidence/2449/manual-20261022/paging-count-rerun-c0bd/`, manifest
+`8e2a024cdbf3c1ff3e63a5935e14ea7e33ac6431c490b22145404804e1e3139e`.
+
+Plan `6e28823be` preceded regression `54296992a3` (formatter-only `9d99e75a7f`) and repair
+`76b1e89803`. Pre-repair **1 selected/executed, 0 passed, 1 failed, 0 errors/skips** recorded
+`old_baseline=true`, 400 item reads/decodes, 200 ordinal reads, two evidence reads, zero
+evidence decodes and 208 queries on offline opening 0. It failed the unchanged 200-decode
+assertion. Raw XML/log/test/unchanged production/plan/formatter diff were retained at
+`logs/evidence/2452/manual-20261022/red-5429/`, manifest
+`bd9738ccb51eb19027b28d753247a71407d8e59d5c804f1c1f8d1804d0a22487`.
+
+Repair `76b1e89803` passed **67 selected/executed/passed**, zero failures/errors/skips,
+plus lint/build/format/native compilation. The race passed all four arms with
+`old_baseline=false`, 200 payload decodes and six queries. Native `ui-9j7pnxza` used an
+invalid Class.method selector and executed no product method (initializationError); its
+`green-76b1` folder name is not a native pass. Manifest:
+`90545df2556bf3c4e80d8b4f91fed3fa0bca831a408edcdec03802cbb3a7b020`.
+Corrected unchanged-source Class#method invocation `ui-zfqyaha8` selected/executed/passed
+**1/1/1**, zero failures/errors/skips. All four arms retained exact 400 rows, 200 item decodes,
+200 ordinal reads, one evidence row, six queries, two attempts and offline zero/held-newest
+one request with no automatic walk. Frames were 890/371/319/261 ms. Raw XML/phone/APKs/source/
+plan/image receipt: `logs/evidence/2452/manual-20261022/native-selector-76b1/`, manifest
+`a0d4f94056857bb39e9b6f77c56e9b36bf3508a1faec8df95ce77129e44b4d45`.
+
+### Independent Linux acceptance and runtime identity
+
+The [independent verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2461#issuecomment-6335719043)
+accepted source **`0fa1511b4aa32fcf60ac67b2bb14d266512abf8c`** after code, protocol and security
+review, including retained parent changes. The authoritative stage record accepts that exact
+candidate. The [repair plan](../../specs/architecture/2452-retry-baseline-publication.md)
+records the original causal investigation and security constraints.
+
+| Invocation | Selected/listed | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| JVM `jvm-ho1221sd` with build checks | 5286 | 5286 | 5286 | 0 | 0 | 0 |
+| UI `ui-xqr5rfl2` initial run | 333 | 332 | 331 | 1 | 0 | 1 |
+| UI named rerun `ui-mk4qdbbt` | 1 | 1 | 1 | 0 | 0 | 0 |
+| Scripted `scripted-all-1zpuid03` | 24 | 24 | 24 | 0 | 0 | 0 |
+
+The UI initial exit 1 remains failed. Its unrelated
+`RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+passed the dispatcher-selected same-tree rerun, accepted under known #2368 flake disposition.
+`RenameDialogCaptureTest#renameAtFigmaViewport` remained skipped. All six saved-thread native
+methods passed in the initial full UI suite, including the named database retry/reopen method;
+no separate focused run is claimed for this candidate. Pre-verification, docs guard, script
+checks (211 executed), build/lint/format and native compilation passed in the verifier's run.
+macOS is outside this Linux ticket's scope.
+
+Fresh JVM XML contains the named publication regression and its passing four-arm output:
+`old_baseline=false`, **200 item reads/decodes, 200 ordinal reads, one evidence read,
+zero evidence decodes, six queries**. Evidence decoding reused an existing JVM value; the
+native fixture instead decoded its one evidence row. Native retry retained **400 exact rows,
+two attempts, 200 item reads/decodes, 200 ordinal reads, one evidence read/decode, six queries**,
+zero offline/one held-newest request and no additional work at rest. Frames in offline
+open/reopen then held-newest open/reopen order were **94/97/107/66 ms**. DB opening frames
+were **107/81/97/116 ms**, 200 item decodes and five queries each. Actual 3000 ms DB-read slow
+control frames **3114/3092/3076/3083 ms** rejected the unchanged 2000 ms SwiftShader assertion;
+the product target remains 1000 ms.
+
+Both file compatibility methods passed all eight ordinary/fragmented offline/held-newest
+first/reopen arms: **36000 facts / 18000 islands / 18000 visible rows**, exact raw/numeric/
+owner/read assertions, offline one/online two full reads and zero retired-API reads.
+`required=false followup=2456` preserves the approved DB/file separation and independent
+opt-in benchmark above. Saved-history native tests use controlled transport, no external
+daemon; scripted checks use zero real Claude turns.
+
+Raw evidence was retained under
+`$AGENTS_REPO_PATH/logs/evidence/2452/independent-0fa151-20261022/`:
+`jvm-ho1221sd/TEST-de.pyryco.mobile.data.cache.AuthoritativeReaderPagingTest.xml`,
+`ui-xqr5rfl2/0-TEST-pixel2Api33Atd_0-_app-.xml` and per-method phone logs,
+`ui-mk4qdbbt/`, `scripted-all-1zpuid03/`, and `final-verifier/` gate logs/APKs/acceptance.
+`SHA256SUMS-final-verifier` lists **1112 files**, SHA-256
+`262d2acbc4218ab617fbca9318d635a9ad135681040aeb5fa26ea732be357775`.
+Identities recorded before device execution:
+
+- Application APK SHA-256: `f43495242759c3487730d3a66ca71af2601e649c1c222298078343da7c373991`.
+- Instrumentation APK SHA-256: `01a75803642a63b9a892ed0dcf0df095f9c55e6ffa209100bb86fd043644e5c7`.
+- Android 13/SwiftShader managed image: `5eb8ca4e8aecd9b09a6f76a82060255fe12b7e150136cc2bf7ae32cc67169d7e`.
+- Scripted daemon source: `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; binary SHA-256:
+  `d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+
+Historical manual raw bundles were unavailable on the verifier host; their manifest references
+above are preserved rather than claimed rehashed. Current acceptance rests on fresh local
+reports. Raw folders are subject to 30-day retention; these counts and identities preserve
+the receipt after pruning. This accepts #2452 implementation and configured Linux checks.
+Reviewed merge into `feature/2451` remains dispatcher-owned. It does not accept #2447, #2449,
+\#2437, #2451 or final #2334; each retains independent acceptance, documentation and workflow.
+Existing manual holds, claims, counters and approvals remain in force.
 
 ## Prior first-draw map retained during reviewed storage retirement
 
