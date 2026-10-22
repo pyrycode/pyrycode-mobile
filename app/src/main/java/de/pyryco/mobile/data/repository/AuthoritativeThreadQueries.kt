@@ -72,7 +72,8 @@ internal class AuthoritativeThreadQueries(
         ids: Set<Long>,
         retry: Long? = null,
     ): Closeable? {
-        if (closed || !enabled() || !expansionEnabled() || store.current(host, conversation) !== snapshot) return null
+        if (closed || !enabled() || !expansionEnabled()) return null
+        val current = store.current(host, conversation) === snapshot
         val epoch = snapshot.epoch?.takeIf { it.isNotEmpty() } ?: return null
         val keys =
             snapshot.items
@@ -89,9 +90,10 @@ internal class AuthoritativeThreadQueries(
                         snapshot.incarnation,
                     )
                 }
-        bodyConsumers[consumer] = keys
+        // A held presentation may withdraw exact targets, but cannot add demand or retry a read.
+        bodyConsumers[consumer] = if (current) keys else bodyConsumers[consumer].orEmpty().intersect(keys)
         pruneBodies()
-        for (key in keys) {
+        for (key in keys.takeIf { current }.orEmpty()) {
             val request = key.request
             val state = store.current(host, conversation).bodyLoads[request.itemId.toLong() to request.expectedRev.toLong()]
             if (state == BodyLoad.Retry && retry?.toULong() != request.itemId) continue

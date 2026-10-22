@@ -735,7 +735,9 @@ class ThreadViewModel(
             bodyConnection = null
             return
         }
-        if (route.store.current(serverId, conversationId) !== p.sourceSnapshot || p.sourceConnection !== connection) return
+        if (p.sourceConnection !== connection) return
+        // The lane applies stale-snapshot withdrawals before requiring freshness for additions.
+        val current = route.store.current(serverId, conversationId) === p.sourceSnapshot
         if (bodyConnection !== connection) bodyRelease?.close()
         val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
         bodyRelease = route.bodies(
@@ -744,7 +746,7 @@ class ThreadViewModel(
             bodyConsumer,
             p.sourceSnapshot,
             ids,
-            event.retry?.takeIf { it in event.keys }?.let { p.bodyItem(it)?.id },
+            event.retry?.takeIf { current && it in event.keys }?.let { p.bodyItem(it)?.id },
         ) ?: bodyRelease
         bodyConnection = connection
     }

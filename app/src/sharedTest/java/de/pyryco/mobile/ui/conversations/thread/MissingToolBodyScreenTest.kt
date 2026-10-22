@@ -60,7 +60,12 @@ class MissingToolBodyScreenTest {
 
     @Test fun stoppedDestinationReleasesDemandBeforeLoadingPresentationArrives() = mountedBody(stopBeforeLoading = true)
 
-    private fun mountedBody(stopBeforeLoading: Boolean = false) {
+    @Test fun collapsedQueuedBodyWithdrawsDemandBeforeLoadingPresentationArrives() = mountedBody(collapseQueuedBeforeLoading = true)
+
+    private fun mountedBody(
+        stopBeforeLoading: Boolean = false,
+        collapseQueuedBeforeLoading: Boolean = false,
+    ) {
         val frames = Channel<Long>(Channel.UNLIMITED)
         frames.trySend(1L)
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -125,7 +130,7 @@ class MissingToolBodyScreenTest {
                             connection,
                             ComposerDraftStore(),
                             contentScheduling =
-                                if (stopBeforeLoading) {
+                                if (stopBeforeLoading || collapseQueuedBeforeLoading) {
                                     ThreadContentScheduling(
                                         Dispatchers.IO,
                                     ) { frames.receive() }
@@ -155,8 +160,8 @@ class MissingToolBodyScreenTest {
 
         fun reads() = sent.filter { it.type == "thread_read_tool_body" }
 
-        fun toggle() {
-            compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("tool-row")) and hasText("Read")).performClick()
+        fun toggle(name: String = "Read") {
+            compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("tool-row")) and hasText(name)).performClick()
             compose.waitForIdle()
         }
 
@@ -201,6 +206,45 @@ class MissingToolBodyScreenTest {
             toggle()
             compose.waitUntil(5000) { reads().size == 1 }
             assertEquals("17", (reads().single().payload as JsonObject)["item_id"].toString())
+            if (collapseQueuedBeforeLoading) {
+                frames.trySend(2L)
+                compose.waitUntil(5000) { vm.state.value.authoritativeThread !== beforeLoading }
+                compose.onNodeWithText("Loading tool details…").assertExists()
+                val heldPresentation = vm.state.value.authoritativeThread
+                toggle("Bash")
+                compose.waitUntil(5000) {
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .bodyLoads
+                        .containsKey(18L to 23L)
+                }
+                assertSame(heldPresentation, vm.state.value.authoritativeThread)
+                assertEquals(1, reads().size)
+                toggle("Bash")
+                compose.waitUntil(5000) {
+                    !repo.authoritativeThreads
+                        .current("host", "c")
+                        .bodyLoads
+                        .containsKey(18L to 23L)
+                }
+                assertTrue(
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .bodyLoads
+                        .containsKey(17L to 23L),
+                )
+                reply(false)
+                reply(true)
+                repo.openAuthoritativeThread("c")
+                compose.waitUntil(5000) { sent.any { it.type == "thread_catch_up" } }
+                val contents = repo.authoritativeThreads.current("host", "c").bodyContents
+                assertTrue(contents.containsKey(17L to 23L))
+                assertTrue(!contents.containsKey(18L to 23L))
+                assertEquals(1, reads().size)
+                assertTrue(seen.isEmpty())
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             if (stopBeforeLoading) {
                 assertSame(beforeLoading, vm.state.value.authoritativeThread)
                 compose.runOnIdle { (owner.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.CREATED }

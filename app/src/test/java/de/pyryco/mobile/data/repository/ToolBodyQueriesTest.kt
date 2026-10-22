@@ -237,6 +237,32 @@ class ToolBodyQueriesTest {
             assertNull(f.load())
         }
 
+    @Test fun staleSnapshotWithdrawsQueuedDemandWithoutAdmittingAdditionsOrRetry() =
+        runTest {
+            val f = Fixture()
+            val second = ThreadItemDto.decode(JsonObject(tool().raw + mapOf("id" to JsonPrimitive(18), "order" to JsonPrimitive(6))))
+            f.store.applyBatch("h", "c", "e", 23, listOf(second), f.store.current("h", "c").generation)
+            val snapshot = f.store.current("h", "c")
+            f.lane.bodies("c", f, snapshot, setOf(17, 18))
+            val active = f.sent.single()
+            assertEquals(BodyLoad.Loading, f.store.current("h", "c").bodyLoads[18L to 23L])
+            f.lane.bodies("c", f, snapshot, setOf(17))
+            assertNull(f.store.current("h", "c").bodyLoads[18L to 23L])
+            f.lane.bodies("c", f, snapshot, setOf(17, 18), retry = 18)
+            assertNull(f.store.current("h", "c").bodyLoads[18L to 23L])
+            f.lane.accept(f.error(active))
+            assertEquals(BodyLoad.Retry, f.load())
+            f.lane.bodies("c", f, snapshot, setOf(17), retry = 17)
+            assertEquals(1, f.sent.size)
+            assertEquals(BodyLoad.Retry, f.load())
+            assertTrue(
+                f.store
+                    .current("h", "c")
+                    .bodyContents
+                    .isEmpty(),
+            )
+        }
+
     @Test fun attentionRetryPreservesQueuedBodyEvenWhenRepairWasAlreadyMarked() =
         runTest {
             val f = Fixture()
