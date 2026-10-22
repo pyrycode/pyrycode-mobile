@@ -39,9 +39,9 @@ import java.util.UUID
  *
  * Built on [requests], the connection's one request counter and reply waiters, so every frame takes its
  * envelope id from the same sequence as every other request. [send] is the repository's pump send, used by
- * the frames that go out raw: the attachment chunks, the debug bundle request and the dequeue. A send's
- * echo folds into [conversationList] and [threadProjection]; a drop reads [queueProjection] and records
- * into [threadProjection].
+ * the attachment chunks, the debug bundle request and the dequeue. Local sends register pending
+ * identity through [registerAuthoritativeSend]; daemon-authored thread items establish acceptance.
+ * Queue commands use the caller's authoritative target without settling content locally.
  *
  * One instance per repository, and a fresh repository per connection (#351), so the transfer state is
  * connection-scoped exactly as it was when it lived in the repository. Every accessor of that state is
@@ -54,8 +54,6 @@ internal class MessageCommands(
     private val requests: RelayRequests,
     private val send: (Envelope) -> Boolean,
     private val conversationList: ConversationListProjection,
-    private val threadProjection: ThreadProjection,
-    private val queueProjection: QueueProjection,
     private val trail: MessageTrail,
     private val connToken: () -> String?,
     private val registerAuthoritativeSend: suspend (String, Message) -> Boolean = { _, _ -> false },
@@ -198,11 +196,7 @@ internal class MessageCommands(
                     },
             )
         conversationList.recordLastMessage(conversationId, message)
-        val authoritative = registerAuthoritativeSend(conversationId, message)
-        if (!authoritative) threadProjection.appendMessages(listOf(conversationId to message))
-        // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
-        // queued item and removed. A failed send's id stays: no queued item will ever carry it.
-        if (!authoritative) threadProjection.recordMinted(conversationId, messageId)
+        registerAuthoritativeSend(conversationId, message)
         // Throws on a server `error` / not-Open session, leaving the echo drawn. The empty `{}` ack
         // payload carries nothing to map.
         // The trail (#1564) records the reply where it lands, in order with the queue frames around it.
@@ -339,13 +333,6 @@ internal class MessageCommands(
         conversationId: String,
         queuedMessageId: Long,
     ) {
-        val echoId =
-            queueProjection
-                .current(conversationId)
-                .firstOrNull { it.id == queuedMessageId }
-                ?.messageId
-                .orEmpty()
-        val recorded = threadProjection.recordSendNow(conversationId, echoId)
         val request =
             Envelope(
                 id = requests.nextRequestId(),
@@ -354,7 +341,6 @@ internal class MessageCommands(
                 payload = MobileJson.encodeToJsonElement(SendQueuedNowPayloadDto(conversationId, queuedMessageId)),
             )
         if (!send(request)) {
-            if (recorded) threadProjection.withdrawSendNow(conversationId, echoId)
             throw IllegalStateException("send_queued_now not sent: session not connected")
         }
     }
@@ -377,46 +363,7 @@ internal class MessageCommands(
             ),
         )
 
-    /**
-     * Drop a not-yet-drained message from [conversationId]'s queued backlog over v2 `dequeue_message`
-     * (#466, ADR 025): send `{conversation_id, queued_msg_id}` and return once the frame is sent. The
-     * daemon **never replies** — not on success, and not when it cannot apply the request (an unknown,
-     * already-delivered or in-flight head id is silently ignored); `docs/protocol-mobile.md` § Queue
-     * (v2) lists no reply (#859). [queuedMessageId] is the `QueuedMessage.id` the caller received from
-     * [RemoteConversationRepository.observeQueue] (#460), echoed **verbatim** as the wire `queued_msg_id` (a `uint64` → [Long] JSON
-     * number, not a String — the pyrycode#720 trap).
-     *
-     * The backlog entry leaves only on the next `queue_state` (#467's non-optimistic ruling, which the
-     * daemon owns), and that same snapshot is the drop's only confirmation. When it arrives without the
-     * dropped `queued_msg_id`, [ThreadProjection.settleDrops] also removes **this device's own undelivered echo** for the
-     * message (#781) — the thread row [sendMessage] drew when it sent, which the daemon never
-     * authored and which otherwise stays behind reading as a message claude received. The correlation
-     * key is the item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot, so
-     * no caller above needs to learn a second id. Never logs the payload or either id.
-     *
-     * Load-bearing properties of the sequence:
-     *  - **Resolved before the send.** The confirming `queue_state` replaces the snapshot this reads
-     *    from. Reading it early is safe because `queued_msg_id` is a per-conversation counter that is
-     *    never recycled — item *N* in a stale snapshot is still the same item *N*.
-     *  - **Recorded before the send, withdrawn if it fails.** The request goes into the pending drops first,
-     *    so a confirming snapshot can never land before there is a request to settle. A not-connected
-     *    send withdraws it and throws [IllegalStateException]: the daemon never heard the drop, the
-     *    message will still run, and the echo is still true.
-     *  - **Keyed on the requested `queued_msg_id`, never a backlog diff.** A backlog also shrinks when
-     *    the daemon *drains* it, so a diff-driven removal would delete the echo of every message that
-     *    ran normally. Only an item this device asked to drop settles.
-     *  - **Removed only against the minted-id ledger.** An item carrying `""`, one whose id this device
-     *    never minted (another paired device's real queued message), or a `queuedMessageId` absent from
-     *    the snapshot correlates with nothing: the send still goes and no thread row is touched. Text is
-     *    never compared.
-     *
-     * **The drain/drop race is accepted, not defended.** The daemon pushes the same `queue_state` for a
-     * removal and for a drain. If the operator drops the head item just as the running turn ends, it can
-     * drain before the dequeue lands; the daemon then ignores the dequeue and the next snapshot lacks
-     * the item exactly as it would after a drop. The phone cannot tell the two apart and removes the
-     * echo of a message claude did receive. The daemon offers no signal to distinguish them, and the
-     * operator had asked for that message to go, so no defence is added.
-     */
+    /** Send the supplied queue control target; daemon-authored item state confirms its outcome. */
     suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,
@@ -431,19 +378,7 @@ internal class MessageCommands(
                         DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
                     ),
             )
-        // Resolved before the send: the confirming snapshot replaces the one this reads from. "" when the
-        // id matches no current item — a correlation this connection cannot make, not an error.
-        val echoId =
-            queueProjection
-                .current(conversationId)
-                .firstOrNull { it.id == queuedMessageId }
-                ?.messageId
-                .orEmpty()
-        if (echoId.isNotEmpty()) {
-            threadProjection.recordDrop(conversationId, queuedMessageId, echoId)
-        }
         if (!send(request)) {
-            threadProjection.withdrawDrop(conversationId, queuedMessageId)
             throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
         }
     }

@@ -138,123 +138,6 @@ data class HistoryCoverage(
 
     val unknownEdge: Long? by lazy { if (unknown) spans.minOfOrNull { it.first } else null }
 
-    fun cursorFor(anchor: Long): String {
-        require(anchor >= 0) { "invalid history anchor" }
-        walks[anchor]?.let { return it }
-        val edge = if (anchor == 0L) unknownEdge else gaps.firstOrNull { it.anchor == anchor }?.edge
-        return edge
-            ?.let { boundary ->
-                cursors.keys
-                    .filter { it >= boundary }
-                    .minOrNull()
-                    ?.let(cursors::get)
-            }.orEmpty()
-    }
-
-    fun refused(anchor: Long): HistoryCoverage = refusedCursor(anchor.positiveHistoryId(allowZero = true), cursorFor(anchor))
-
-    fun received(
-        page: HistoryPage,
-        newest: Boolean = false,
-        target: Long? = null,
-    ): HistoryCoverage = receivedUnsigned(page, newest, target?.positiveHistoryId(allowZero = true))
-
-    fun cursorForUnsigned(anchor: ULong): String {
-        unsignedWalks[anchor]?.let { return it }
-        val edge = if (anchor == 0uL) unsignedUnknownEdge else unsignedGaps.firstOrNull { it.anchor == anchor }?.edge
-        return edge?.let { boundary ->
-            unsignedCursors.keys
-                .filter { it >= boundary }
-                .minOrNull()
-                ?.let(unsignedCursors::get)
-        }
-            ?: ""
-    }
-
-    fun refusedUnsigned(anchor: ULong): HistoryCoverage = refusedCursor(anchor, cursorForUnsigned(anchor))
-
-    private fun refusedCursor(
-        anchor: ULong,
-        refused: String,
-    ): HistoryCoverage {
-        val usable = newestCursor?.takeUnless { it == refused }
-        return copy(
-            unsignedCursors = unsignedCursors.filterValues { it != refused },
-            unsignedWalks =
-                unsignedWalks + (anchor to usable.orEmpty()),
-            newestCursor = usable,
-        )
-    }
-
-    fun receivedUnsigned(
-        page: HistoryPage,
-        newest: Boolean = false,
-        target: ULong? = null,
-    ): HistoryCoverage {
-        val received =
-            page.entries
-                .map { it.unsignedId }
-                .filter { it > 0u }
-                .distinct()
-                .sorted()
-        val merged = normalize(unsignedSpans + received.map { UnsignedHistorySpan(it, it) })
-        val holes = merged.zipWithNext { older, newer -> UnsignedHistoryGap(older.last, newer.first) }
-        val nextGaps =
-            holes.map { hole ->
-                val olderSpan = merged.first { it.last == hole.anchor }
-                val previous = unsignedGaps.firstOrNull { it.anchor in olderSpan.first..olderSpan.last && it.edge >= hole.edge }
-                hole.copy(anchor = previous?.anchor ?: hole.anchor)
-            }
-        val reduced = reduceOrderedHistoryPage(page.entries, interactive = true)
-        val retainedKeys =
-            reduced.rows
-                .filterNot { it is ThreadItem.UnrecognizedMessage || it is ThreadItem.BackgroundTaskLifecycle }
-                .flatMap { it.historyKeys() }
-                .toSet()
-        val order =
-            reduced.unsignedOrder.entries
-                .associate { historyIdentity(it.key) to it.value }
-                .filterKeys { it in retainedKeys }
-        val claims = reduced.unsignedClaims.mapKeys { historyIdentity(it.key) }.filterKeys { it in retainedKeys }
-        val texts = HashMap<String, String>()
-        val aliases = HashMap<String, String>()
-        reduced.rows.filterIsInstance<ThreadItem.MessageItem>().forEach { row ->
-            val segment = row.message.segment ?: return@forEach
-            var offset = 0
-            segment.deltas.forEach { delta ->
-                val end =
-                    (offset.toLong() + delta.length)
-                        .coerceIn(
-                            offset.toLong(),
-                            row.message.content.length
-                                .toLong(),
-                        ).toInt()
-                val key = historyIdentity(listOf("delta", segment.turnId, delta.seq))
-                texts[key] = row.message.content.substring(offset, end)
-                aliases[key] = historyIdentity(listOf("message", segment.turnId))
-                offset = end
-            }
-        }
-        return copy(
-            unsignedSpans = merged,
-            unsignedGaps = nextGaps,
-            unsignedCursors = received.firstOrNull()?.let { unsignedCursors + (it to page.cursor) } ?: unsignedCursors,
-            unsignedWalks = if (target != null) unsignedWalks + (target to page.cursor) else unsignedWalks,
-            unsignedUnknown = unsignedUnknown && !page.atStart,
-            signedUncertainty = unsignedIncomplete || received.any { it > Long.MAX_VALUE.toULong() },
-            newestCursor = if (newest) page.cursor else newestCursor,
-            unsignedRowOrder = order + unsignedRowOrder,
-            unsignedRowEntries =
-                (unsignedRowEntries.keys + order.keys).associateWith { key ->
-                    unsignedRowEntries[key].orEmpty() + claims[key].orEmpty()
-                },
-            legacyKeys = aliases + legacyKeys,
-            deltaText = texts + deltaText,
-            deltaLengths = texts.mapValues { it.value.length } + deltaLengths,
-            deltaHashes = texts.mapValues { historyHash(it.value) } + deltaHashes,
-        )
-    }
-
     /** Bind claims to the exact logical message/delta content retained by cache policy. */
     fun boundTo(rows: List<ThreadItem>): HistoryCoverage {
         val kept = cacheableThreadRows(rows)
@@ -456,7 +339,6 @@ data class HistoryCoverage(
     }
 
     /** Separate display fragments at verified holes; repository rows and cache identities stay held. */
-    internal fun displayRows(rows: List<ThreadItem>): List<ThreadItem> = fragmentDisplayRows(rows)
 
     override fun toString(): String = "HistoryCoverage(spans=${unsignedSpans.size}, gaps=${unsignedGaps.size}, unknown=$unknown)"
 }
@@ -535,3 +417,19 @@ private fun historyHash(
     value: String,
     digest: MessageDigest = MessageDigest.getInstance("SHA-256"),
 ): String = digest.digest(value.toByteArray(Charsets.UTF_8)).toHexString()
+
+/** Dormant legacy storage identity; runtime content never reads these rows. Retired by #2364. */
+internal fun ThreadItem.mergeIdentity(): Any {
+    val segment = (this as? ThreadItem.MessageItem)?.message?.segment
+    if (segment != null) return listOf("delta", segment.turnId, segment.firstSeq)
+    return when (this) {
+        is ThreadItem.BackgroundTaskLifecycle -> listOf("background-task", taskId, terminal != null)
+        is ThreadItem.MessageItem -> listOf("message", message.reconciliationId ?: message.id)
+        is ThreadItem.SessionBoundary -> listOf("boundary", previousSessionId, newSessionId, occurredAt)
+        is ThreadItem.UnrecognizedMessage -> listOf("unrecognized", id)
+        is ThreadItem.Banner -> listOf("banner", occurredAt)
+        is ThreadItem.CompactionBoundary -> listOf("compaction", occurredAt)
+        is ThreadItem.ModelRefusal -> listOf("refusal", fallbackModel != null, occurredAt)
+        is ThreadItem.StoppedTurn -> listOf("stopped", turnId)
+    }
+}

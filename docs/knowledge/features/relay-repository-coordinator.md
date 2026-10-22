@@ -11,7 +11,7 @@ host to the [stable facade](stable-conversation-repository.md), so ViewModels ke
 reference across connection churn and compatibility selection changes.
 
 The coordinator derives [two-part connection status](relay-repository-coordinator-seams-and-passthroughs.md#two-part-connection-status-392),
-switches [live-session events](relay-repository-coordinator-seams-and-passthroughs.md#live-session-event-seam-406) across reconnects, and
+switches [live-session events](relay-repository-coordinator-seams-and-passthroughs.md) across reconnects, and
 owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365),
 kept current for the life of an open connection since [#361](../codebase/361.md) added token
 rotation. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
@@ -27,7 +27,7 @@ prompts cannot be lost through a replay-zero stream. See
 [prompt collection](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-hostmodals-fold-492)
 for local actions, conversation retirement and answered-history/reconnect boundaries.
 It holds the
-[background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
+[background-task roster](relay-repository-coordinator-seams-and-passthroughs.md)
 the same reset way, except for which task ids have finished, which it retains across every reconnect so a
 completed task cannot come back as live when the daemon re-sends its retained roster. It owns one
 `HostReadings` instance (#1317) — the five readings a host pushes (announced model, session facts,
@@ -460,9 +460,9 @@ sitting in the gap. A fresh coordinator's first subscription head is still `null
   before sending, gets no ack, and clears nothing — only `question_dismissed` or a reconnect retires a
   batch ·
   [#677](https://github.com/pyrycode/pyrycode-mobile/issues/677) — the
-  [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677):
+  [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md):
   switches the concrete repository's
-  [`backgroundTasks`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677)
+  [`backgroundTasks`](remote-conversation-repository-live-stream-and-modals.md)
   the `questionBatches` way, but adds one host-lifetime `FinishedBackgroundTasks` instance (the
   `replayCursor` shape) that the reset does not touch, so a task the daemon's reconnect roster re-lists
   after it finished does not read as live again ·

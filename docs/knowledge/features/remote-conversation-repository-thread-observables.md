@@ -2,7 +2,7 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
-Since 2026-09-22 the state, decoder and read in the stall, queue, API-retry, compacting and thinking-progress sections below live in their own projection classes, under the names used here; the repository's arm only checks the capability and hands the envelope over. See [status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event).
+The retained stall, API-retry, compacting and thinking-progress readings have their own projection classes. The repository admits the current producing session before handing a frame over; these readings cannot reconstruct content. See [status projections](remote-conversation-repository-status-projections.md#status-projections-one-file-per-status-event).
 
 ## `observeStall(conversationId)` — the thread-observable stall state (#395)
 
@@ -19,16 +19,9 @@ subscription**.
   `init` inbound collector, so onset and clearing never race (single writer); `MutableStateFlow.update {}`
   matches the sibling projections' posture. Empty per connection (#351) → a stall never survives a
   reconnect.
-- **Two demux hooks, both inside the existing `interactive` gate (symmetric with #385).**
-  - **Onset** — a **new** `TYPE_STALL` arm: `decodeStall(envelope)?.let { stalledConversations.update {
-    s -> s + it } }`. Re-receipt for an already-stalled conversation is an idempotent `Set` add.
-  - **Clearing** — folded into the **existing** live-session arm: any successfully decoded
-    `LiveSessionEvent` is forward progress, so `stalledConversations.update { it - event.conversationId }`
-    runs alongside the unchanged `mutableLiveSessionEvents.tryEmit(event)`. **No second decode** — the
-    `conversationId` is already on the decoded event; a removal of an absent id is a no-op. This clears
-    on all five event types (incl. `turn_state: idle` and `turn_end`). A *malformed* or
-    *unrecognized-state* live envelope decodes to `null` and so does **not** clear (we don't attribute
-    forward progress we couldn't parse).
+- **Admission precedes status writes.** The current producing session's stall
+  and recovery readings update the projection; raw content events cannot clear it.
+  Replacement retires that family's reading through `SessionLiveAdmission`.
 - **The method is a pure cold projection** (1:1 with `observeLastMessage`), issuing no request:
 
   ```kotlin
@@ -56,55 +49,12 @@ subscription**.
 free-form text, the data layer surfaces only a `Boolean`, and `decodeStall` logs nothing on the drop
 path. See [Stall state § Security](stall-state.md#security).
 
-## `observeQueue(conversationId)` — the thread-observable queued backlog (#460)
+## Supplied queue state
 
-A conversation's ordered list of messages the daemon has **queued** while claude is busy.
-[#460](../codebase/460.md) decodes the capability-gated v2 `queue_state` snapshot envelope into a
-per-conversation `List<QueuedMessage>` the thread layer observes to render the backlog (the visible render
-is the consumer slice **#461**). The full-snapshot model lives in [Queued backlog](queued-backlog.md);
-this section records only how it attaches to the repository — it rides the **same single inbound
-collector** as everything else, with **no new class, no new file, no second subscription**.
-
-- **A fifth connection-scoped projection.** `private val queuedByConversation =
-  MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())` — key = conversation id, value = the
-  full ordered backlog (FIFO/wire order). Written **only** from the one `init` inbound collector (single
-  writer → snapshots never race); `MutableStateFlow.update {}` matches the sibling projections' posture.
-  Empty per connection (#351) → a backlog never survives a reconnect.
-- **One demux hook — a full-replace, inside the existing `interactive` gate.** A **new** `TYPE_QUEUE_STATE`
-  arm: `decodeQueueState(envelope)?.let { (conversationId, queue) -> queuedByConversation.update { it +
-  (conversationId to queue) } }`. Each `queue_state` is the authoritative current backlog
-  (`msgqueue.Snapshot`), so the `it + (id to queue)` **overwrites** that conversation's entry and leaves
-  every other conversation untouched (AC #3); wire array order is preserved verbatim (AC #1). **Unlike the
-  #395 stall arm there is no second hook and no clearing** — a snapshot is replaced by the next snapshot
-  (possibly empty), never cleared by forward-progress events, so the live-session arm is **not touched**.
-- **The method is a pure cold projection** (1:1 with `observeStall`), issuing no request:
-
-  ```kotlin
-  override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
-      queuedByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
-  ```
-
-  `orEmpty()` gives empty-until-first-snapshot (AC #2); `distinctUntilChanged()` means a `queue_state` for
-  **another** conversation, or a value-identical re-snapshot, does not re-emit this flow; a `StateFlow`
-  always has a current value, so every collector (including a `flatMapLatest` re-subscription through the
-  facade) gets the current backlog on subscription, fanning out from the one inbound consumer.
-- **`decodeQueueState(envelope): Pair<String, List<QueuedMessage>>?`** mirrors `decodeStall`: one `try {
-  decode → (id, list) } catch (IllegalArgumentException) { null }` (`SerializationException ⊂` it; the
-  per-item `Instant.parse` throws the same). A malformed payload — bad `conversation_id`, a bad item, an
-  unparseable `ts` — drops the one envelope while the lone collector survives (AC #4); **one bad item drops
-  the whole snapshot**. The `QueuedMessageDto` / `QueueStatePayloadDto` decode DTOs + the `toQueue()`
-  mapper live in `data/network/InteractivePayloads.kt`; `queued` is the **only** non-strict field
-  (nullable-defaulted to tolerate a wire `null`/`[]` empty backlog).
-- **On the interface with a default — like `observeStall`, unlike `liveSessionEvents`.** The thread needs
-  the current-value backlog through the [`StableConversationRepository`](stable-conversation-repository.md)
-  facade (#461 is the first consumer), so `observeQueue` is a **defaulted** `ConversationRepository` method
-  (`flowOf(emptyList())`), with the facade and this repo overriding it. The default absorbs the
-  Fake/test-double cascade (no ≥5 split); no consumer cascade. See [[post-352-connection-scoped-repo-behind-facade]].
-
-`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
-already-authenticated Noise channel, and **nothing in the new arm or the drop branch logs the payload**
-(`QueuedMessage.text` is user-authored queued-message content). See
-[Queued backlog § Security](queued-backlog.md#security).
+`observeQueue` and `QueueProjection` were removed in #2367. Canonical user-item
+status and identity supply queue presentation and exact queue action targets.
+Raw queue snapshots cannot settle pending sends or infer delivery/placement.
+See [pending sends and controls](remote-conversation-repository-control-sends.md).
 
 ## `observeApiRetry(conversationId)` — the thread-observable API-retry state (#593)
 
@@ -257,20 +207,10 @@ second subscription**.
   and touches `stalledConversations` in **neither** direction (AC #4): not raising one is the wire
   contract's explicit rule (the rate bound means a quiet window is not a stall), and not clearing one is
   the `compacting` rule for the same reason it exists there.
-- **Two clearing hooks, because the wire carries no falling edge of its own.** Unlike every prior arm in
-  this family, `thinking_progress` cannot clear itself — so the clears live on **other** frames'
-  handling:
-  - **Turn end** — folded into the live-session arm's `is LiveSessionEvent.TurnEnd` branch, **not**
-    beside the pre-`when` stall clear: `thinkingProgressByConversation.update { it - event.conversationId
-    }`. This placement is load-bearing, not stylistic — hoisted beside the stall clear it would run on
-    **every** live event (`assistant_delta`, `tool_use`) rather than only at turn end, silently making
-    the reading near-useless while a naive turn-end test still passes. See [Thinking-progress state §
-    no falling edge](thinking-progress-state.md#the-reading-has-no-falling-edge--its-clears-live-on-other-arms)
-    for the negative-control test this placement needs.
-  - **Session transition** — a fourth write inside the existing `TYPE_SESSION_TRANSITION` arm, alongside
-    the thread-boundary fold and the settings-revision bump: `thinkingProgressByConversation.update { it
-    - conversationId }`. Both clears route by their own frame's decoded conversation id, so neither can
-    clear another conversation's reading; removing an absent key is a no-op.
+- **Clearing follows admitted session state.** Session-owned turn state and
+  family retirement clear thinking progress. Removed raw turn-end and session-transition
+  events cannot supply recovery or content evidence. See
+  [current admission](remote-conversation-repository-live-stream-and-modals.md#session-admission-and-held-settings).
 - **The method is a pure cold projection** (1:1 with `observeApiRetry`/`observeModelMenu`), issuing no
   request:
 
@@ -462,75 +402,9 @@ and the routing id stays a map key — no daemon-supplied text can structurally 
 this arm — and **nothing in the new arm, the decode, or the drop branch logs the payload**, including
 the conversation id. See [Resetting state § Security](resetting-state.md#security).
 
-## Live tool-call rows — `applyToolUse` / `applyToolResult` / `applyToolDenied` (#387, #811)
+## Supplied tool rows
 
-Correlate the v2 `tool_use` (start) / `tool_result` (completion)
-[`LiveSessionEvent`](live-session-events.md)s, plus the separate `tool_denied` frame
-([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)), into **one evolving thread row**
-carrying a status (`Running → Done`/`Failed`/`Denied`). [#387](../codebase/387.md) adds the
-correlation + status state machine; the onset/correlation model lives in [Live
-tool-call](live-tool-call.md), this section records only how it attaches to the repository. Unlike
-\#395 (a *separate* `Set<String>` projection), a tool row **is** a thread row, so it folds into the
-**existing** `threadByConversation` — see [Live tool-call § Chronological
-interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
-
-- **Two demux hooks, dispatched inside the existing `interactive` gated live-session arm.** The
-  `.let { event -> … }` block (`RemoteConversationRepository.kt:301-305`) gains a `when (event)`
-  dispatch **alongside** the unchanged #395 stall-clear and #385 `tryEmit` — **no second subscription,
-  no new gate, no new collector**:
-
-  ```kotlin
-  when (event) {
-      is LiveSessionEvent.ToolUse -> applyToolUse(event)
-      is LiveSessionEvent.ToolResult -> applyToolResult(event)
-      else -> Unit
-  }
-  ```
-
-- **`applyToolUse` (`:473`) — append a `Running` row, idempotent on a repeat id.** One atomic
-  `threadByConversation.update {}`: if a row with `id == toolUseId && role == Role.Tool` already
-  exists, leave it untouched (a duplicate `tool_use` never adds a second row nor resets a finished one
-  to `Running`); else append a `Role.Tool` `Message` with `id = toolUseId`, `content = name` (a
-  non-empty fallback the UI ignores), `timestamp = Clock.System.now()`, and
-  `ToolCall(name, inputSummary, output = "", status = Running)`. The `&& role == Role.Tool` namespaces
-  the match so a `toolUseId` can never clobber a real `message_id` row.
-- **`applyToolResult` (`:1305`) — update the matching row in place, or drop.** One atomic
-  `threadByConversation.update {}` delegating to the shared `withToolResult` fold: find the row with
-  `id == toolUseId && role == Role.Tool`; if absent, **no-op** (a `tool_result` with no prior
-  `tool_use`, including a result-before-use, is dropped — no orphan half-row); if present, replace it
-  (position + `timestamp` preserved) with its `toolCall` copied as `output = resultSummary`,
-  `status = if (isError) Failed else Done` — **unless the row is already `Denied`
-  ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)), which the result keeps** (still
-  attaching `output`). A duplicate `tool_result` re-applies the same update (idempotent /
-  last-write-wins). `row.toolCall?.copy(...)` handles the theoretical null gracefully — no `!!`.
-- **`applyToolDenied` (`:1318`) — mark the matching row `Denied`, or drop
-  ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)).** Dispatched from its own
-  `TYPE_TOOL_DENIED` arm (`:704`, beside `TYPE_TOOL_RESULT`) rather than the `when (event)` above,
-  because `tool_denied` is not a `LiveSessionEvent` — the DTO is decoded and mapped to `ToolDenial`
-  directly inside the fold. One atomic `threadByConversation.update {}` through the shared
-  `withToolDenied` fold: find the row with `id == toolUseId && role == Role.Tool`; if absent, **no-op**
-  (a denial never adds a row); if present, set `status = Denied` and attach `denial`, **overriding
-  whatever status the row held** — including a result that already arrived, since the daemon's
-  result-line recovery can report a denial after the `tool_result` shipped. Unlike `applyToolResult`,
-  which mints an empty `conversation_id` slice via `current[id].orEmpty()`, `applyToolDenied` returns
-  the map **unchanged** when the conversation holds no rows at all, so a denial can never grow the map
-  for a `conversation_id` mobile has never seen. A malformed frame is dropped at `applyToolDenied`'s
-  own `catch (IllegalArgumentException)` — the envelope is dropped, the collector survives. See
-  [Live tool-call § Denied](live-tool-call.md#denied-811) for the full state-machine and security
-  treatment.
-- **Why fold into `threadByConversation`, not a separate flow.** The two folds write the **same**
-  `StateFlow` [`observeMessages`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313) reads, whose
-  `threadProjection` preserves **arrival order with no re-sort** — so a tool row interleaves
-  chronologically with messages for free (AC #4); a ViewModel-side merge cannot, because ordering is a
-  repository surface. The in-place status flip changes the `data class` row → the projected list is
-  unequal → `distinctUntilChanged` re-emits the `Running → Done/Failed` transition. **Not folded into
-  `lastMessages`** — a tool invocation never becomes a conversation-list preview.
-- **Single writer, no race.** Both folds run on the lone `init` inbound collector (the sole writer of
-  `threadByConversation` alongside `sendMessage`'s `update {}` insert), in wire arrival order, so
-  insert-then-update never races; an out-of-order result simply finds no row and drops.
-
-`security-sensitive`, but the repository stays plain orchestration: no new parse point (consumes the
-already-typed `LiveSessionEvent`), `name`/`inputSummary`/`resultSummary` carried **verbatim** into the
-`ToolCall` fields (output-encoding is #388's job), and **nothing in the folds or the drop/no-op branches
-logs the payload** (the tool fields may carry sensitive session content). See
-[Live tool-call § Security](live-tool-call.md#security).
+Tool content/status and grouping come from daemon-built thread items. Runtime
+`applyToolUse`, `applyToolResult` and `applyToolDenied` raw-content reduction was
+removed in #2367. Current session-owned tool progress remains separate from content.
+See [authoritative rendering](thread-screen-how-it-works-list-and-status-row.md#supplied-authoritative-rendering-1985).

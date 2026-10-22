@@ -17,8 +17,8 @@ Durable reconnect catch-up (#1842) adds rung-4
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
 to scripted `ping` alongside the original
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
-It proves newest-page delivery after daemon replay is emptied and multi-page older catch-up
-through reader pulls. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
+It proves authoritative recovery from saved certification after restart and older
+catch-up through reader pulls; it does not use raw replay or legacy gap markers. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
 The existing ping method's #2198 read proof retains complete live receipts before
 classification and confirms displayable reply and exact peer-post targets; see
 [read-target evidence](#scripted-read-target-evidence-2198).
@@ -1421,7 +1421,7 @@ assistant reply (`awaitCachedAssistantReply`, polling every `CACHE_POLL_MS`), be
 `turn_end` to each interactive connection separately and the peer's copy can arrive first; cutting on the
 peer's frame alone risks dropping the phone's own still-streaming row (see [Caching conversation
 repository § The merge base moves at a connection
-boundary](knowledge/features/caching-conversation-repository-connection-boundary.md#the-merge-base-moves-at-a-connection-boundary-not-on-every-emission)). `setHostLink(serverId, up = false)` —
+boundary](knowledge/features/caching-conversation-repository-connection-boundary.md)). `setHostLink(serverId, up = false)` —
 the two-way split of the existing `cycleHostLink` cut/restore drive, keyed on
 `RelayConnectionRegistry`'s coordinator repository going `null` or non-`null` rather than
 `ConnectionState` — then tears down the connection-scoped repository, so what the open thread, the
@@ -1445,7 +1445,7 @@ that reconnect re-ask's history page to supply the prompt text.
 **[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the reconnect re-ask outright**
 (older history now loads only on the reader's own pull, never on a reconnect — see [Remote conversation
 repository § the retry and the two
-restarts](knowledge/features/remote-conversation-repository-history-walk.md#the-retry-and-the-two-restarts-778)),
+restarts](knowledge/features/remote-conversation-repository-history-walk.md)),
 so this scenario no longer has a history page to lean on for `OFFLINE_PROMPT`'s text. It still needs none:
 since pyrycode#2699, landed before #1352, the daemon pushes each delivered user message **live and into
 the replay ring**, not only into history, so the missed-event `last_event_id` replay that #1352 explicitly
@@ -1944,7 +1944,7 @@ while deterministic gates stayed green. See the [panel's label rules](knowledge/
 The panel's own end state
 is **not** durable: the terminal `background_task_updated` marks the task Finished, but real claude also
 sends an empty `background_task_roster` unprompted after a finish, and `BackgroundTaskProjection`'s
-wholesale-replace rule (see [`backgroundTasks`](knowledge/features/remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677))
+wholesale-replace rule (see [`backgroundTasks`](knowledge/features/remote-conversation-repository-live-stream-and-modals.md))
 then drops the task from the panel before the label is ever read. The assertion accepts either "Finished"
 or "No background tasks" and still rejects "No background-task report yet" — the live run showed the
 empty-roster reading win. One real claude turn: the prompt that starts the task.
@@ -2168,7 +2168,7 @@ with the thread cache cleared so the row can only come from history replay. It s
 of the LIVE list — with no id in a replayed `message` entry, no row could appear — until #1020's reducer
 change let a stored user `message` entry's `attachment_ids` survive into the reduced row (see [Remote
 conversation repository — reads and the thread store — history
-paging](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)).
+paging](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md)).
 With that fix it dropped `@Ignore` and rides LIVE as the curated list's thirty-second method.
 [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the opening history ask that used
 to fetch this row for free on reopening chat X after `rebuildGraph` — older pages now load only on the
@@ -3477,42 +3477,17 @@ and [current read-target evidence](#scripted-read-target-evidence-2198).
 Run `python3 scripts/android-test-gate.py scripted ping` to execute both
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
 and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`.
-The latter reuses #1833's `DurableGapProof` and passive `DurableHistoryProbe`: the repository tap
-observes the app's existing rows and requests and issues no history requests itself.
+The latter reuses `DurableGapProof` with
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`.
+The shared helper is authoritative-only: its baseline reads committed certification,
+and recovery checks actual accepted query receipts and correlated final certificates.
+It preserves both held sides, reset/page assertions, missed posts, exact reply and
+rendered order. Reader pulls drive older demand. Raw-history coverage, marker search
+and legacy cache branches are removed; independent producer diagnostics never supply
+phone content or certification. See [current acceptance](#authoritative-runtime-removal-2367).
 
-The promoted channel's phone cache must hold a settled baseline before the phone disconnects.
-While disconnected, the owned daemon accepts two batches of **120 posts each**, with one completed
-scripted reply between them. The 240 posts put the reply and oldest post outside the 200-entry
-newest page; the earlier 60-post batches could let that page satisfy the reply assertion without
-older catch-up. Post-control acknowledgement proves acceptance, not asynchronous delivery.
-Before sending the reply, wait for the existing peer stream to observe the first batch's last
-`assistant_delta`. Before accepting the second batch, wait for this conversation's interactive
-`turn_end` with `producer != channel_post`: posts also emit completion, so a generic completion
-wait can return a preceding post and place the reply after the newer batch.
-
-Restart the owned daemon with its durable home retained and replay emptied. After reconnect,
-require exactly one availability-driven newest request, a durable gap and the newest post,
-while the oldest post and completed reply remain absent. A received page can preserve the cached
-reader's viewport anchor; semantics-reveal the already delivered newest row only after those
-request/replay-exclusion checks, assert it is displayed and assert the reveal issued no request.
-Merely revealing each gap marker is also inert. Physical reader pulls then request one page each,
-with no page-arrival loop. Since #1917, `DurableGapProof.catchUp` pulls while fixture posts or the
-assistant reply are missing, requiring at least two pulls and at most six.
-It then independently waits for displayed-marker closure without further demand. Hidden cached
-coverage may still report unresolved gaps after fixture recovery, so using that metadata as the
-pull-loop condition would try to reveal a nonexistent marker. Keep chronological post identity,
-exactly-once reply, settled reply, reply placement between batches and held cached-row assertions.
-These checks prove delivery and reader demand rather than automatic viewport following. See
-[the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
-
-Since #2069, passive diagnostics correlate page receipt counts and durable spans/gaps with
-projected anchors and composed-marker counts at newest receipt, each completed pull, fixture
-recovery and final exhaustive search. They log static phases, numbers and booleans only and
-initiate no demand. A zero composed count in one lazy viewport is insufficient: the independent
-final `performScrollToNode` search accepts only Compose's specific exhausted-search assertion.
-Recovered fixture content also cannot fill an omitted non-rendering durable identity. The
-[original/repaired comparison](#scripted-durable-gap-closure-2069) establishes the daemon-owned
-cause while preserving every shared proof assertion, deadline and physical-pull bound.
+The following earlier fragmented-projection evidence describes the removed runtime.
+Its counts and outcomes remain historical.
 
 **Fragmented projection regression evidence (#1917, 2026-10-07).** The
 [verifier's inspected fresh XML](https://github.com/pyrycode/pyrycode-mobile/pull/1929#issuecomment-6047583572)
@@ -3719,21 +3694,16 @@ reply and sent-echo observations read through `harnessThreadEvidence` rather tha
 the repository directly; see
 [the source-bound migration](#scripted-streaming-and-reopen-source-bound-migration-2171).
 
-**`stream-queued-echo`** — enabled by #2078 in
-`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`.
-This separate legacy reproduction displays the held two-delta prefix and captures its reply id,
-sends a follow-up through the owning repository, observes the own echo queued, then releases
-the third delta and result. The captured row must contain all three fragments through completion,
-with no suffix row. It uses the held stream fixture and zero real Claude turns. Run it in isolation:
-
-```sh
-DETERMINISTIC=1 SCENARIO=stream-queued-echo PYRY_FORCE_TEST_RUN=1 bash scripts/e2e-emulator.sh
-```
-
-The manual selection is absent from `scripted-all`; that gate cannot substitute for the isolated
-run. Retain fresh named XML and executed/failed/skipped counts, and run the existing
-`python3 scripts/android-test-gate.py scripted stream` scenario too. See
-[counted evidence](#legacy-queued-follow-up-continuity-2078).
+**Queued follow-up continuity** —
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`
+runs beside `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` in
+`python3 scripts/android-test-gate.py scripted stream` and `scripted-all`.
+Each method has an independent phone/daemon and counted XML outcome. The queued
+proof binds text and exact phone device/message identity to one admitted current-owner
+`user_message` with queued status, then retains the same reply through completion.
+Delivered evidence cannot substitute for queue state. Both methods use zero real
+Claude turns. The old manual `stream-queued-echo` selection remains historical;
+current managed stream selection covers both methods.
 
 **`spinner`** — the thinking state is transient: a single fragment with `thinking` then `end_turn` would
 flip `isThinking` true→false before Compose lays out the spinner. The harness therefore holds the turn
@@ -3899,6 +3869,57 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Authoritative runtime removal (#2367)
+
+The accepted verifier reviewed Mobile `440c460adf60e9f9a12266b6539d857d6670b873`,
+including main `4cf670c96a5b586cf03a2997c5f27ed52e855cca`, on macOS.
+Linux is outside this ticket's verification scope. The daemon revision for scripted
+execution was `fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe`, using fakeclaude and zero
+real Claude turns. These are configured full-gate results, not separate focused runs.
+
+| Invocation | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| JVM/build | 5341 | 5341 | 0 | 0 |
+| Native UI, original | 327 | 325 | 2 | 1 |
+| Native exact failed-method rerun | 2 | 1 | 1 | 0 |
+| Scripted-all | 24 | 24 | 0 | 0 |
+
+The native restart case passed its same-candidate repeat. Model selection still
+failed and was accepted as inherited from main, tracked in #2351. The skipped
+`RenameDialogCaptureTest.renameAtFigmaViewport` is not a pass. All original failed
+and skipped results retain their outcomes.
+
+The scripted ping XML contains
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+executed/passed once without skips (ping selection: 2 executed/passed, 0 failed/skipped).
+The stream XML separately contains
+`interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` and
+`interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`, each 1 executed,
+1 passed, 0 failed/skipped. Both are methods of `DeterministicInteractiveStreamE2ETest`.
+
+Native UI XML contains the **recorded**
+`RecordedMobileSuiteTest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`,
+plus `RecordedPermissionTest.capturedPermissionReachesTheClientAndCompletes` and
+`ThreadDesignCaptureTest.threadSavedFrameAt412By892`, each executed/passed once
+without skips. That replay is distinct from the enabled rung-3
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`.
+Its authoritative observations and accepted genuine offline recording are unchanged;
+no fresh real-Claude run or additional #2246 restart proof is claimed.
+
+Raw XML and diagnostics were retained at review time under the agents repository's
+`logs/evidence/2367/manual-takeover-20261021/fourth-verifier/managed/`:
+`jvm-_brgz58v/`, `ui-t4nummhp/`, `ui-whup25sl/` and `scripted-all-zi721cf_/`.
+The ping report is `ping-0-TEST-installed.xml`; the two stream reports are
+`stream-0-TEST-stream-stream-0.xml` and `stream-1-TEST-stream-stream-queued-echo-0.xml`.
+Native reports use `0-TEST-pixel2Api33Atd_0-_app-.xml`. These locations may be pruned;
+the counted results and source attribution above remain the evidence record.
+
+`ThreadDesignCaptureTest.historyTailFramesAt412By892`, which drove removed raw
+history requests, is retired. Shared loading/retry/offline/unavailable presentation,
+viewport, tool grouping and Agent ownership assertions remain, supplied by authored
+facts or literal rows. Dormant storage serialization remains for #2364.
+
 
 ### Earlier-session Agent with older paging and overlapping replay (#1963)
 
@@ -4526,7 +4547,7 @@ The held reply's split came from an invisible Info receipt after a correctly par
 not missing open-phase evidence. History reconciliation also needs pending echo context while
 retaining reserved placement and renderer ownership. See
 [assistant continuity](knowledge/features/remote-conversation-repository-assistant-reply-segments.md)
-and [queue history](knowledge/features/queued-backlog.md#queued-display-metadata-and-history).
+and [queue history](knowledge/features/queued-backlog.md).
 
 ### Queue, recovery and agent evidence migration (#2174)
 
@@ -7561,6 +7582,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **#2367:** rung-3 `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+  and rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+  retain authoritative-only shared recovery proofs. Current counted stream, ping and
+  replay results are [recorded above](#authoritative-runtime-removal-2367). Legacy
+  algorithm tests and the raw-history-only design capture are retired; storage-only
+  removal continues in #2364. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
+
 - **#2246:** rung-3 `InteractiveStreamE2ETest` restart/settlement and its separately
   counted rung-4 `DeterministicInteractiveStreamE2ETest` twin are covered above.
   Named live/fresh pairs, committed replay and configured gates are evidenced;
@@ -8555,7 +8584,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   pyrycode#2596, and the `TYPE_MESSAGE` arm now reuses the same `storedAttachmentReferences` shape filter,
   dedup and 32-id cap the `TYPE_SEND_MESSAGE` arm already used (#983), gated to `Role.User` rows (see
   [Remote conversation repository — reads and the thread store — history
-  paging](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)).
+  paging](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md)).
   `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` dropped its `@Ignore` and rejoined the
   curated `LIVE=1` list as its thirty-second method — the method itself already existed, unchanged, on
   `InteractiveStreamE2ETest`. The ticket also restored #1016's `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`

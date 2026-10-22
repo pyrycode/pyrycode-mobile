@@ -9,8 +9,8 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
-import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
-import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureBackgroundRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -264,7 +264,7 @@ class ThreadEvidenceTest {
     @Test fun legacyBackgroundIdentitiesFollowPresentationAcrossProseAndAliases() {
         for (aliased in listOf(false, true)) {
             val items = legacyBackgroundItems(aliased)
-            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+            val rows = fixtureBackgroundRows(fixtureQueuedRows(items, emptyList()), items, null)
             val projected = rows.filterIsInstance<ThreadRow.Delivered>()
             val run = foldToolRuns(rows, emptySet()).filterIsInstance<ThreadRow.ToolRun>().single()
             val held = legacyThreadEvidence("host", "chat", connection, items)

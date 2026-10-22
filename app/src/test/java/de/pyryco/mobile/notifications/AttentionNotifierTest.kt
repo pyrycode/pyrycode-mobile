@@ -243,7 +243,7 @@ class AttentionNotifierTest {
         withNotifier {
             val reply = kotlinx.coroutines.CompletableDeferred<String?>()
             alerts.emit(TURN.copy(historyEntryId = 5u, preview = { reply.await() }))
-            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(5u, 5u)))
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(5u, null, 5u, true)))
             reply.complete("Read reply")
             assertTrue(posted().isEmpty())
             alerts.emit(TURN.copy(key = "retired", preview = { "Retired reply" }, isCurrent = { false }))
@@ -577,7 +577,7 @@ class AttentionNotifierTest {
             alerts.emit(TURN.copy(historyEntryId = 5u))
             assertEquals(1, posted().size)
         }
-        marks("host-a", "conv", 5u, 6u)
+        marks("host-a", "conv", 6u, 6u)
         withNotifier {
             assertTrue(posted().isEmpty())
             alerts.emit(TURN.copy(historyEntryId = 5u))
@@ -589,24 +589,27 @@ class AttentionNotifierTest {
     fun lateCompletionCoverageRetainsUnsignedCheckpointIdentityIncludingZero() =
         withNotifier {
             listOf(0uL, Long.MAX_VALUE.toULong() + 1u).forEachIndexed { index, checkpoint ->
-                marks("host-a", "conv", null, checkpoint + 1u)
+                marks("host-a", "conv", null, checkpoint)
                 alerts.emit(TURN.copy(key = "checkpoint-$index", historyEntryId = checkpoint))
                 assertEquals(1, posted().size)
-                marks("host-a", "conv", checkpoint, checkpoint + 1u)
+                marks("host-a", "conv", checkpoint, checkpoint)
                 assertTrue(posted().isEmpty())
             }
         }
 
     @Test
     fun aLaggingConfirmedProjectionCannotCancelACompletionTheCurrentRepositoryStillReportsUnread() {
-        var current = ConversationReadMarks(4u, 6u)
+        var current = ConversationReadMarks(4u, null, 6u, true)
         readMarksOf = { _, _ -> current }
         withNotifier {
             alerts.emit(TURN.copy(historyEntryId = 5u))
             marks("host-a", "conv", 5u, 6u)
             assertEquals(1, posted().size)
-            current = ConversationReadMarks(5u, 7u)
+            current = ConversationReadMarks(5u, null, 7u, true)
             marks("host-a", "conv", 5u, 7u)
+            assertEquals(1, posted().size)
+            current = ConversationReadMarks(7u, null, 7u, true)
+            marks("host-a", "conv", 7u, 7u)
             assertTrue(posted().isEmpty())
         }
     }
@@ -620,7 +623,7 @@ class AttentionNotifierTest {
             alerts.emit(TURN.copy(historyEntryId = 5u))
             assertEquals(1, posted().size)
             assertTrue(manager.activeNotifications.isEmpty())
-            marks("host-a", "conv", 5u, 6u)
+            marks("host-a", "conv", 6u, 6u)
             assertTrue(posted().isEmpty())
         }
 
@@ -697,14 +700,14 @@ class AttentionNotifierTest {
 
     @Test
     fun aLaggingCoveredProjectionCannotCancelANewUnreadNotification() {
-        var current = ConversationReadMarks(5u, 6u)
+        var current = ConversationReadMarks(5u, null, 6u, true)
         readMarksOf = { _, _ -> current }
         withNotifier {
             alerts.emit(TURN)
             assertEquals(1, posted().size)
             marks("host-a", "conv", 5u, 5u)
             assertEquals(1, posted().size)
-            current = ConversationReadMarks(6u, 6u)
+            current = ConversationReadMarks(6u, null, 6u, true)
             marks("host-a", "conv", 6u, 6u)
             assertTrue(posted().isEmpty())
         }
@@ -738,7 +741,8 @@ class AttentionNotifierTest {
         latest: ULong?,
     ) {
         readMarks.value =
-            readMarks.value + (server to (readMarks.value[server].orEmpty() + (conversation to ConversationReadMarks(read, latest))))
+            readMarks.value +
+            (server to (readMarks.value[server].orEmpty() + (conversation to ConversationReadMarks(read, null, latest, true))))
     }
 
     @Test

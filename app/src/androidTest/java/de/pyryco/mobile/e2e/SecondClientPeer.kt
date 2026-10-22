@@ -304,10 +304,7 @@ class SecondClientPeer(
         }
     }
 
-    /**
-     * Every entry of [conversationId]'s history as this device sees it (#1016), newest first: `request_history`
-     * pages walked from the newest, each page's cursor echoed verbatim, until one says `at_start`.
-     */
+    /** Independent producer diagnostics; never a phone content source. */
     internal suspend fun history(
         conversationId: String,
         timeoutMs: Long,

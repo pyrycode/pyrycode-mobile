@@ -20,7 +20,7 @@ adds the thread-row family and the thread restore — see
 writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` and
 `removeConversation` to unpair and to permanent deletion — see
 [§ Removal on unpair](#removal-on-unpair--forgetremovedhost) below and
-[Caching conversation repository § delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798).
+[Caching conversation repository § delete](caching-conversation-repository.md).
 
 ## The contract
 
@@ -39,7 +39,7 @@ nearest unresolved older edge is shown, preferring a known gap over unknown cove
 Lifecycle evidence and queued echoes establish neither occupied spans nor targets, and empty eligible
 history shows no markers. Hiding a marker changes no anchor, opaque cursor or coverage claim;
 restoration and reconnect retain hidden gaps for later displayed content. See
-[marker projection](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+[marker projection](thread-screen-oldest-end-history-demand.md).
 This display repair changes no cache schema, retention bound or persistence policy. The suspected
 cache-retention source of fragmentation remains unconfirmed and outside this repair.
 
@@ -120,7 +120,7 @@ cleared by the next successful write of that document or by `removeHost`.
   for that thread. Accepted in #797's security review as a residual, deferred until observed. The
   row count moved from 200 to 100000 in #1353, matching desktop's own saved-timeline cap, once
   banners, compaction dividers and model refusals started counting toward it (see § The contract
-  above) — raising it is what made [`mergeCachedRows`](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)'s
+  above) — raising it is what made [`mergeCachedRows`](caching-conversation-repository.md)'s
   per-emission cost worth a look; see that section for the fix and why a bound this large changed
   what "cheap enough to run on every streaming delta" means.
 

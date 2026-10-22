@@ -47,7 +47,7 @@ that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s f
 real `AttachmentStore` on a `TemporaryFolder` for exactly this reason.
 
 Permanent deletion does not go through this hook — see [Caching conversation repository §
-delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) for
+delete](caching-conversation-repository.md) for
 `removeConversation`'s call site, which is a `CachingConversationRepository` override, not a paired-
 server-store hook.
 

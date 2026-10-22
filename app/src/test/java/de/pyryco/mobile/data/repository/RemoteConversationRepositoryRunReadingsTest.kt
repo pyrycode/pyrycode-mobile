@@ -1,8 +1,10 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -10,7 +12,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -20,6 +24,16 @@ import org.junit.Test
  * and § `session_facts`.
  */
 class RemoteConversationRepositoryRunReadingsTest {
+    private val previousSink = RelayLog.sink
+
+    @Before fun silencePlatformLogging() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restorePlatformLogging() {
+        RelayLog.sink = previousSink
+    }
+
     // ---- model_announced ---------------------------------------------------------------------------
 
     @Test
@@ -211,19 +225,28 @@ class RemoteConversationRepositoryRunReadingsTest {
     @Test
     fun sessionTransition_clearsOnlyItsConversationsReadings() =
         runTest {
-            val (pump, repo) = repo()
+            val pump = FakeSessionPump()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                    authoritativeHostId = "host",
+                )
+            pump.push(sessionSnapshotClear("c1", "s1"))
+            pump.push(sessionSnapshotClear("c2", "s1"))
             val c1Model = collectAnnouncedModel(repo, "c1")
             val c1Facts = collectSessionFacts(repo, "c1")
             val c2Model = collectAnnouncedModel(repo, "c2")
             val c2Facts = collectSessionFacts(repo, "c2")
             runCurrent()
 
-            pump.push(modelAnnounced("c1", "claude-opus-5-5", id = 1L))
-            pump.push(sessionFacts("c1", "2.1.259", "default", null, id = 2L))
-            pump.push(modelAnnounced("c2", "claude-sonnet-5", id = 3L))
-            pump.push(sessionFacts("c2", "2.1.220", "plan", null, id = 4L))
+            pump.push(modelAnnounced("c1", "claude-opus-5-5", id = 1L).ownedBy("c1", "s1"))
+            pump.push(sessionFacts("c1", "2.1.259", "default", null, id = 2L).ownedBy("c1", "s1"))
+            pump.push(modelAnnounced("c2", "claude-sonnet-5", id = 3L).ownedBy("c2", "s1"))
+            pump.push(sessionFacts("c2", "2.1.220", "plan", null, id = 4L).ownedBy("c2", "s1"))
             runCurrent()
-            pump.push(sessionTransition("c1", id = 5L))
+            pump.push(sessionSnapshotClear("c1", "s2"))
             runCurrent()
 
             assertEquals(listOf(null, AnnouncedModel("claude-opus-5-5", truncated = false), null), c1Model)
@@ -257,7 +280,7 @@ class RemoteConversationRepositoryRunReadingsTest {
         runTest {
             val (pump, repo) = repo()
             val stall = collect(repo.observeStall("c1"))
-            val thread = collect(repo.observeMessages("c1"))
+            val thread = collect(repo.observeAuthoritativeThread("c1"))
             val settings = collect(repo.observeSessionSettings("c1"))
             runCurrent()
             pump.push(stall("c1", id = 1L))
@@ -271,7 +294,7 @@ class RemoteConversationRepositoryRunReadingsTest {
             runCurrent()
 
             assertEquals("the stall stands", listOf(false, true), stall)
-            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals("no authoritative content changed", listOf(AuthoritativeThreadSnapshot()), thread)
             assertEquals("the settings reading is untouched", settingsBefore, settings)
             assertEquals("the saved override is not the announced model", "opus", settings.last()?.model)
             assertEquals("the confirmed permission mode is not claude's claim", "default", settings.last()?.permissionMode)
@@ -328,17 +351,6 @@ class RemoteConversationRepositoryRunReadingsTest {
             id,
         )
     }
-
-    private fun sessionTransition(
-        conversationId: String,
-        id: Long,
-    ): Envelope =
-        probe(
-            "session_transition",
-            """{"conversation_id":"$conversationId","previous_session_id":"s1","new_session_id":"s2",""" +
-                """"reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
-            id,
-        )
 
     private fun stall(
         conversationId: String,

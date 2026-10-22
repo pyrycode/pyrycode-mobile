@@ -316,7 +316,7 @@ history page over the encrypted repository, within a three-second total bound, e
 look settled: a forgiving projection can hide a dropped tail or tool seam. Missing, malformed,
 incomplete, failed or timed-out evidence uses the agent-specific fixed completion body. It never
 borrows a previous turn, legacy whole-turn row or child agent's reply. See the
-[history completeness policy](remote-conversation-repository-assistant-reply-segments.md#notification-preview-evidence-1725).
+[history completeness policy](remote-conversation-repository-assistant-reply-segments.md).
 
 A permission alert combines the existing modal title and nonblank action prompt, for example
 “Allow Bash? claude wants to run: ./gradlew lint”. These are display fields, not inferred tool

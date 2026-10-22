@@ -16,7 +16,6 @@ import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
@@ -129,7 +128,6 @@ class NegotiatedThreadViewModelTest {
             runCurrent()
             vm.onDemandOlderHistory()
             vm.onRetryOlderHistory()
-            vm.onDemandUnsignedHistoryGap(0uL)
             runCurrent()
             assertEquals(0, legacy.observed)
             assertEquals(0, legacy.historyAsks)
@@ -150,7 +148,8 @@ class NegotiatedThreadViewModelTest {
             val vm = viewModel(owner, legacy, Route("other"))
             backgroundScope.launch { vm.state.collect {} }
             runCurrent()
-            assertTrue(legacy.observed > 0)
+            assertEquals(0, legacy.observed)
+            assertEquals(0, legacy.historyAsks)
             assertNull(vm.state.value.authoritativeThread)
             owner.clear()
         }
@@ -274,10 +273,6 @@ class NegotiatedThreadViewModelTest {
                         FakeConnectionStateSource(),
                         ComposerDraftStore(),
                         contentScheduling = scheduling,
-                        backgroundTasks = {
-                            legacy.taskObservations++
-                            kotlinx.coroutines.flow.flowOf(null)
-                        },
                     ) as T
             }
         return ViewModelProvider(owner, factory)[ThreadViewModel::class.java]
@@ -291,25 +286,6 @@ class NegotiatedThreadViewModelTest {
         var historyAsks = 0
         var queueObservations = 0
         var taskObservations = 0
-
-        override fun observeQueue(conversationId: String): Flow<List<de.pyryco.mobile.data.repository.QueuedMessage>> {
-            queueObservations++
-            return fake.observeQueue(conversationId)
-        }
-
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> {
-            observed++
-            return fake.observeMessages(conversationId)
-        }
-
-        override suspend fun requestHistory(
-            conversationId: String,
-            cursor: String,
-            limit: Int,
-        ): HistoryPage {
-            historyAsks++
-            return fake.requestHistory(conversationId, cursor, limit)
-        }
     }
 
     private class Route(

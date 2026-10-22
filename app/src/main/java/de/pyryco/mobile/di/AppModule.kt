@@ -517,8 +517,6 @@ internal class ThreadDestinationFactory(
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
             // #678: the open host's roster and live count; the demo early-return above keeps the defaults.
-            backgroundTasks = { id -> bundle?.coordinator?.observeBackgroundTasks(id) ?: flowOf(null) },
-            backgroundTaskCount = { id -> bundle?.coordinator?.observeLiveBackgroundTaskCount(id) ?: flowOf(0) },
             backgroundTaskStopSupported = bundle?.coordinator?.supportsBackgroundTaskStop ?: flowOf(false),
             backgroundTaskStopRefusals = { id -> bundle?.coordinator?.observeBackgroundTaskStopRefusals(id) ?: emptyFlow() },
             stopBackgroundTask = { id, task ->
