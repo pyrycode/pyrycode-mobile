@@ -51,7 +51,6 @@ internal class SuiteReadReceipts(
 
     private val threadReceipts = SuiteThreadReadReceipts(source)
     private val normalizedRequests = mutableSetOf<Pair<String, Long>>()
-    private val snapshots = mutableMapOf<String, MutableSet<JsonElement>>()
     private val nextIds = mutableMapOf<String, Long>()
     private var action = 0
     val steps: List<SuiteStep>
@@ -123,7 +122,6 @@ internal class SuiteReadReceipts(
                         .toSet()
                 groups[key] = Group(stored, target, previous?.snapshots.orEmpty() + CapturedRead(stored, response, precedingQueries))
                 normalizedRequests += step.owner to frame.id
-                snapshots.getOrPut(step.owner) { mutableSetOf() } += response.payload
                 guardedSnapshots += Triple(host(step.owner), response.payload, stored)
             } else if (frame.type !in queries) {
                 epoch++
@@ -137,7 +135,8 @@ internal class SuiteReadReceipts(
                     step.direction == "client" -> step.owner to frame.id in normalizedRequests
                     step.direction != "daemon" -> false
                     frame.inReplyTo != null -> step.owner to frame.inReplyTo in normalizedRequests
-                    else -> frame.type == "conversation_updated" && frame.payload in snapshots[step.owner].orEmpty()
+                    // Genuine notifications remain gated by permits, including peer-confirmed progress.
+                    else -> false
                 }
             }
     }

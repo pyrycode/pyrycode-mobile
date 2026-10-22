@@ -35,6 +35,7 @@ class SuiteReadReceiptsTest {
         queryConversation: String = "chat",
         intermediateRead: Boolean = false,
         terminateAfterRead: Boolean = false,
+        notifyIntermediateRead: Boolean = false,
     ): RecordedSuiteTape {
         val item = """{
             "id":11,"kind":"assistant_message","rev":13,"order":11,"status":"done",
@@ -111,6 +112,17 @@ class SuiteReadReceiptsTest {
                             readerOwner,
                             frame(7, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":10}""", 4),
                         ),
+                        *if (notifyIntermediateRead) {
+                            arrayOf(
+                                SuiteStep(
+                                    "daemon",
+                                    readerOwner,
+                                    frame(10, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":10}"""),
+                                ),
+                            )
+                        } else {
+                            emptyArray()
+                        },
                     )
                 },
                 *if (queryBeforeRead == null) {
@@ -261,6 +273,28 @@ class SuiteReadReceiptsTest {
         val reply = authoritativeRead(tape, target = 10).deliveries.single().message!!
         assertEquals(91L, reply.inReplyTo)
         assertEquals("confirmed peer progress remains monotonic", JsonPrimitive(11), reply.payload.jsonObject["read_up_to"])
+        tape.request("phone/host0/0", frame(92, "thread_catch_up", """{"conversation_id":"chat","epoch":"e","version":15}"""))
+        tape.assertComplete()
+    }
+
+    @Test fun peerProgressReleasesTheCapturedPhoneNotificationWithoutALocalRead() {
+        val tape =
+            authoritativeTape(
+                queryBeforeRead = "thread_catch_up",
+                intermediateRead = true,
+                notifyIntermediateRead = true,
+                terminateAfterRead = true,
+            )
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        tape.delivered("peer/other-host/0", frame(80, "conversation_updated", """{"id":"chat","read_up_to":11}"""))
+        assertTrue("another host supplies no read authority", tape.initial().isEmpty())
+        tape.delivered("peer/host0/0", frame(80, "conversation_updated", """{"id":"chat","read_up_to":11}"""))
+        val notification = tape.initial().single()
+        assertEquals("phone/host0/0", notification.owner)
+        assertEquals(null, notification.message!!.inReplyTo)
+        assertEquals(JsonPrimitive(10), notification.message.payload.jsonObject["read_up_to"])
+        assertEquals(JsonPrimitive(11), notification.message.payload.jsonObject["last_shown_version"])
         tape.request("phone/host0/0", frame(92, "thread_catch_up", """{"conversation_id":"chat","epoch":"e","version":15}"""))
         tape.assertComplete()
     }
