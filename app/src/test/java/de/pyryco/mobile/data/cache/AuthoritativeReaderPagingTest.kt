@@ -255,7 +255,13 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
                 vm.onRetryOlderHistory()
                 vm.state.first { it.authoritativeThread?.rows?.size == 400 }
-                assertEquals(facts.takeLast(400), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                assertEquals(
+                    facts.takeLast(400),
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
                 assertEquals(2, attempts)
                 assertEquals(0, disk.authoritativeFullReads)
                 assertEquals(requests, fixture.requests)
