@@ -27,6 +27,8 @@ internal object PassiveThreadProbe {
             override val support = delegate.support
             override val store = delegate.store
 
+            override fun localHistory(conversationId: String) = delegate.localHistory(conversationId)
+
             override suspend fun open(conversationId: String) = delegate.open(conversationId)
 
             override suspend fun acquire(

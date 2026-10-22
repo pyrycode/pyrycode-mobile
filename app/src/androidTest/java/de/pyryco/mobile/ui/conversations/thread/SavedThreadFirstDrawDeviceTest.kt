@@ -84,6 +84,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /** The GL renderer this process draws with, as the guest reports it. */
 private val firstDrawRenderer: String by lazy {
@@ -132,6 +133,7 @@ class SavedThreadFirstDrawDeviceTest {
         val vm: ThreadViewModel,
         val probe: Probe,
         val online: Boolean,
+        val retryFrame: AtomicReference<Probe?>? = null,
     )
 
     private fun awaitDeviceReadiness(case: String) {
@@ -253,7 +255,7 @@ class SavedThreadFirstDrawDeviceTest {
 
         fun assertBound() {
             assertTrue(
-                "$name first drawn newest row: ${elapsed(drawn.get())} ms ($firstDrawBoundLabel)",
+                "$name first committed visible row: ${elapsed(drawn.get())} ms ($firstDrawBoundLabel)",
                 metBound(),
             )
         }
@@ -420,6 +422,14 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen() {
+        measureDatabasePages()
+    }
+
+    @Test fun slowOlderDatabaseRead_negativeControlRejectsTheSameRetryFrameBound() {
+        measureDatabasePages(successfulOlderReadDelayMs = 3000)
+    }
+
+    private fun measureDatabasePages(successfulOlderReadDelayMs: Long = 0) {
         installHost()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "database-pages-${SystemClock.elapsedRealtimeNanos()}")
@@ -456,6 +466,8 @@ class SavedThreadFirstDrawDeviceTest {
                     val db = database()
                     val disk = MigratingConversationCache(File(root, "files"), db)
                     val attempts = AtomicInteger()
+                    val successfulReadMs = AtomicLong()
+                    val retryFrame = AtomicReference<Probe?>()
                     val release = CompletableDeferred<Unit>()
                     var fail = true
                     val cache =
@@ -468,7 +480,10 @@ class SavedThreadFirstDrawDeviceTest {
                                 size: Int,
                             ): AuthoritativeThreadWindow? {
                                 attempts.incrementAndGet()
+                                val started = SystemClock.elapsedRealtimeNanos()
+                                if (!fail) delay(successfulOlderReadDelayMs)
                                 val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                                if (!fail) successfulReadMs.set((SystemClock.elapsedRealtimeNanos() - started) / 1_000_000)
                                 release.await()
                                 return if (fail) null else page
                             }
@@ -481,7 +496,7 @@ class SavedThreadFirstDrawDeviceTest {
                         if (online) destination.connect()
                         vm = destination.open()
                         owner.put("thread", vm)
-                        selected.value = Opening(vm, probe, online)
+                        selected.value = Opening(vm, probe, online, retryFrame)
                     }
                     try {
                         composeRule.waitUntil(15_000) { probe.drawn.get() > 0 }
@@ -539,8 +554,22 @@ class SavedThreadFirstDrawDeviceTest {
                                 ?.rows
                                 ?.size == 400
                         }
+                        val retried = requireNotNull(retryFrame.get())
                         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(399)
                         composeRule.onNodeWithText("Saved 17601.").assertIsDisplayed()
+                        composeRule.waitUntil(15_000) { retried.drawn.get() > 0 }
+                        Log.i(
+                            "SavedThreadPaging",
+                            "event=retry_frame case=${probe.name} retry_ms=${retried.elapsed(retried.drawn.get())} " +
+                                "successful_read_ms=${successfulReadMs.get()} injected_ms=$successfulOlderReadDelayMs " +
+                                "bound_ms=$firstDrawBoundMs renderer=$firstDrawRenderer",
+                        )
+                        if (successfulOlderReadDelayMs == 0L) {
+                            retried.assertBound()
+                        } else {
+                            assertTrue(retried.elapsed(retried.drawn.get()) >= successfulOlderReadDelayMs)
+                            assertThrows(AssertionError::class.java) { retried.assertBound() }
+                        }
                         val olderBounds = composeRule.onNodeWithText("Saved 17601.").fetchSemanticsNode().boundsInRoot
                         val viewport = composeRule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
                         assertTrue(
@@ -581,6 +610,15 @@ class SavedThreadFirstDrawDeviceTest {
                                 "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())} " +
                                 "older=$olderBounds viewport=$viewport",
                         )
+                        Log.i(
+                            "SavedThreadPaging",
+                            "event=older_read_control case=${probe.name} injected_ms=$successfulOlderReadDelayMs " +
+                                "successful_read_ms=${successfulReadMs.get()} opening_drawn_ms=${probe.elapsed(probe.drawn.get())} " +
+                                "retry_frame_ms=${retried.elapsed(retried.drawn.get())} bound_ms=$firstDrawBoundMs",
+                        )
+                        if (successfulOlderReadDelayMs > 0) {
+                            assertTrue(successfulReadMs.get() >= successfulOlderReadDelayMs)
+                        }
                     } finally {
                         composeRule.runOnUiThread {
                             selected.value = null
@@ -855,6 +893,43 @@ class SavedThreadFirstDrawDeviceTest {
                                 // Require a subsequent frame, still containing the exact visible text.
                                 view.postInvalidateOnAnimation()
                             }
+                            val retry = opening.retryFrame?.get()
+                            if (retry != null && retry.drawn.get() == 0L && viewport != null) {
+                                val header =
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-top-bar"
+                                        }?.boundsInRoot
+                                val composer =
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-composer"
+                                        }?.boundsInRoot
+                                val older =
+                                    nodes.firstOrNull { node ->
+                                        node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == retry.newestText } == true
+                                    }
+                                if (older != null &&
+                                    header != null &&
+                                    composer != null &&
+                                    older.layoutInfo.isPlaced &&
+                                    older.boundsInRoot.width > 0 &&
+                                    older.boundsInRoot.height > 0 &&
+                                    older.boundsInRoot.left >= viewport.left &&
+                                    older.boundsInRoot.right <= viewport.right &&
+                                    older.boundsInRoot.top >= viewport.top &&
+                                    older.boundsInRoot.bottom <= viewport.bottom &&
+                                    older.boundsInRoot.top >= header.bottom &&
+                                    older.boundsInRoot.bottom <= composer.top
+                                ) {
+                                    view.viewTreeObserver.registerFrameCommitCallback {
+                                        if (selected.value === opening && opening.retryFrame?.get() === retry) {
+                                            retry.drawn.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                        }
+                                    }
+                                    view.postInvalidateOnAnimation()
+                                }
+                            }
                         }
                     observer.addOnDrawListener(listener)
                     onDispose { observer.removeOnDrawListener(listener) }
@@ -870,7 +945,10 @@ class SavedThreadFirstDrawDeviceTest {
                         ThreadScreen(state, {
                         }, {
                         }, if (online) ConnectionState.Connected else ConnectionState.Offline, {
-                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = vm::onRetryOlderHistory)
+                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = {
+                            opening.retryFrame?.set(Probe("${probe.name} Retry", "Saved 17601."))
+                            vm.onRetryOlderHistory()
+                        })
                     }
                 }
             }
