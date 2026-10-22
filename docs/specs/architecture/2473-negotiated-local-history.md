@@ -29,3 +29,8 @@ Only after causal red, forward localHistory directly through the three transpare
 ## Evidence status
 
 Plan committed before new test source; wrappers unchanged. #2473 was filed manually held at creation, linked as actual2470child and OPEN acceptance blocker through2334; no implementation cycle. DBopening/demand/Retry/coldreopen1000ms product/2000ms SwiftShader and actual consumedDB3000ms controls remain. Direct-file compatibility stays36000facts/18000islands/18000messages; positivefiletiming belongs only to nonblocking2456. Final accepted receipt belongs in authoritative-reader-paging.md with history retained verbatim and all parent links under50000bytes.
+
+
+## Actual causal red before repair
+
+Exact956e50fd7954963670abc578dbe25907ba9ecd36: five new JVM methods executed freshly, one direct-provider control passed, all four decorator/installed-chain cases failed the intended assertion: actual Loading was hidden as Idle. Zero errors/skips. ForcedSpotlessApply passed; only inspected test parameter layout/trailing comma formatting was preserved in a separate ordinary commit. Raw2473/manual-20261022/decorators-red-956e manifest9cc1c675dead8ce4384782bb31ac5aa95d33e06cad280a03838da7dc8f99c9d8. No wrapper or production change preceded this red. The demonstrated defect justifies exactly one localHistory forwarding override per transparent wrapper; retain all predicates and controls unchanged.
