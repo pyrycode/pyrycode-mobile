@@ -1008,88 +1008,103 @@ class AuthoritativeReaderPagingTest {
             }
         }
 
-    @Test fun retiredReaderCannotApplyAfterReplacementAtStoreMonitor() = runTest {
-        disk().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", (1..600).map { fact(it) }, 1000, 900)).getOrThrow()
-        destination(disk()) { fixture, vm, repo ->
-            vm.state.first { it.authoritativeThread?.rows?.size == 200 }
-            runCurrent()
-            val store = repo.authoritativeThreads
-            val route = requireNotNull(repo.negotiatedThread)
-            fun repositoryField(name: String) =
-                CachingConversationRepository::class.java.getDeclaredField(name).also { it.isAccessible = true }
-            val field = repositoryField("processingDispatcher")
-            val originalDispatcher = field.get(repo)
-            val readersField = repositoryField("authoritativeReaders")
-            val hydrationsField = repositoryField("authoritativeHydrations")
-            @Suppress("UNCHECKED_CAST")
-            val readers = readersField.get(repo) as Map<String, kotlinx.coroutines.CoroutineScope>
-            @Suppress("UNCHECKED_CAST")
-            val hydrations = hydrationsField.get(repo) as Map<kotlinx.coroutines.CoroutineScope, Job>
-            val oldReader = requireNotNull(readers["c"])
-            val workerThread = java.util.concurrent.atomic.AtomicReference<Thread>()
-            val worker = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "verifier-retired-page").also { workerThread.set(it) }
-            }.asCoroutineDispatcher()
-            var replacement: Job? = null
-            var oldHydration: Job? = null
-            val before = store.current("host", "c")
-            val baselinesField = repositoryField("persistedAuthoritative")
-            val baselines = baselinesField.get(repo) as Map<*, *>
-            fun savedBaseline(): Any? = baselines["c"]?.let { candidate ->
-                candidate.javaClass.getDeclaredField("authoritative").also { it.isAccessible = true }.get(candidate)
-            }
-            val baselineBefore = savedBaseline()
-            try {
-                field.set(repo, worker)
-                synchronized(store) {
-                    vm.onDemandOlderHistory()
-                    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
-                    var blockedAtApply = false
-                    while (System.nanoTime() < deadline) {
-                        runCurrent()
-                        val thread = workerThread.get()
-                        val stack = thread?.stackTrace.orEmpty()
-                        blockedAtApply = thread?.state == Thread.State.BLOCKED && stack.any {
-                            it.className.contains("CachingConversationRepository\$applyAuthoritativeRestore") &&
-                                it.methodName == "invokeSuspend"
-                        }
-                        if (blockedAtApply) break
-                        Thread.sleep(5)
-                    }
-                    assertTrue("hydration must finish validation and block immediately before restore", blockedAtApply)
-                    oldHydration = requireNotNull(hydrations[oldReader])
-                    println("race_boundary=validated_waiting_for_store_monitor initial_rows=${before.items.size}")
-                    replacement = backgroundScope.launch { route.observe("c").collect {} }
-                    runCurrent()
-                    assertTrue("replacement must own reader slot", readers["c"] !== oldReader)
-                    assertTrue("old hydration must already be cancelled", !requireNotNull(oldHydration).isActive)
-                    assertEquals(before, store.current("host", "c"))
-                    val generation = store.current("host", "c").generation
-                    println("race_replacement=registered old_hydration_cancelled=true generation=$generation")
-                }
-                requireNotNull(oldHydration).join()
+    @Test fun retiredReaderCannotApplyAfterReplacementAtStoreMonitor() =
+        runTest {
+            disk().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", (1..600).map { fact(it) }, 1000, 900)).getOrThrow()
+            destination(disk()) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
                 runCurrent()
-                val after = store.current("host", "c")
-                println("race_result initial_rows=${before.items.size} final_rows=${after.items.size} no_replacement_demand=true")
-                assertEquals("Retired reader mutated the replacement reader's content", before.items.size, after.items.size)
-                assertEquals(before.items, after.items)
-                assertEquals(before.openingRows, after.openingRows)
-                assertEquals(before, after)
-                assertEquals(baselineBefore, savedBaseline())
-                assertEquals(200, requireNotNull(vm.state.value.authoritativeThread).rows.size)
-                field.set(repo, originalDispatcher)
-                val requests = fixture.requests.size
-                vm.onDemandOlderHistory()
-                vm.state.first { it.authoritativeThread?.rows?.size == 400 }
-                assertEquals((201..600).map { fact(it) }, store.current("host", "c").items.map { it.raw })
-                assertEquals(requests, fixture.requests.size)
-            } finally {
-                field.set(repo, originalDispatcher)
-                replacement?.cancelAndJoin()
-                worker.close()
+                val store = repo.authoritativeThreads
+                val route = requireNotNull(repo.negotiatedThread)
+
+                fun repositoryField(name: String) =
+                    CachingConversationRepository::class.java.getDeclaredField(name).also { it.isAccessible = true }
+                val field = repositoryField("processingDispatcher")
+                val originalDispatcher = field.get(repo)
+                val readersField = repositoryField("authoritativeReaders")
+                val hydrationsField = repositoryField("authoritativeHydrations")
+
+                @Suppress("UNCHECKED_CAST")
+                val readers = readersField.get(repo) as Map<String, kotlinx.coroutines.CoroutineScope>
+
+                @Suppress("UNCHECKED_CAST")
+                val hydrations = hydrationsField.get(repo) as Map<kotlinx.coroutines.CoroutineScope, Job>
+                val oldReader = requireNotNull(readers["c"])
+                val workerThread =
+                    java.util.concurrent.atomic
+                        .AtomicReference<Thread>()
+                val worker =
+                    java.util.concurrent.Executors
+                        .newSingleThreadExecutor { runnable ->
+                            Thread(runnable, "verifier-retired-page").also { workerThread.set(it) }
+                        }.asCoroutineDispatcher()
+                var replacement: Job? = null
+                var oldHydration: Job? = null
+                val before = store.current("host", "c")
+                val baselinesField = repositoryField("persistedAuthoritative")
+                val baselines = baselinesField.get(repo) as Map<*, *>
+
+                fun savedBaseline(): Any? =
+                    baselines["c"]?.let { candidate ->
+                        candidate.javaClass
+                            .getDeclaredField("authoritative")
+                            .also { it.isAccessible = true }
+                            .get(candidate)
+                    }
+                val baselineBefore = savedBaseline()
+                try {
+                    field.set(repo, worker)
+                    synchronized(store) {
+                        vm.onDemandOlderHistory()
+                        val deadline =
+                            System.nanoTime() +
+                                java.util.concurrent.TimeUnit.SECONDS
+                                    .toNanos(10)
+                        var blockedAtApply = false
+                        while (System.nanoTime() < deadline) {
+                            runCurrent()
+                            val thread = workerThread.get()
+                            val stack = thread?.stackTrace.orEmpty()
+                            blockedAtApply = thread?.state == Thread.State.BLOCKED &&
+                                stack.any {
+                                    it.className.contains("CachingConversationRepository\$applyAuthoritativeRestore") &&
+                                        it.methodName == "invokeSuspend"
+                                }
+                            if (blockedAtApply) break
+                            Thread.sleep(5)
+                        }
+                        assertTrue("hydration must finish validation and block immediately before restore", blockedAtApply)
+                        oldHydration = requireNotNull(hydrations[oldReader])
+                        println("race_boundary=validated_waiting_for_store_monitor initial_rows=${before.items.size}")
+                        replacement = backgroundScope.launch { route.observe("c").collect {} }
+                        runCurrent()
+                        assertTrue("replacement must own reader slot", readers["c"] !== oldReader)
+                        assertTrue("old hydration must already be cancelled", !requireNotNull(oldHydration).isActive)
+                        assertEquals(before, store.current("host", "c"))
+                        val generation = store.current("host", "c").generation
+                        println("race_replacement=registered old_hydration_cancelled=true generation=$generation")
+                    }
+                    requireNotNull(oldHydration).join()
+                    runCurrent()
+                    val after = store.current("host", "c")
+                    println("race_result initial_rows=${before.items.size} final_rows=${after.items.size} no_replacement_demand=true")
+                    assertEquals("Retired reader mutated the replacement reader's content", before.items.size, after.items.size)
+                    assertEquals(before.items, after.items)
+                    assertEquals(before.openingRows, after.openingRows)
+                    assertEquals(before, after)
+                    assertEquals(baselineBefore, savedBaseline())
+                    assertEquals(200, requireNotNull(vm.state.value.authoritativeThread).rows.size)
+                    field.set(repo, originalDispatcher)
+                    val requests = fixture.requests.size
+                    vm.onDemandOlderHistory()
+                    vm.state.first { it.authoritativeThread?.rows?.size == 400 }
+                    assertEquals((201..600).map { fact(it) }, store.current("host", "c").items.map { it.raw })
+                    assertEquals(requests, fixture.requests.size)
+                } finally {
+                    field.set(repo, originalDispatcher)
+                    replacement?.cancelAndJoin()
+                    worker.close()
+                }
             }
         }
-    }
-
-
 }
