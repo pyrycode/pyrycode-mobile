@@ -128,6 +128,20 @@ Verifier finding 1 on `787cedf9c` establishes five strict recorded-request regre
 
 The production repair, matcher, original assertions, deadlines and connection fencing remain unchanged. The existing causal unit reds and the verifier's five strict replays provide pre-change failures. Re-run the five named native replays after fixture integration, affected repository/recording unit tests and the Linux scripted ping pair; full configured gates remain dispatcher-owned. Security re-review: PASS; existing capture validation and credential rejection remain mandatory, raw diagnostics stay private, and no metadata is manufactured. This is the same availability behavior and its integration coverage: forecast below 850 written lines including the five one-line recordings, index receipts and plan; no additional production file, exported type or consumer migration.
 
+#### Genuine contract review
+
+All five original native scenario bodies passed once against Mobile `0b93815f1088c28c513aad4f4d83899c3520fea2`, Core `2c68b595440dd7e8e843af9cff0d9a708bcc81a7` (daemon SHA-256 `d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`), and the same effective APKs. Each fresh strict replay passed once. Accept these genuine replacements, with the unchanged strict comparison dispositions below. Commands, their complete normalized payloads, lifecycle owners and lifecycle sequences are identical in all five comparisons; only recorded query checkpoints differ where named.
+
+| Scenario | Strict comparison | Reviewed difference |
+| --- | --- | --- |
+| `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` | IDENTICAL | Genuine terminal summary now supplies shown 11/read 0; no additional refresh is needed. |
+| `interactiveTurn_markdownReply_rendersFormattedBody` | CHANGED | One additional empty-payload list request and catch-up at checkpoint 16; push registration occurs before phone-send rather than after it. The genuine live summary response to request 14 omits shown; response to follow-up 15 supplies shown 13/read 0 on the same owner. |
+| `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` | CHANGED | Additional catch-up at checkpoint 14; generated epoch aliases are allocated in opposite order. Six connection replacements, query owners and commands remain exact. The genuine live summary is already available, shown 11/read 0. |
+| `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` | CHANGED | Additional catch-ups at checkpoints 15 and 24 in the two existing phone-send intervals. All list counts, host-2 ownership, commands and the other conversation's requests remain exact. Genuine summaries supply shown 18/read 14 and then 34/read 14. |
+| `negativeControl_wordClaudeNeverSays_isNeverDisplayed` | CHANGED | Additional catch-up at checkpoint 14; all list counts, commands and lifecycle remain exact. Genuine capture retained the original absence wait (92.588 native seconds). |
+
+Private capture/replay traces, comparisons and originals are retained at agents `logs/evidence/2467/four-flow-capture-0b93815f1-complete/` and `negative-compat-0b93815f1/`. Negative-control compatibility exited 1: genuine capture 1/1 and fresh replay 1/1 passed, while old replay failed and comparison remained CHANGED. Preserve that failure. The four-method capture exited 0, with four genuine captures and four fresh replays passed. The initial five-method selection refusal and cancelled pre-capture attempt with an older cached binary executed no tests and supply no acceptance. Overlaps #1947, #2052, #2175 and #2325 touch only other inventory rows; update the five rows locally without reformatting the inventory.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store.md`, repair/checkpoint discussion: explain the connection-owned live-summary response and certification edges, one consumed follow-up, and independent metadata authority.
