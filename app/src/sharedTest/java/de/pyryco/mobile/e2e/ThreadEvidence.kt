@@ -170,20 +170,19 @@ internal class ThreadEvidenceSource private constructor(
         fun negotiated(
             route: NegotiatedThread,
             snapshots: (String) -> Flow<AuthoritativeThreadSnapshot> = { route.store.observe(route.host, it) },
-        ) =
-            ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
-                // Evidence is passive: the destination, not its assertions, owns the cache reader lease.
-                combine(route.support, snapshots(conversation)) { support, snapshot ->
-                    val connection =
-                        when (support) {
-                            is ThreadSupport.Supported -> support.connection
-                            is ThreadSupport.Missing -> support.connection
-                            ThreadSupport.Unverified -> route
-                        }
-                    val evidence = authoritativeThreadEvidence(route.host, conversation, connection, snapshot)
-                    if (support is ThreadSupport.Missing) ThreadEvidence(evidence.owner, emptyList(), admitted = false) else evidence
-                }
+        ) = ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
+            // Evidence is passive: the destination, not its assertions, owns the cache reader lease.
+            combine(route.support, snapshots(conversation)) { support, snapshot ->
+                val connection =
+                    when (support) {
+                        is ThreadSupport.Supported -> support.connection
+                        is ThreadSupport.Missing -> support.connection
+                        ThreadSupport.Unverified -> route
+                    }
+                val evidence = authoritativeThreadEvidence(route.host, conversation, connection, snapshot)
+                if (support is ThreadSupport.Missing) ThreadEvidence(evidence.owner, emptyList(), admitted = false) else evidence
             }
+        }
     }
 }
 
