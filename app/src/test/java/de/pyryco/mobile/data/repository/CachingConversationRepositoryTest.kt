@@ -4,10 +4,9 @@ import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
 import de.pyryco.mobile.data.cache.FileConversationCache
-import de.pyryco.mobile.data.cache.cacheableThreadRows
+import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
+import de.pyryco.mobile.data.cache.savedTextFixture
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -50,7 +49,6 @@ class CachingConversationRepositoryTest {
         RelayLog.enabled = oldEnabled
     }
 
-    private val live = MutableStateFlow<List<ThreadItem>>(emptyList())
     private val stall = MutableStateFlow(true)
     private var failDelete = false
     private val archiveCalls = mutableListOf<String>()
@@ -77,43 +75,10 @@ class CachingConversationRepositoryTest {
             }
         }
 
-    private fun message(
-        id: String,
-        isStreaming: Boolean = false,
-        content: String = "content of $id",
-    ) = ThreadItem.MessageItem(
-        Message(id, "session-2", Role.Assistant, content, Instant.parse("2026-09-22T10:00:00Z"), isStreaming),
-    )
-
-    private val boundary =
-        ThreadItem.SessionBoundary("session-1", "session-2", BoundaryReason.Clear, Instant.parse("2026-09-22T09:00:00Z"))
-
-    private val offer =
-        ThreadItem.MessageItem(
-            de.pyryco.mobile.data.model.Message(
-                "offered",
-                "",
-                de.pyryco.mobile.data.model.Role.Assistant,
-                "",
-                Instant.parse("2026-09-22T10:00:01Z"),
-                false,
-                attachments =
-                    listOf(
-                        de.pyryco.mobile.data.model
-                            .MessageAttachment(ATTACHMENT_ID, "report.pdf"),
-                    ),
-            ),
-        )
-
-    private val banner = ThreadItem.Banner(BannerLevel.Warning, "hook said no", false, Instant.parse("2026-09-22T10:00:01Z"))
-    private val compaction = ThreadItem.CompactionBoundary(24000, 3000, true, Instant.parse("2026-09-22T10:00:02Z"))
-    private val refusal =
-        ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "refused", false, Instant.parse("2026-09-22T10:00:03Z"))
-
     @Test
     fun `every other flow is the live one untouched`() =
         runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1")))
+            val cache = RecordingCache()
             val repository = CachingConversationRepository(delegate, cache, "server-a")
 
             assertEquals(true, repository.observeStall("conv-1").first())
@@ -138,19 +103,19 @@ class CachingConversationRepositoryTest {
                     }
                 }
             val store = AttachmentStore(tmp.newFolder("attachments"), UnconfinedTestDispatcher(testScheduler))
-            val repository = CachingConversationRepository(fetching, RecordingCache(emptyList()), "server-a", store)
+            val repository = CachingConversationRepository(fetching, RecordingCache(), "server-a", store)
 
             val first = repository.retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID) as AttachmentRetrievalResult.Retrieved
             val again =
                 CachingConversationRepository(
                     fetching,
-                    RecordingCache(emptyList()),
+                    RecordingCache(),
                     "server-a",
                     store,
                 ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
             CachingConversationRepository(
                 fetching,
-                RecordingCache(emptyList()),
+                RecordingCache(),
                 "server-b",
                 store,
             ).retrieveAttachment(CONVERSATION_ID, ATTACHMENT_ID)
@@ -168,11 +133,11 @@ class CachingConversationRepositoryTest {
             CachingConversationRepository(delegate, cache, "server-a").delete("conv-1")
 
             assertEquals(listOf("conv-2"), cache.readConversations("server-a").map { it.id })
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
-            assertEquals(listOf(message("m2")), cache.readThread("server-a", "conv-2"))
+            org.junit.Assert.assertNull(cache.readAuthoritativeThread("server-a", "conv-1"))
+            assertEquals(savedTextFixture("content of m2"), cache.readAuthoritativeThread("server-a", "conv-2"))
             // Conversation ids are host-local: the other host's conversation of the same id is untouched.
             assertEquals(listOf("conv-1"), cache.readConversations("server-b").map { it.id })
-            assertEquals(listOf(message("b1")), cache.readThread("server-b", "conv-1"))
+            assertEquals(savedTextFixture("content of b1"), cache.readAuthoritativeThread("server-b", "conv-1"))
         }
 
     @Test
@@ -185,7 +150,7 @@ class CachingConversationRepositoryTest {
 
             assertTrue(result.exceptionOrNull() is IllegalStateException)
             assertEquals(listOf("conv-1", "conv-2"), cache.readConversations("server-a").map { it.id })
-            assertEquals(listOf(message("m1")), cache.readThread("server-a", "conv-1"))
+            assertEquals(savedTextFixture("content of m1"), cache.readAuthoritativeThread("server-a", "conv-1"))
         }
 
     @Test
@@ -199,13 +164,13 @@ class CachingConversationRepositoryTest {
 
             assertEquals(listOf("archive conv-1", "unarchive conv-1"), archiveCalls)
             assertEquals(listOf("conv-1", "conv-2"), cache.readConversations("server-a").map { it.id })
-            assertEquals(listOf(message("m1")), cache.readThread("server-a", "conv-1"))
+            assertEquals(savedTextFixture("content of m1"), cache.readAuthoritativeThread("server-a", "conv-1"))
         }
 
     @Test
     fun `a failed cache removal still completes the delete and logs a static event only`() =
         runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(emptyList(), failRemovals = true)
+            val cache = RecordingCache(failRemovals = true)
 
             CachingConversationRepository(delegate, cache, "server-SECRET").delete("conv-SECRET")
 
@@ -219,10 +184,10 @@ class CachingConversationRepositoryTest {
     /** Two conversations under one host, and a conversation of the same id under another. */
     private suspend fun ConversationCache.seed() {
         writeConversations("server-a", listOf(conversation("conv-1"), conversation("conv-2")))
-        writeThread("server-a", "conv-1", listOf(message("m1")))
-        writeThread("server-a", "conv-2", listOf(message("m2")))
+        writeAuthoritativeThread("server-a", "conv-1", savedTextFixture("content of m1"))
+        writeAuthoritativeThread("server-a", "conv-2", savedTextFixture("content of m2"))
         writeConversations("server-b", listOf(conversation("conv-1")))
-        writeThread("server-b", "conv-1", listOf(message("b1")))
+        writeAuthoritativeThread("server-b", "conv-1", savedTextFixture("content of b1"))
     }
 
     private fun conversation(id: String) =
@@ -236,38 +201,19 @@ class CachingConversationRepositoryTest {
             lastUsedAt = Instant.parse("2026-09-22T10:00:00Z"),
         )
 
-    /** One conversation's thread, seeded; records every write it is handed. */
+    /** Records supported cache access while unrelated flows stay live-only. */
     private class RecordingCache(
-        private val seed: List<ThreadItem>,
-        var failWrites: Boolean = false,
         var failRemovals: Boolean = false,
     ) : ConversationCache {
-        val writes = mutableListOf<List<ThreadItem>>()
         val removals = mutableListOf<Pair<String, String>>()
         var reads = 0
 
-        override suspend fun readThread(
+        override suspend fun readAuthoritativeThread(
             serverId: String,
             conversationId: String,
-        ): List<ThreadItem> {
+        ): SavedAuthoritativeThread? {
             reads++
-            return seed
-        }
-
-        override suspend fun writeThread(
-            serverId: String,
-            conversationId: String,
-            rows: List<ThreadItem>,
-        ): Result<Unit> {
-            // What the cache keeps, per writeThread's contract: the repository hands it the drawn rows (#1354).
-            writes += cacheableThreadRows(rows)
-            return if (failWrites) {
-                Result.failure(
-                    ConversationCacheException("conversation cache write_thread failed: io"),
-                )
-            } else {
-                Result.success(Unit)
-            }
+            return null
         }
 
         override suspend fun readConversations(serverId: String) = emptyList<Conversation>()

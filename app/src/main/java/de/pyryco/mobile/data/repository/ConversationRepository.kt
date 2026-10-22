@@ -1110,22 +1110,6 @@ data class QueuedMessage(
 )
 
 /**
- * The independent backwards walk's position, saved beside cached rows, plus received durable entry
- * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
- * Only received pages establish coverage; live rows never do.
- *
- * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
- * key — so [toString] leaves it out.
- */
-data class HistoryPosition(
-    val cursor: String,
-    val atStart: Boolean,
-    val coverage: HistoryCoverage? = null,
-) {
-    override fun toString(): String = "HistoryPosition(atStart=$atStart)"
-}
-
-/**
  * The run configuration of one session (#590) — the return of [ConversationRepository.observeSessionSettings].
  * The element type is co-located with the contract it serves, like [ThreadItem] / [QueuedMessage] /
  * [HistoryPage].

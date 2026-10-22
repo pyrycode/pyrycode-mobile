@@ -2,20 +2,9 @@ package de.pyryco.mobile.data.cache
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.MessageAttachment
-import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.model.SegmentDelta
-import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.repository.BannerLevel
-import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.HistoryPosition
-import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,45 +70,6 @@ class MigratingConversationCacheTest {
     }
 
     private val files get() = FileConversationCache(root)
-    private val time = Instant.fromEpochSeconds(1)
-
-    private fun row(
-        index: Int,
-        content: String = "text-$index",
-    ) = ThreadItem.MessageItem(Message("id-$index", "s", Role.User, content, Instant.fromEpochSeconds(index.toLong()), false))
-
-    private val allKinds =
-        listOf(
-            ThreadItem.MessageItem(
-                row(1).message.copy(reconciliationId = "ordinary", attachments = listOf(MessageAttachment("ref", "hint", "mime"))),
-            ),
-            ThreadItem.MessageItem(
-                row(2).message.copy(
-                    toolCall =
-                        ToolCall(
-                            "tool",
-                            "input",
-                            "output",
-                            ToolCallStatus.Failed,
-                            mapOf(
-                                "k" to "v",
-                            ),
-                        ),
-                ),
-            ),
-            ThreadItem.MessageItem(
-                row(3).message.copy(
-                    role = Role.Assistant,
-                    content = "prefixsuffix",
-                    segment = AssistantSegment("turn", listOf(SegmentDelta(2, 6), SegmentDelta(5, 6))),
-                ),
-            ),
-            ThreadItem.SessionBoundary("old", "new", BoundaryReason.Clear, time, "/workspace"),
-            ThreadItem.Banner(BannerLevel.Warning, "banner", true, time),
-            ThreadItem.CompactionBoundary(100, 50, true, time, true),
-            ThreadItem.ModelRefusal("original", "fallback", "refusal", true, time),
-            ThreadItem.StoppedTurn("stopped", "reason", "category", time),
-        )
 
     private fun raw(id: Int): JsonObject =
         MobileJson
@@ -170,8 +120,7 @@ class MigratingConversationCacheTest {
         runBlocking {
             val owners = listOf("Host" to "thread", "host" to "thread", "Host" to "file-only")
             owners.forEachIndexed { index, (host, thread) ->
-                files.writeThread(host, thread, listOf(row(index + 1))).getOrThrow()
-                files.writeHistoryPosition(host, thread, HistoryPosition("old-cursor", true)).getOrThrow()
+                writeObsoleteThreadFixture(root, host, thread)
                 files.writeAuthoritativeThread(host, thread, saved("epoch-$index", listOf(index + 1))).getOrThrow()
             }
             // There is no ownership envelope in old hashed thread paths. Never scan or guess their owner.
@@ -190,13 +139,10 @@ class MigratingConversationCacheTest {
                 assertEquals(readPositions, cache.readReadPositions("Host"))
                 assertTrue(cache.readReadPositions("host").isEmpty())
                 owners.forEachIndexed { index, (host, thread) ->
-                    assertTrue(cache.readThread(host, thread).isEmpty())
-                    assertNull(cache.readHistoryPosition(host, thread))
                     assertEquals(saved("epoch-$index", listOf(index + 1)).retained(), cache.readAuthoritativeThread(host, thread))
                     assertTrue(requireNotNull(database).imports().settled(host, thread, "legacy").isEmpty())
                     assertEquals("imported", outcome(host, thread, "authoritative"))
                 }
-                assertEquals(emptyList<ThreadItem>(), cache.readThread("unknown-owner", "unknown-thread"))
                 assertNull(cache.readAuthoritativeThread("unknown-owner", "unknown-thread"))
                 sources.zip(originalBytes).forEach { (file, bytes) -> assertArrayEquals(bytes, file.readBytes()) }
             }
@@ -537,9 +483,8 @@ class MigratingConversationCacheTest {
 
     @Test fun retirementInvariant_deletionWinsOverHeldWorkAndRestart() =
         runBlocking {
-            val rows = listOf(row(1), row(2))
             for (host in listOf("Host", "host")) {
-                files.writeThread(host, "thread", rows).getOrThrow()
+                writeObsoleteThreadFixture(root, host, "thread")
                 files.writeAuthoritativeThread(host, "thread", saved()).getOrThrow()
             }
             val sources = listOf(legacyFile("Host", "thread"), authoritativeFile("Host", "thread"))
@@ -565,7 +510,6 @@ class MigratingConversationCacheTest {
             requireNotNull(hold.getAndSet(null)).complete(Unit)
             assertEquals(saved().retained(), importing.await())
             removing.await().getOrThrow()
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "thread"))
             assertNull(cache.readAuthoritativeThread("Host", "thread"))
 
             // A held save is released after deletion was requested; deletion still wins.
@@ -592,19 +536,16 @@ class MigratingConversationCacheTest {
             // A source cleanup that failed leaves the files; restart still cannot resurrect them.
             sources.zip(bytes).forEach { (file, content) -> file.apply { parentFile?.mkdirs() }.writeBytes(content) }
             val restarted = open()
-            assertEquals(emptyList<ThreadItem>(), restarted.readThread("Host", "thread"))
             assertNull(restarted.readAuthoritativeThread("Host", "thread"))
             assertNull(restarted.readAuthoritativeThread("Host", "saved"))
-            assertEquals(emptyList<ThreadItem>(), restarted.readThread("host", "thread"))
             assertEquals(saved().retained(), restarted.readAuthoritativeThread("host", "thread"))
             otherSources.zip(otherBytes).forEach { (file, content) -> assertArrayEquals(content, file.readBytes()) }
         }
 
     @Test fun retirementInvariant_hostForgettingFencesSavesAndRestart() =
         runBlocking {
-            val rows = listOf(row(1), row(2))
             for ((host, thread) in listOf("Host" to "a", "Host" to "b", "host" to "a")) {
-                files.writeThread(host, thread, rows).getOrThrow()
+                writeObsoleteThreadFixture(root, host, thread)
                 files.writeAuthoritativeThread(host, thread, saved()).getOrThrow()
             }
             val sources = listOf(legacyFile("Host", "b"), authoritativeFile("Host", "b"))
@@ -632,21 +573,17 @@ class MigratingConversationCacheTest {
             release.complete(Unit)
             save.await().getOrThrow()
             forget.await().getOrThrow()
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "a"))
             assertNull(cache.readAuthoritativeThread("Host", "a"))
 
             // The forgotten host's own list collector writes after the removal; its closing repository's final save is still refused.
             cache.writeConversations("Host", listOf(conversation("a"))).getOrThrow()
             assertRefused("host_retired", cache.writeAuthoritativeThread("Host", "a", saved()))
             assertRefused("host_retired", cache.resetAuthoritativeThread("Host", "a", saved()))
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("Host", "a"))
 
             // Recursive delete failed to remove sources: restart neither imports them nor touches the other host.
             sources.zip(bytes).forEach { (file, content) -> file.apply { parentFile?.mkdirs() }.writeBytes(content) }
             val restarted = open()
-            assertEquals(emptyList<ThreadItem>(), restarted.readThread("Host", "b"))
             assertNull(restarted.readAuthoritativeThread("Host", "b"))
-            assertEquals(emptyList<ThreadItem>(), restarted.readThread("host", "a"))
             assertEquals(saved().retained(), restarted.readAuthoritativeThread("host", "a"))
             otherSources.zip(otherBytes).forEach { (file, content) -> assertArrayEquals(content, file.readBytes()) }
 
