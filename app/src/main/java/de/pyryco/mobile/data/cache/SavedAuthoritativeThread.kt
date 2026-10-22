@@ -16,6 +16,8 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import java.util.Collections
 
 /** Full saved facts, never a negotiated capability or current transient progress. */
@@ -122,12 +124,13 @@ private class OwnedThreadFacts(
 /** Freeze each complete decoded fact before the streaming decoder starts the next one. */
 private object OwnedThreadFactsSerializer : KSerializer<List<JsonObject>> {
     private val delegate = ListSerializer(JsonObject.serializer())
+    private val exactEncoding = ListSerializer(ExactSavedFactSerializer)
     override val descriptor = delegate.descriptor
 
     override fun serialize(
         encoder: Encoder,
         value: List<JsonObject>,
-    ) = delegate.serialize(encoder, value)
+    ) = exactEncoding.serialize(encoder, value)
 
     @OptIn(ExperimentalSerializationApi::class)
     override fun deserialize(decoder: Decoder): List<JsonObject> {
@@ -155,8 +158,32 @@ private object OwnedThreadFactsSerializer : KSerializer<List<JsonObject>> {
     }
 }
 
+/** Built-in numeric encoding coerces opaque tokens through Long/Double; preserve their validated spelling. */
+private object ExactSavedFactSerializer : KSerializer<JsonObject> {
+    private val delegate = JsonObject.serializer()
+    override val descriptor = delegate.descriptor
+
+    override fun serialize(encoder: Encoder, value: JsonObject) {
+        require(validThreadJson(value))
+        delegate.serialize(encoder, frozenThreadJson(value, preserveNumberLexemes = true) as JsonObject)
+    }
+
+    override fun deserialize(decoder: Decoder): JsonObject = delegate.deserialize(decoder)
+}
+
 /** Explicit stack preserves arbitrarily nested extension containers without adding recursive traversal. */
-private fun frozenThreadJson(root: JsonElement): JsonElement {
+@OptIn(ExperimentalSerializationApi::class)
+private fun frozenThreadJson(root: JsonElement, preserveNumberLexemes: Boolean = false): JsonElement {
+    fun primitive(value: JsonElement): JsonElement {
+        if (!preserveNumberLexemes || value !is JsonPrimitive || value.isString) return value
+        return when (value.content) {
+            "null", "true", "false" -> value
+            else -> {
+                require(validThreadJson(value))
+                JsonUnquotedLiteral(value.content)
+            }
+        }
+    }
     class Frame(
         val source: JsonElement,
     ) {
@@ -188,7 +215,7 @@ private fun frozenThreadJson(root: JsonElement): JsonElement {
             fields?.let { JsonObject(Collections.unmodifiableMap(it)) }
                 ?: JsonArray(Collections.unmodifiableList(requireNotNull(elements)))
     }
-    if (root !is JsonObject && root !is JsonArray) return root
+    if (root !is JsonObject && root !is JsonArray) return primitive(root)
     val stack = ArrayDeque<Frame>()
     stack.add(Frame(root))
     while (true) {
@@ -201,7 +228,7 @@ private fun frozenThreadJson(root: JsonElement): JsonElement {
         } else if (next is JsonObject || next is JsonArray) {
             stack.add(Frame(next))
         } else {
-            frame.accept(next)
+            frame.accept(primitive(next))
         }
     }
 }

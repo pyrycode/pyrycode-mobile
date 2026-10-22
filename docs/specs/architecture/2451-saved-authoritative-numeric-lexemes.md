@@ -19,3 +19,7 @@ The retained failing real disk round trip precedes this production repair. Stren
 ## Handoff
 
 Record final accepted-source evidence in authoritative-reader-paging.md. Preserve the prior337/338 result and all timing/OOM/count failures. Parent2449 still needs its own performance acceptance, then2447/2437/2334 each need current acceptance, documentation and actual merge/Done. Intended childbasefeature/2449/headfeature/2451; normal review is mandatory.
+
+## Confirmed focused red
+
+Before the production encoding change, a7f5c0562c selected/executed3 focused methods:1passed/2failed/0errors/skips. Both exact raw comparisons showed -0 becoming0; the original nested-array case also showed1e-400→0.0 and decimal rounding. The malformed-number/injection/known-field/previous-bytes probe passed unchanged. Fresh XML/log/source/plan plus standalone pinned1.8.1 probe/JAR hashes/serializer bytecode are retained in logs/evidence/2451/manual-20261022/red-a7f5, manifestb51808de532f37f6519bd6f8dcd9efbdb9f73ce29db703f65de48007f04b1038. The fix adds a saved-fact-only encoding serializer and a numeric mode on the existing iterative walker; both complete-fact validation and a direct primitive validation dominate each JsonUnquotedLiteral construction. Current repaired checks and independent acceptance remain pending.
