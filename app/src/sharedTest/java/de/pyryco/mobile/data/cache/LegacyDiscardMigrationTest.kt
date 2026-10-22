@@ -11,7 +11,6 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.openConversationCacheDatabase
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -27,7 +26,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import java.io.File
-import java.security.MessageDigest
 import java.util.UUID
 
 /** The same disk contract runs on Robolectric and real on-device SQLite. */
@@ -195,15 +193,9 @@ class LegacyDiscardMigrationTest {
         try {
             val original = baseline(File(parent, "baseline").apply { mkdirs() })
             if (version > 0) seed(root, version, original)
-            val files = FileConversationCache(File(root, "conversations"))
             val legacySources =
                 (owners + ("unknown-owner" to "unknown-conversation")).map { (host, conversation) ->
-                    val row = ThreadItem.MessageItem(Message("legacy", "", Role.User, "obsolete", Instant.fromEpochSeconds(0), false))
-                    files.writeThread(host, conversation, listOf(row)).getOrThrow()
-
-                    fun hash(value: String) =
-                        MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
-                    File(root, "conversations/${hash(host)}/threads/${hash(conversation)}.json").let { it to it.readBytes() }
+                    writeObsoleteThreadFixture(File(root, "conversations"), host, conversation).let { it to it.readBytes() }
                 }
             var preserved: Map<String, List<Map<String, String?>>>? = null
             repeat(3) { reopen ->
@@ -287,7 +279,6 @@ class LegacyDiscardMigrationTest {
                 store.restore(host, conversation, restored.toSnapshot(), 0)
                 assertEquals(listOf(pending), store.current(host, conversation).pendingSends.map { it.message })
                 assertTrue(restored.toSnapshot().pendingSends.isEmpty())
-                assertTrue(cache.readThread(host, conversation).isEmpty())
             }
             assertNull(cache.readAuthoritativeThread("unknown-owner", "unknown-conversation"))
             for ((file, bytes) in legacySources) org.junit.Assert.assertArrayEquals(bytes, file.readBytes())

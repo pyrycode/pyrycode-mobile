@@ -13,7 +13,7 @@ files and the retained version-1 thread files. Since #2385, only authoritative f
 sources. Legacy `threads/` files are ignored during opening, reading and import, including
 unknown-owner hashes; ownership is never inferred from filenames. Since #2386, schema 12
 discards the legacy Room family too. Its backend, entities, DAO and wrapper delegations are
-removed; dormant interface defaults and file codecs remain for #2387. Explicit scoped removal
+removed; #2387 also removes dormant row/history methods, models and file codecs. Explicit scoped removal
 still cleans up the corresponding files. No reopen recreates legacy tables or imports their files.
 
 The production opener retains explicit automatic migrations through every shipped schema,
@@ -27,8 +27,8 @@ retain versions 1–11 unchanged alongside the new `12.json`. The 11 → 12
 with authoritative indexes retained on upgrades and fresh creation.
 
 Earlier migrations still supply supported defaults and backfills. `OwnedRowsMigration`
-retains its historical 3 → 4 codec dependencies until #2387; malformed obsolete row bytes
-must survive that step without blocking their eventual discard. `DisplayWindowMigration`,
+retains the named historical 3 → 4 schema step with no content callback (#2387); no retired
+row decoder or identity helper runs, even for malformed obsolete bytes. `DisplayWindowMigration`,
 `RenderPlacementMigration` and `PlacementWitnessMigration` retain display, nested placement
 and witness/contribution backfills. Missing older fields receive their supported SQL defaults
 (including empty incarnation, zero flags/ids, empty placement keys and maximum renderer order)
