@@ -1,0 +1,52 @@
+{
+  "ticket": 2386,
+  "os": "Linux x86_64, OpenJDK 21, Robolectric API 33 and managed Android 13",
+  "implementationRevision": "129144c6f6bb93614a52dfc5d03a33e112079524",
+  "nativeRunHead": "9866c8e209e26e6ee7dea85ad56a0759c8e3e790",
+  "nativeSourceNote": "Production, Gradle configuration, exported schemas and shared migration fixture are byte-identical at both revisions; the later commit changes only a JVM-only fixture and its plan revision.",
+  "sharedFixtureSha256": "35af5f23b890a2c46420c54c443d8615f630f681c2b34607d1e8d9768e5fc3c0",
+  "persistentEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-20261022-129144c6f",
+  "checks": [
+    {
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest.preservationInvariant_freshCreationAndReopen --console=plain",
+      "sourceBase": "82cf5024366b20c1293b0dffaeca383995eebb11",
+      "uncommittedFixtureSha256": "9307bf418dba61582550af7c2d8a289fffa50b117daae657f149263fb2c31a53",
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "exitCode": 1,
+      "report": "red-legacy-tables.xml",
+      "reason": "Expected red: legacy schema remains on fresh creation."
+    },
+    {
+      "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest --console=plain",
+      "revision": "129144c6f6bb93614a52dfc5d03a33e112079524",
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "report": "matrix-final.xml",
+      "coverage": "Exported schemas 1 through 11 and fresh creation; each opens then reopens twice through the production opener. All authoritative columns, supported defaults/backfills, colliding owners, retirements, imports, isolated removal and pending feedback are asserted."
+    },
+    {
+      "command": "python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest#preservationInvariant_productionUpgradeAndFreshReopen",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "report": "native/0-TEST-pixel2Api33Atd_0-_app-.xml",
+      "phoneLog": "native/0-logcat-de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest-preservationInvariant_productionUpgradeAndFreshReopen.txt",
+      "coverage": "Schemas 2 and 11 plus fresh creation on real Android SQLite; original exact-preservation and post-upgrade operation assertions run unchanged."
+    }
+  ],
+  "historicalFailures": [
+    "fixture-invalid.xml retains the initial fixture-development failure; it is not migration evidence.",
+    "initial-matrix.xml retains an earlier 3/3 pass before strengthening placement/import probes; final acceptance uses matrix-final.xml.",
+    "authoritative-storage-fixture-red.xml at 9866c8e209e26e6ee7dea85ad56a0759c8e3e790 retains 13 executed, 12 passed, 1 failed, 0 skipped: the new historical fixture assumed an optional indices key was present."
+  ],
+  "completeConfiguredAcceptance": "Pending: dispatcher/verifier-owned build, JVM, UI and scripted gates.",
+  "macos": "Outside this Linux ticket's verification scope."
+}

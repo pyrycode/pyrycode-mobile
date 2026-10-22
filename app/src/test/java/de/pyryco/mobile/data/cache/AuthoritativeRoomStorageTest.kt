@@ -165,16 +165,29 @@ class AuthoritativeRoomStorageTest {
             SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
                 db.execSQL("UPDATE authoritative_items SET displayKey='old',anchorId=0,tieId=0 WHERE host='Host'")
                 val schema =
-                    MobileJson.parseToJsonElement(
-                        File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/10.json").readText(),
-                    ).jsonObject.getValue("database").jsonObject
+                    MobileJson
+                        .parseToJsonElement(
+                            File("src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/10.json").readText(),
+                        ).jsonObject
+                        .getValue("database")
+                        .jsonObject
                 for (entry in schema.getValue("entities").jsonArray) {
                     val entity = entry.jsonObject
                     val table = entity.getValue("tableName").jsonPrimitive.content
                     if (!table.startsWith("legacy_")) continue
-                    db.execSQL(entity.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
-                    entity.getValue("indices").jsonArray.forEach { index ->
-                        db.execSQL(index.jsonObject.getValue("createSql").jsonPrimitive.content.replace("\${TABLE_NAME}", table))
+                    db.execSQL(
+                        entity
+                            .getValue("createSql")
+                            .jsonPrimitive.content
+                            .replace("\${TABLE_NAME}", table),
+                    )
+                    entity["indices"]?.jsonArray?.forEach { index ->
+                        db.execSQL(
+                            index.jsonObject
+                                .getValue("createSql")
+                                .jsonPrimitive.content
+                                .replace("\${TABLE_NAME}", table),
+                        )
                     }
                 }
                 db.version = 10

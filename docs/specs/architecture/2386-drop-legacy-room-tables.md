@@ -58,7 +58,7 @@ None.
 
 ## Documentation handoff
 
-Pending documentation stage: update `docs/knowledge/features/conversation-cache-layout.md` (schema chain/backfills and supported layout), `conversation-cache-removal.md` (retained import/retirement fences), and `conversation-cache-testing.md` (counted upgrade/reopen proof). #2364/#2387 retain the complete contract/repository/thread documentation fold. Preserve historical schemas, specs, frozen archives and accepted/failed evidence.
+Pending documentation stage: update `docs/knowledge/features/conversation-cache-layout.md`, “Layout” (schema chain/backfills and supported layout); `docs/knowledge/features/conversation-cache-removal.md`, “Removal on unpair” (retained import/retirement fences); and `docs/knowledge/features/conversation-cache-testing.md`, “Testing” (counted upgrade/reopen proof). #2364/#2387 retain the complete contract/repository/thread documentation fold. Preserve historical schemas, specs, frozen archives and accepted/failed evidence.
 
 ## Security review
 

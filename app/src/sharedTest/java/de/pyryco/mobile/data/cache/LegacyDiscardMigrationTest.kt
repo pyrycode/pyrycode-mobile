@@ -218,7 +218,8 @@ class LegacyDiscardMigrationTest {
                     if (reopen == 0) {
                         for (table in supported) {
                             val expected =
-                                if (version == 0 || (version == 1 && table != "file_imports") ||
+                                if (version == 0 ||
+                                    (version == 1 && table != "file_imports") ||
                                     (version < 3 && table == "file_imports") ||
                                     (version < 5 && table == "authoritative_retirements")
                                 ) {
