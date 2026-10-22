@@ -694,8 +694,6 @@ class SavedThreadFirstDrawDeviceTest {
                         probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
                     }
                 }
-
-
             }
         val owner = ViewModelStore()
         lateinit var destination: SavedAuthoritativeDestination
