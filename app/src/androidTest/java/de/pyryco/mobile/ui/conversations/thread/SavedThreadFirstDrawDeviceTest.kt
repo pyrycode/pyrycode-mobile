@@ -896,18 +896,22 @@ class SavedThreadFirstDrawDeviceTest {
                             val retry = opening.retryFrame?.get()
                             if (retry != null && retry.drawn.get() == 0L && viewport != null) {
                                 val header =
-                                    nodes.firstOrNull {
-                                        it.config.getOrNull(SemanticsProperties.TestTag) == "thread-top-bar"
-                                    }?.boundsInRoot
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-top-bar"
+                                        }?.boundsInRoot
                                 val composer =
-                                    nodes.firstOrNull {
-                                        it.config.getOrNull(SemanticsProperties.TestTag) == "thread-composer"
-                                    }?.boundsInRoot
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-composer"
+                                        }?.boundsInRoot
                                 val older =
                                     nodes.firstOrNull { node ->
                                         node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == retry.newestText } == true
                                     }
-                                if (older != null && header != null && composer != null &&
+                                if (older != null &&
+                                    header != null &&
+                                    composer != null &&
                                     older.layoutInfo.isPlaced &&
                                     older.boundsInRoot.width > 0 &&
                                     older.boundsInRoot.height > 0 &&
