@@ -26,7 +26,7 @@ QMD's #2347 graph-restart plan documents the existing beforePhoneRestart fence b
 4. If it passes, preserve that outcome as an unchanged integrated diagnostic, not proof of cause or a flake waiver. Use the retained original failures, reviewed consumption regression and actual fresh lifecycle evidence to decide whether the upstream integration accounts for the change. Do not duplicate the reviewed fix or add product behavior merely to give this child a code diff.
 5. Run only directly affected additional checks justified by actual findings, final actual preverify, then each current candidate's own independent complete configured Linux JVM/UI/scripted acceptance, actual documentation and normal reviewed merge. Focused success closes neither this ticket nor any ancestor. Intended child PR base is feature/2464, head feature/2470; preserve the real stacked PR bases.
 
-## Security review
+## Initial diagnostic security review (retained)
 
 **Verdict: PASS** — manual review of the diagnostic plan,2026-10-22. No executable source, wire schema, cryptography, permissions, credentials, persistence, owner policy or production UI behavior changes are proposed. Replay remains a controlled test boundary and cannot certify daemon state. Strict payload matching, checkpoint/coverage certification, authenticated connection/host/conversation/epoch/generation identity, reader ownership, reset invalidation and retired-source rejection stay binding.
 
@@ -119,6 +119,33 @@ Repair only assertUiPlacement's key selection: capture the current admitted rece
 Existing PassiveAuthoritativeThreadObservationTest already covers same-epoch generation replacement on one actual subscription, rejection of the retired reading, and refusal to revive a stale connection. Include that full class in affected validation. The original native failed before this test-only repair; no product implementation is needed or proposed. Native success must still be followed by affected owner/binding/evidence checks and actual final guards/independent complete acceptance.
 
 Security self-review of the repair plan: PASS. The new lookup requires the current admitted UI receipt, not global retained data. It preserves all original daemon fact IDs, parent/session/turn/order/content comparisons and final UI ordering while correctly rebinding their ephemeral UI keys after a reset. The passive evidence API rejects changed connection/epoch/generation owners before and after lookup. No reset fence, capability, admission, certification, production source, query, reader lifetime, recording or deadline changes. This strengthens the assertion's ownership proof rather than allowing an old owner to pass.
+
+## Current-generation native repair passed
+
+Repair62b5064f6ee91f6f33fd7ab2d1dbeacc0697c621 executed original nativeui-9nankfcf:1listed/executed/passed, zero failures/errors/skips. The3existing PassiveAuthoritativeThreadObservationTest methods then executed fresh and passed, zero nonpass; SpotlessCheck and forced formatting passed. Archive2470/manual-20261022/placement-green-62b5 manifest4f466d0b2bc29e7078ded919244cf75c153853bf9247fd2a3a3a2dfb2d415782 retains XML/raw phone/image/phases/source/plan/diff/runtime binding. AppAPK remains633eab16b9ac41926bbfa2c6b027e01bc7373c134d39503ff38423855e10d3b3mtime10:14:06.218391Z; testAPK5e7b1c7c19a7118a73a0e3d651a36b6546fba876af5a228439799f25eca9786fmtime13:08:45.960688Z. Formatting-onlye883ad9586b2295e4838ab1dd7653e138c06609c was preserved afterward.
+
+The phone log proves the race and rejection. Probe1 has generation0/indexes2/6. Probe2 initially finds4/8/1 while the receipt changes and does not certify that read. At13:09:36.609 captured generation0 and screen generation0 lag current store generation1; indexes are-1/-1/-1. At13:09:36.626 the admitted screen receipt is current generation1, reference-identical to the store, with23facts/version96/checkpoint96; exact4/8/1 passes, followed by restart=passed/settlement_reconnect=passed. Generation fencing and every original family/send/navigation/content/ordering requirement remain. No product file changed.
+
+Earlier helper55fresh JVM passes at4cef and two-arm replacement control1pass atf72f retain their actual source/selection provenance. They were not relabelled as a full suite on62b5. Every failed native, helper red, fixture failure and rejected assumption remains above and in private archives. Final actual guards and independent complete configured acceptance remain pending; focused success accepts no ancestor. The first local evidence-doc append used a wrong scratch-relative path and stopped before writing; the empty bundle creation was refused, no source or evidence was lost.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] Native placement now derives keys only from the current admitted passive UI receipt, revalidates the complete original family and recovered-send fact identity/body/order, and never substitutes the global store for screen evidence. `ThreadEvidenceSource.negotiated` reads only the selected route's host-scoped store and support. Its existing support-to-connection reference mapping, Missing suppression and authoritative admission mapping remain unchanged. The concrete final `FakeConversationRepository` supplies only its authored in-memory fixture projection; real or decorated repositories cannot enter that branch. No new fact validation or capability claim is introduced.
+- [Tokens, secrets and credentials] No token/key generation, storage or lifecycle code changes. `ThreadEvidenceOwner` and record wrappers retain redacted string representations; new placement probes print only counts, indexes, checkpoints and fact-presence booleans, never payloads, pairing bundles, tokens, endpoints or user prose.
+- [Files and storage] No production file, path, cache format, backup rule, encryption-at-rest or write changes. Causal regressions use isolated test-owned Room/cache directories; passive evidence opens no persisted history query or file read. Existing exact read-count assertions remain binding.
+- [Android attack surface] No manifest, component, intent, permission, push, provider or WebView change. The original recorded Android scenario and activity lifecycle remain unchanged, including all placement and child-navigation assertions.
+- [Cryptography] No Noise, key, nonce, randomness, secret comparison or cryptographic primitive change. Fixture hashes identify preserved private evidence and make no authentication claim.
+- [Network and I/O] No transport, URL, header, frame decoder, retry/backoff or timeout change. The real-cache causal tests require no extra remote request and no full-file read. The fake exception is a pure in-memory producer, not a network or storage fallback.
+- [Errors, logs and telemetry] No product-facing error or telemetry change. Bounded native diagnostics are in test sources and use static phase/count/boolean fields only. Raw artifacts remain in the authorized private evidence archive with actual source/APK binding; original failures and provenance are preserved.
+- [Concurrency] The placement poll accepts only if the exact same admitted passive receipt remains current after key lookup; a connection/epoch/generation switch during lookup fails the poll. The helper's cold combine remains collector-owned and cancellable. Reading `route.store.observe` no longer registers/replaces the cached destination reader or clears its settled Retry. No job, scope, lock, detached collector or multi-reader registry is added. Existing reader replacement/cancel/reset/late-page controls remain unchanged and passed in affected validation.
+- [Threat model] Relay delay/reorder and hostile frames still pass through existing Noise/decoder/store validation; this test helper neither interprets new inbound data nor certifies it. Disk token theft and UI token-entry leakage receive no new surface because no credential, persistence or product UI path changes. Missing/retired/replaced connection evidence remains suppressed by the unchanged support and identity mapping, covered by the existing binding tests.
+
+**Reviewer:** manual builder self-review against `builder/security-review.md`; independent review remains required.
+**Date:** 2026-10-22
 
 ## Preserved acceptance and documentation contract
 
