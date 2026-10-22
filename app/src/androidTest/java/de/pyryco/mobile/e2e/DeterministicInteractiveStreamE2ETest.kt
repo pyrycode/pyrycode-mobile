@@ -766,6 +766,9 @@ class DeterministicInteractiveStreamE2ETest {
         val evidence = harnessThreadEvidence(repository)
         val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
         val prefix = hasText(REOPEN_PREFIX, substring = true) and inBubble
+        // Retire the captured source before the prefix, reproducing #2463 without a timing race.
+        severAndRestoreLink()
+        assertTrue("the prefix must arrive through a replacement source", coordinator.currentRepository.value !== repository)
         typeAndSend(SEND_PROMPT)
         android.util.Log.i("ReopenStreamProof", "phase=await_prefix source_current=${repository === coordinator.currentRepository.value}")
         val arrived =
