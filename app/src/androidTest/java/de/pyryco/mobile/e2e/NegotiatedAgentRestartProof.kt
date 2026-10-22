@@ -219,6 +219,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         ) { "release message must anchor the Agent between launch and finish" }
 
     var placementProbe = 0
+    var screenObservation: PassiveThreadObservation? = null
 
     fun assertUiPlacement(
         reading: ThreadEvidence,
@@ -227,15 +228,22 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         val root = reading.records.single { it.fact?.id == rootId }
         val before = reading.records.single { it.fact?.id == beforeAnchor.id }
         val probe = ++placementProbe
-        var previousIndexes: List<Int>? = null
+        var previousProbe: List<Any?>? = null
         var indexes = emptyList<Int>()
         waitUntil(120_000) {
             val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
             indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
                 after?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
-            if (indexes != previousIndexes) {
-                previousIndexes = indexes
-                val current = requireNotNull(source().negotiatedThread).store.current(host, conversation)
+            val current = requireNotNull(source().negotiatedThread).store.current(host, conversation)
+            val screen = screenObservation?.let { observation ->
+                observation.reading(host, conversation)?.let(observation::evidence)
+            }?.sourceSnapshot
+            val mark = indexes + listOf(
+                current.completedVersion, current.checkpoint, current.openingRows?.size,
+                screen?.completedVersion, screen?.checkpoint, screen?.openingRows?.size, screen?.items?.size,
+            )
+            if (mark != previousProbe) {
+                previousProbe = mark
                 val rootPresent = current.items.any { it.id == rootId }
                 val beforePresent = current.items.any { it.id == beforeAnchor.id }
                 val rootOpening = current.openingRows?.any { it.first == rootId }
@@ -245,7 +253,11 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                     "event=placement_probe probe=$probe indexes=$indexes facts=${current.items.size} " +
                         "checkpoint=${current.checkpoint} opening_count=${current.openingRows?.size} " +
                         "root_present=$rootPresent before_present=$beforePresent " +
-                        "root_opening=$rootOpening before_opening=$beforeOpening",
+                        "root_opening=$rootOpening before_opening=$beforeOpening " +
+                        "screen_facts=${screen?.items?.size} screen_version=${screen?.completedVersion} " +
+                        "screen_checkpoint=${screen?.checkpoint} screen_opening=${screen?.openingRows?.size} " +
+                        "screen_root=${screen?.items?.any { it.id == rootId }} " +
+                        "screen_before=${screen?.items?.any { it.id == beforeAnchor.id }} screen_current=${screen === current}",
                 )
             }
             indexes.all { it >= 0 }
@@ -285,6 +297,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         receipt("saved_before_launch", authoritativeThreadEvidence(host, conversation, route, restored))
         Log.i("NegotiatedAgentRestart", "event=graph_cache_restart graph=replaced cache=reopened saved_family=restored support=unverified")
     }.use {
+        PassiveThreadProbe.open().use { observation ->
+            screenObservation = observation
         openThread()
 
         fun checkFamily(verifyUi: Boolean = true): ThreadEvidence {
@@ -417,6 +431,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             Log.i("NegotiatedAgentRestart", "event=thread_activation route=authoritative restart=passed settlement_reconnect=passed")
         } finally {
             scope.cancel()
+        }
         }
     }
 }
