@@ -309,3 +309,18 @@ The ordinary merge of reviewed main b6845bf5d into the manual ownership repair p
 Repaired source 897ddbff4c514efb065bb9ca3ab86647b14e318b passed the single selected replacementReaderOwnsLocalRetryAndCleanup method (1 executed/passed, zero failed/errors/skips), forced Spotless (six tasks), and compileDebugAndroidTestKotlin. Native executed count remains zero for this integration. Retained raw reports, source and receipts are under logs/evidence/2437/manual-reader-apply-20261022/main-b684-integration/: failed-4256 manifest fb1723e1cde245782bb13821a28fc9185d1d77778c19f58b374636e2e98616d8; green-897d manifest 13b723c23395af59f24528c6932c7c00e83327a8a69761c0fc1d774937d6cb93. The original failure remains evidence; this focused rerun does not establish complete configured acceptance.
 
 Main's reviewed runtime retirement removed three former native methods, the optional legacy projection consumer and multi-span legacy coverage. Current projectionDispatcher is unused, and SavedThreadCoverage represents one interval. A delayed unused dispatcher or a logged span count cannot substitute for the binding native proof. Manually held blocker #2447 requires an approved compatibility mapping before fixture implementation; all six methods, current independent gates, actual documentation and final workflow completion remain outstanding.
+
+## Prior first-draw map retained during reviewed storage retirement
+
+The following earlier map is retained verbatim as history. The approved authoritative-only #2447 mapping and current accepted-source evidence in this companion govern the pending acceptance. Historical focused passes do not accept a later candidate.
+
+### Earlier #2334 map
+
+The [paging proof and counted evidence](authoritative-reader-paging.md#native-and-deterministic-proof)
+covers offline/held-newest demand, explicit retry and cold reopen through the production
+negotiated destination and real database. It retains the 1000 ms product target, unchanged
+renderer bound, full-file fixture, delayed projection and slow control below. The bounded
+repair in #2437 adds production disk/repository/ViewModel reset-after-settled-Retry and exact
+reader-replacement cleanup probes. Its focused manual 178 JVM and six native passes are
+recorded separately from the parent's failed review and pending independent acceptance in
+the companion; they do not establish final #2334 acceptance.
