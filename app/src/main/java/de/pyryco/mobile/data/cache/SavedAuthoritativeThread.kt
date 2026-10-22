@@ -163,7 +163,10 @@ private object ExactSavedFactSerializer : KSerializer<JsonObject> {
     private val delegate = JsonObject.serializer()
     override val descriptor = delegate.descriptor
 
-    override fun serialize(encoder: Encoder, value: JsonObject) {
+    override fun serialize(
+        encoder: Encoder,
+        value: JsonObject,
+    ) {
         require(validThreadJson(value))
         delegate.serialize(encoder, frozenThreadJson(value, preserveNumberLexemes = true) as JsonObject)
     }
@@ -173,7 +176,10 @@ private object ExactSavedFactSerializer : KSerializer<JsonObject> {
 
 /** Explicit stack preserves arbitrarily nested extension containers without adding recursive traversal. */
 @OptIn(ExperimentalSerializationApi::class)
-private fun frozenThreadJson(root: JsonElement, preserveNumberLexemes: Boolean = false): JsonElement {
+private fun frozenThreadJson(
+    root: JsonElement,
+    preserveNumberLexemes: Boolean = false,
+): JsonElement {
     fun primitive(value: JsonElement): JsonElement {
         if (!preserveNumberLexemes || value !is JsonPrimitive || value.isString) return value
         return when (value.content) {
@@ -184,6 +190,7 @@ private fun frozenThreadJson(root: JsonElement, preserveNumberLexemes: Boolean =
             }
         }
     }
+
     class Frame(
         val source: JsonElement,
     ) {

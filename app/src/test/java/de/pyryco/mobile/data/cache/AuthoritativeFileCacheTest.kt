@@ -69,31 +69,48 @@ class AuthoritativeFileCacheTest {
             val cache = FileConversationCache(temporary.root, dispatcher)
             val tokens = listOf("-0", "1e-400", "1e400", "1.234567890123456789", "9007199254740993123456789", "0e+00", "-2.50E-06")
             tokens.forEachIndexed { index, token ->
-                val raw = item(1, 2, 5, extra = "\"extension\":{\"number\":$token,\"text\":\"$token\",\"nested\":[null,true,{\"n\":$token}]},").raw
+                val raw =
+                    item(
+                        1,
+                        2,
+                        5,
+                        extra = "\"extension\":{\"number\":$token,\"text\":\"$token\",\"nested\":[null,true,{\"n\":$token}]},",
+                    ).raw
                 val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 10)
                 cache.writeAuthoritativeThread("host", "c$index", saved).getOrThrow()
                 val fresh = requireNotNull(FileConversationCache(temporary.root, dispatcher).readAuthoritativeThread("host", "c$index"))
-                assertEquals("token=$token", raw, fresh.toSnapshot().items.single().raw)
+                assertEquals(
+                    "token=$token",
+                    raw,
+                    fresh
+                        .toSnapshot()
+                        .items
+                        .single()
+                        .raw,
+                )
                 assertEquals(saved, fresh)
             }
         }
 
     @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-    @Test fun malformedNumericTokensAndKnownFieldViolationsCannotReplaceValidBytes() =
+    @Test
+    fun malformedNumericTokensAndKnownFieldViolationsCannotReplaceValidBytes() =
         runTest {
             val cache = FileConversationCache(temporary.root, StandardTestDispatcher(testScheduler))
             val saved = SavedAuthoritativeThread("e", listOf(item(1, 2, 5).raw), 10, 10)
             cache.writeAuthoritativeThread("host", "c", saved).getOrThrow()
             val document = temporary.root.walkTopDown().single { it.isFile }
             val bytes = document.readText()
-            val invalid = listOf("NaN", "Infinity", "-Infinity", "01", "1e", "0,\"injected\":true").map { token ->
-                JsonObject(saved.items.single() + ("extension" to kotlinx.serialization.json.JsonUnquotedLiteral(token)))
-            } + listOf(
-                JsonObject(saved.items.single() + ("id" to JsonPrimitive("1"))),
-                JsonObject(saved.items.single() + ("rev" to JsonPrimitive(0))),
-                JsonObject(saved.items.single() + ("order" to JsonPrimitive("5"))),
-                JsonObject(saved.items.single() + ("id" to JsonPrimitive(9_007_199_254_740_992L))),
-            )
+            val invalid =
+                listOf("NaN", "Infinity", "-Infinity", "01", "1e", "0,\"injected\":true").map { token ->
+                    JsonObject(saved.items.single() + ("extension" to kotlinx.serialization.json.JsonUnquotedLiteral(token)))
+                } +
+                    listOf(
+                        JsonObject(saved.items.single() + ("id" to JsonPrimitive("1"))),
+                        JsonObject(saved.items.single() + ("rev" to JsonPrimitive(0))),
+                        JsonObject(saved.items.single() + ("order" to JsonPrimitive("5"))),
+                        JsonObject(saved.items.single() + ("id" to JsonPrimitive(9_007_199_254_740_992L))),
+                    )
             invalid.forEach { raw ->
                 assertTrue(cache.writeAuthoritativeThread("host", "c", saved.copy(items = listOf(raw))).isFailure)
                 assertEquals(bytes, document.readText())
