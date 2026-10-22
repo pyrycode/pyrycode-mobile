@@ -3,8 +3,6 @@ package de.pyryco.mobile.data.cache
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase.FileImport
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.repository.HistoryPosition
-import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The app's [ConversationCache] (#2161): conversation lists and read positions stay in [FileConversationCache]
- * under [root]; authoritative files import once for each exact owner. Legacy entry points use Room only.
+ * under [root]; authoritative files import once for each exact owner. Obsolete legacy files stay inert.
  *
  * Import runs before any authoritative thread read or write. Its content and its completion marker
  * commit in one transaction, so an interrupted import leaves the file to retry and a committed one is never
@@ -40,10 +38,8 @@ internal class MigratingConversationCache(
     private val beforeCommit: suspend () -> Unit = {},
 ) : ConversationCache,
     AuthoritativeUpsertCache,
-    AuthoritativeWindowCache,
-    OwnedLegacyCoverageCache {
+    AuthoritativeWindowCache {
     private val files = FileConversationCache(root, ioDispatcher)
-    private val legacy = LegacyRoomStorage(database, ioDispatcher, beforeCommit)
     private val authoritative = AuthoritativeRoomStorage(database, ioDispatcher, beforeCommit)
     private val mutex = Mutex()
     private val settled = HashSet<Triple<String, String, String>>()
@@ -63,28 +59,6 @@ internal class MigratingConversationCache(
         (authoritativeRetirements[host to null]?.get() ?: 0L) to
             (authoritativeRetirements[host to conversation]?.get() ?: 0L)
 
-    /** The legacy storage's counts for the last page or thread read, for bounded-decoding probes. */
-    internal val legacyReadCounts get() = legacy.lastReadCounts
-    internal val legacyMutationCounts get() = legacy.lastMutationCounts
-
-    override suspend fun mutateLegacyRows(
-        host: String,
-        conversation: String,
-        upserts: List<OwnedLegacyRow>,
-        removed: Set<String>,
-    ): Result<Unit> = write(host, conversation, LEGACY, "mutate_rows") { legacy.mutateRows(host, conversation, upserts, removed) }
-
-    override suspend fun writeOwnedLegacyCoverage(
-        host: String,
-        conversation: String,
-        position: HistoryPosition,
-        previous: HistoryPosition?,
-        observed: List<ThreadItem>,
-    ): Result<Unit> =
-        write(host, conversation, LEGACY, "owned_history") {
-            legacy.writeOwnedCoverage(host, conversation, position, previous, observed)
-        }
-
     override suspend fun readConversations(serverId: String): List<Conversation> = files.readConversations(serverId)
 
     override suspend fun writeConversations(
@@ -98,29 +72,6 @@ internal class MigratingConversationCache(
         serverId: String,
         positions: Map<String, ReadPosition>,
     ): Result<Unit> = files.writeReadPositions(serverId, positions)
-
-    override suspend fun readThread(
-        serverId: String,
-        conversationId: String,
-    ): List<ThreadItem> = read(serverId, conversationId, LEGACY) { legacy.readThread(serverId, conversationId) }
-
-    override suspend fun writeThread(
-        serverId: String,
-        conversationId: String,
-        rows: List<ThreadItem>,
-    ): Result<Unit> = write(serverId, conversationId, LEGACY, "write_thread") { legacy.writeThread(serverId, conversationId, rows) }
-
-    override suspend fun readHistoryPosition(
-        serverId: String,
-        conversationId: String,
-    ): HistoryPosition? = read(serverId, conversationId, LEGACY) { legacy.readHistoryPosition(serverId, conversationId) }
-
-    override suspend fun writeHistoryPosition(
-        serverId: String,
-        conversationId: String,
-        position: HistoryPosition?,
-    ): Result<Unit> =
-        write(serverId, conversationId, LEGACY, "write_history") { legacy.writeHistoryPosition(serverId, conversationId, position) }
 
     override suspend fun readAuthoritativeThread(
         serverId: String,
@@ -162,20 +113,6 @@ internal class MigratingConversationCache(
         write(serverId, conversationId, AUTHORITATIVE, "upsert_authoritative") {
             authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
         }
-
-    /** Dormant legacy pages read Room only; obsolete source files never participate. */
-    internal suspend fun newestLegacyPage(
-        serverId: String,
-        conversationId: String,
-        size: Int,
-    ): LegacyThreadPage? = read(serverId, conversationId, LEGACY) { legacy.newestPage(serverId, conversationId, size) }
-
-    internal suspend fun beforeLegacyPage(
-        serverId: String,
-        conversationId: String,
-        token: LegacyThreadPage.Continuation,
-        size: Int,
-    ): LegacyThreadPage? = read(serverId, conversationId, LEGACY) { legacy.beforePage(serverId, conversationId, token, size) }
 
     internal suspend fun newestAuthoritativePage(
         serverId: String,
@@ -302,16 +239,14 @@ internal class MigratingConversationCache(
         }
 
     /** [Import.Arrived] when this call committed the file's content; any other settled outcome is [Import.Ready]. */
-    private suspend fun ensureImported(key: Triple<String, String, String>): Import {
-        if (key.third == LEGACY) return Import.Ready
-        return try {
+    private suspend fun ensureImported(key: Triple<String, String, String>): Import =
+        try {
             importFamily(key)
         } catch (cancelled: CancellationException) {
             // Room may have committed before cancellation prevents delivery back to this caller's dispatcher.
             servedWithout += key
             throw cancelled
         }
-    }
 
     private suspend fun importFamily(key: Triple<String, String, String>): Import {
         if (key in settled) return Import.Ready

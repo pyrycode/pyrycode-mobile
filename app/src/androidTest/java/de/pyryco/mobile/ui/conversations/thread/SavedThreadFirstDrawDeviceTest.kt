@@ -52,7 +52,6 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
@@ -679,7 +678,9 @@ class SavedThreadFirstDrawDeviceTest {
         activeProbe = probe
         // Fresh cache, repository, registry and ViewModel on every timed opening, including reopen.
         val disk = FileConversationCache(root)
-        val legacyReads = AtomicInteger()
+        val retiredNames = setOf("readThread", "readHistoryPosition")
+        val retiredApis = (ConversationCache::class.java.methods.asList() + disk.javaClass.methods).filter { it.name in retiredNames }
+        if (guardLegacyReads) assertTrue("Retired cache read APIs must be absent", retiredApis.isEmpty())
         val fullReads = AtomicInteger()
         val measured =
             object : ConversationCache by disk {
@@ -694,23 +695,7 @@ class SavedThreadFirstDrawDeviceTest {
                     }
                 }
 
-                override suspend fun readThread(
-                    serverId: String,
-                    conversationId: String,
-                ): List<ThreadItem> {
-                    legacyReads.incrementAndGet()
-                    check(!guardLegacyReads) { "Retired thread read invoked" }
-                    return disk.readThread(serverId, conversationId)
-                }
 
-                override suspend fun readHistoryPosition(
-                    serverId: String,
-                    conversationId: String,
-                ): HistoryPosition? {
-                    legacyReads.incrementAndGet()
-                    check(!guardLegacyReads) { "Retired coverage read invoked" }
-                    return disk.readHistoryPosition(serverId, conversationId)
-                }
             }
         val owner = ViewModelStore()
         lateinit var destination: SavedAuthoritativeDestination
@@ -780,7 +765,7 @@ class SavedThreadFirstDrawDeviceTest {
                 val orders = snapshot.items.map { requireNotNull(it.order) }
                 islands = 1 + orders.zipWithNext().count { (before, after) -> after != before + 1 }
                 assertEquals(if (fragmented) 18_000 else 1, islands)
-                assertEquals(0, legacyReads.get())
+                assertTrue("Retired cache read APIs must remain absent", retiredApis.isEmpty())
                 // Full-file fallback restores for observation and again before the live lease.
                 assertEquals(if (online) 2 else 1, fullReads.get())
                 assertEquals(if (online) 1 else 0, destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") })
@@ -789,7 +774,7 @@ class SavedThreadFirstDrawDeviceTest {
             Log.i(
                 "SavedThreadFirstDraw",
                 "case=${probe.name} durable=${facts.size} order_islands=$islands visible_rows=${expectedText.size} " +
-                    "full_reads=${fullReads.get()} legacy_reads=${legacyReads.get()} " +
+                    "full_reads=${fullReads.get()} retired_apis=${retiredApis.size} " +
                     "restored_ms=${probe.elapsed(probe.restored.get())} snapshot_ms=${probe.elapsed(probe.snapshot.get())} " +
                     "complete_ms=${probe.elapsed(probe.complete.get())} drawn_ms=${probe.elapsed(probe.drawn.get())}",
             )
