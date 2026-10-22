@@ -240,6 +240,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     ) {
         val observation = requireNotNull(screenObservation)
         val afterFact = after?.fact
+        val requiredFactIds =
+            baseline.map { requireNotNull(it.fact).id }.toSet() + beforeAnchor.id + listOfNotNull(afterFact?.id)
         val probe = ++placementProbe
         var previousProbe: List<Any?>? = null
         var indexes = emptyList<Int>()
@@ -247,8 +249,12 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             val screenReading = observation.reading(host, conversation)
             val screenEvidence = screenReading?.let(observation::evidence)
             val screen = screenEvidence?.sourceSnapshot
+            val missingFactIds =
+                requiredFactIds.filter { id -> screenEvidence?.records?.none { it.fact?.id == id } != false }
             if (screenEvidence != null) {
                 assertEquals("historical family epoch is retained", reading.owner.epoch, screenEvidence.owner.epoch)
+            }
+            if (screenEvidence != null && missingFactIds.isEmpty()) {
                 assertFamily(screenEvidence)
                 val root = screenEvidence.records.single { it.fact?.id == rootId }
                 val before = screenEvidence.records.single { it.fact?.id == beforeAnchor.id }
@@ -280,7 +286,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         screen?.items?.size,
                         current.generation,
                         screen?.generation,
-                    )
+                    ) + missingFactIds
             if (mark != previousProbe) {
                 previousProbe = mark
                 val rootPresent = current.items.any { it.id == rootId }
@@ -289,7 +295,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 val beforeOpening = current.openingRows?.any { it.first == beforeAnchor.id }
                 Log.i(
                     "NegotiatedAgentRestart",
-                    "event=placement_probe probe=$probe indexes=$indexes facts=${current.items.size} " +
+                    "event=placement_probe probe=$probe indexes=$indexes missing_fact_ids=$missingFactIds facts=${current.items.size} " +
                         "checkpoint=${current.checkpoint} opening_count=${current.openingRows?.size} " +
                         "root_present=$rootPresent before_present=$beforePresent " +
                         "root_opening=$rootOpening before_opening=$beforeOpening " +
@@ -304,6 +310,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             // A reset or connection switch during key lookup cannot certify the retired reading.
             screenReading != null &&
                 screenEvidence != null &&
+                missingFactIds.isEmpty() &&
                 indexes.all { it >= 0 } &&
                 observation.evidence(screenReading) === screenEvidence
         }
