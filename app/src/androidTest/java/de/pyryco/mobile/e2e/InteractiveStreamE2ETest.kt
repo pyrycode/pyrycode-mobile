@@ -6968,8 +6968,7 @@ class InteractiveStreamE2ETest {
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()
                     runBlocking {
-                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
-                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                        clearCachedThread(cache, serverId, chatX)
                     }
                 }
             awaitChannelList()
@@ -7196,8 +7195,7 @@ class InteractiveStreamE2ETest {
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()
                     runBlocking {
-                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
-                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                        clearCachedThread(cache, serverId, chatX)
                     }
                 }
             awaitChannelList()
@@ -7662,21 +7660,34 @@ class InteractiveStreamE2ETest {
         return ActivityScenario.launch(MainActivity::class.java)
     }
 
-    /** Read the saved family selected by this host's actual production repository. */
+    private suspend fun clearCachedThread(
+        cache: ConversationCache,
+        host: String,
+        conversation: String,
+    ) {
+        cache
+            .resetAuthoritativeThread(
+                host,
+                conversation,
+                de.pyryco.mobile.data.cache
+                    .SavedAuthoritativeThread("e2e-cleared", emptyList(), 0, 0),
+            ).getOrThrow()
+        assertTrue("X's thread cache was not cleared", requireNotNull(cache.readAuthoritativeThread(host, conversation)).items.isEmpty())
+    }
+
+    /** Read supported saved facts through the host's production authoritative projection. */
     private suspend fun cachedThreadItems(
         cache: ConversationCache,
         serverId: String,
         conversationId: String,
-    ): List<ThreadItem> =
-        if (harnessThreadEvidence(hostRepository(serverId)).kind == ThreadEvidenceKind.Authoritative) {
-            cache
-                .readAuthoritativeThread(serverId, conversationId)
-                ?.let {
-                    projectAuthoritativeThread(serverId, conversationId, it.toSnapshot()).items
-                }.orEmpty()
-        } else {
-            cache.readThread(serverId, conversationId)
-        }
+    ): List<ThreadItem> {
+        check(harnessThreadEvidence(hostRepository(serverId)).kind == ThreadEvidenceKind.Authoritative)
+        return cache
+            .readAuthoritativeThread(serverId, conversationId)
+            ?.let {
+                projectAuthoritativeThread(serverId, conversationId, it.toSnapshot()).items
+            }.orEmpty()
+    }
 
     /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
     private fun awaitCachedOffer(

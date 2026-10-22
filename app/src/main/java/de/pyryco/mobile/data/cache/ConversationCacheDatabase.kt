@@ -186,36 +186,8 @@ abstract class ConversationCacheDatabase : RoomDatabase() {
         }
     }
 
-    class OwnedRowsMigration : AutoMigrationSpec {
-        override fun onPostMigrate(db: SupportSQLiteDatabase) {
-            // Migration is the only backfill. Ordinary mutations never scan the saved thread.
-            db.execSQL("UPDATE legacy_rows SET ordinal=-ordinal-1")
-            db.query("SELECT host,conversation,ordinal,payload FROM legacy_rows WHERE ordinal<0").use { cursor ->
-                while (cursor.moveToNext()) {
-                    val identity =
-                        try {
-                            decodeLegacyRows(listOf(cursor.getString(3))).single().legacyRowKey()
-                        } catch (_: IllegalArgumentException) {
-                            null // Preserve invalid bytes: readers still withhold them without repairing disk.
-                        }
-                    db.execSQL(
-                        "UPDATE legacy_rows SET ordinal=?,identity=? WHERE host=? AND conversation=? AND ordinal=?",
-                        arrayOf<Any?>(
-                            (-cursor.getLong(2)) * LEGACY_ORDINAL_STEP,
-                            identity,
-                            cursor.getString(0),
-                            cursor.getString(1),
-                            cursor.getLong(2),
-                        ),
-                    )
-                }
-            }
-            db.execSQL("UPDATE legacy_evidence SET ordinal=(ordinal+1)*4294967296 WHERE ordinal>=0")
-            db.execSQL(
-                "UPDATE legacy_headers SET rowCount=(SELECT COUNT(*) FROM legacy_rows r WHERE r.host=legacy_headers.host AND r.conversation=legacy_headers.conversation)",
-            )
-        }
-    }
+    // Keep the historical schema step; its content is discarded by the preserving upgrade to schema 12.
+    class OwnedRowsMigration : AutoMigrationSpec
 
     internal abstract fun authoritative(): AuthoritativeDao
 

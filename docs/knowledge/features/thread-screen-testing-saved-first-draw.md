@@ -12,10 +12,10 @@ negotiated destination. Both offline and held-newest openings, including cold re
 fresh database/cache/repository/ViewModel instances with no predecoded state. Timing starts
 before that construction and ends only at the real committed frame showing exact newest text
 wholly inside the message viewport. Readiness, no warm-up, the **1000 ms product target** and
-renderer-specific `firstDrawBoundMs` policy above remain unchanged. The listener requests a
+renderer-specific `firstDrawBoundMs` policy below remain unchanged. The listener requests a
 subsequent frame after callback registration during `OnDraw`; only its actual commit callback
-can end timing. Production content arrives in `authoritativeThread`, so waiting on the legacy
-`ThreadUiState.items` arm would measure the wrong destination.
+can end timing. Assert the production `authoritativeThread` destination and exact saved raw facts,
+including certification; local page exhaustion never supplies daemon completeness or a cursor.
 
 The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2341#issuecomment-6312130382)
 accepts Mobile **`a5693dd3c4b26d37e4d1fad478251b30c69e826c`**, merged main
@@ -49,10 +49,10 @@ No new real-Claude capture was required; route activation evidence remains with 
 Other operating systems are outside this Linux ticket's verification scope.
 
 Every tuple below is cumulative **restore / snapshot / complete content / committed frame**
-in monotonic milliseconds, not independent phase durations. File compatibility retains the
-**36000-entry / 18000-span / 18000-display-row** fragmented fixture, exact compatibility/anchor
-assertions and the 20-row ordinary fixture. The optional-projection twin holds for the applied
-bound plus 100 ms (**2100 ms** here).
+in monotonic milliseconds, not independent phase durations. The file rows below are historical
+measurements of the then-supported **36000-entry / 18000-span / 18000-display-row** fragmented
+fixture and 20-row ordinary fixture. They are not compatibility requirements for retired storage.
+The historical optional-projection twin held for the applied bound plus 100 ms (**2100 ms** here).
 
 | Fixture | Offline first | Offline reopen | Held-newest first | Held-newest reopen |
 | --- | --- | --- | --- | --- |
@@ -110,17 +110,20 @@ file-latency misses.
 
 ## Saved-thread first draw (#1949)
 
-`SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
-uses real `FileConversationCache`, `CachingConversationRepository`, `ThreadViewModel`,
-production `ThreadContentScheduling` and `ThreadScreen` on the configured Android 13
-managed device. It prepares and persists each active source fixture once before its case group,
-then copies its complete persisted bytes to independent offline/held-newest roots: **20 ordinary
-saved messages**, then **18,000 displayed message rows / 36,000 durable entries /
-18,000 spans**. Each
-fixture runs offline and with a connected delegate whose newest response stays held.
-First opens create fresh cache/repository instances; reopening uses that repository
-with a new ViewModel and composition. All eight cases require the newest saved message
-to draw within **1,000 ms**, without waiting for the newest response.
+The supported timed path is the on-disk authoritative database opening described above.
+\#2387 removes legacy row/history storage APIs and codecs; do not seed discarded `threads/`
+files or use old row/coverage decoders to establish visible content. Supported full-file cache
+fixtures use `SavedAuthoritativeThread` and authoritative projection. Unknown-owner obsolete
+files remain inert, including across reopen. See the [supported cache contract](conversation-cache-contract.md#the-contract),
+[#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
+and [#2386 schema evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
+
+\#2447 owns restoration of the removed saved-first-draw fixtures and their optional-projection/
+slow-restore controls. Preserve cold opening and reopening, offline and held-newest modes,
+large displayed history, exact newest text and placement, reader-triggered older paging and
+zero-offline/one-connected request assertions through supported facts. Existing historical
+file results below do not prove those replacement fixtures executed. #2364 owns final
+integrated acceptance. The timing and negative-control requirements remain as follows.
 
 **Software-rendering bound (#2222).** 1,000 ms stays the product target. When the
 guest GL renderer string contains SwiftShader, the bound is **2,000 ms**. The SwANGLE
@@ -143,22 +146,24 @@ Only that callback records draw time. A parent draw modifier missed child render
 updates; first StateFlow emission, Compose virtual time, loading semantics and eventual
 idleness cannot establish the draw deadline. Polling only waits for recorded evidence.
 
-`slowRestore_negativeControlRejectsTheSameFirstDrawBound` inserts **3,000 ms** into
-cache reading in the same timed open path and catches the identical bound assertion's
-failure. The delay exceeds both the 1,000 ms and the software 2,000 ms bound. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
-**3,040/3,048/3,102 ms**. Passing this test means the latency assertion rejected the
-slow path, not that the slow path met the deadline.
+The slow-restore negative control must insert **3,000 ms** into cache reading in the same
+timed opening and catch the identical bound assertion's failure. That delay exceeds both the
+1,000 ms and software 2,000 ms bounds. Historically,
+`slowRestore_negativeControlRejectsTheSameFirstDrawBound` drew at **3,188 ms** in the #2018
+full UI run, with restore/snapshot/content **3,040/3,048/3,102 ms**. A passing negative control
+means the latency assertion rejected the slow path. The optional-projection control must hold
+work beyond the applied bound without delaying the first authoritative newest frame.
 
-`SavedThreadOpenTest.savedRowsDoNotWaitForNewestResponse` independently holds newest
-completion in controlled tests. Device assertions retain exact saved rows, marker
-anchors, one newest ask per connected opening and zero offline asks. Keep
-`ThreadHistoryProjectionWorkerTest` and
-`ThreadFragmentedHistoryDeviceTest.sparseFragmentedRestore_opensEditsAndScrolls_onePagePerPull`
-for projection and reader-only gap paging. The older sparse four-row fixture and its
-15-second eventual-completion allowance concealed large displayed-history allocations;
-keep the full displayed-row fixture and phase measurements when changing restore work.
-See [validated decode reuse](conversation-cache-layout.md#thread-document-readers-1949)
-for exact-byte freshness and proof compatibility.
+Opening and reconnect must not create older-reader demand. Keep bounded authoritative
+window/read counters, exact saved facts and placement, and reader-only paging/cancellation
+assertions from [bounded opening](caching-conversation-repository.md#bounded-authoritative-opening-2333)
+and [older demand](caching-conversation-repository.md#older-saved-history-demand).
+A sparse fixture and a 15-second eventual-completion allowance cannot establish latency for
+large displayed history; retain phase measurements and the real committed-frame deadline.
+
+The remaining sections preserve accepted and failed observations from earlier implementations,
+including retired test names and decoder measurements. They are historical evidence, not
+instructions to restore legacy-file compatibility.
 
 **Counted evidence, 2026-10-09.** The original
 [full UI failure](https://github.com/pyrycode/pyrycode-mobile/pull/2015#issuecomment-6086154606)

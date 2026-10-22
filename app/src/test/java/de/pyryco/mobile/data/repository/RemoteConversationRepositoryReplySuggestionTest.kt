@@ -331,15 +331,15 @@ class RemoteConversationRepositoryReplySuggestionTest {
                         conversationId: String,
                     ): Result<Unit> = error("unexpected cache removal")
 
-                    override suspend fun readThread(
+                    override suspend fun readAuthoritativeThread(
                         serverId: String,
                         conversationId: String,
-                    ): List<ThreadItem> = error("unexpected thread read")
+                    ): de.pyryco.mobile.data.cache.SavedAuthoritativeThread? = error("unexpected thread read")
 
-                    override suspend fun writeThread(
+                    override suspend fun writeAuthoritativeThread(
                         serverId: String,
                         conversationId: String,
-                        rows: List<ThreadItem>,
+                        saved: de.pyryco.mobile.data.cache.SavedAuthoritativeThread,
                     ): Result<Unit> = error("unexpected thread write")
                 }
             val wrapper = CachingConversationRepository(StableConversationRepository(delegates), cache, "host-A")
