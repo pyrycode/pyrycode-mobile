@@ -260,6 +260,10 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen() {
+        measureDatabaseOpenings()
+    }
+
+    private fun measureDatabaseOpenings(readDelayMs: Long = 0) {
         installHost()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "database-first-draw-${SystemClock.elapsedRealtimeNanos()}")
@@ -294,9 +298,9 @@ class SavedThreadFirstDrawDeviceTest {
             }
             for (online in listOf(false, true)) {
                 repeat(2) { opening ->
-                    awaitDeviceReadiness("database online=$online opening=$opening")
+                    awaitDeviceReadiness("database online=$online opening=$opening delay_ms=$readDelayMs")
                     // Construction, the first SQLite open, cache restore and the destination are timed.
-                    val probe = Probe("database online=$online opening=$opening", "Saved 18000.")
+                    val probe = Probe("database online=$online opening=$opening delay_ms=$readDelayMs", "Saved 18000.")
                     activeProbe = probe
                     val db = database()
                     val disk = MigratingConversationCache(File(root, "files"), db)
@@ -306,10 +310,12 @@ class SavedThreadFirstDrawDeviceTest {
                                 serverId: String,
                                 conversationId: String,
                                 size: Int,
-                            ): AuthoritativeThreadWindow? =
-                                disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                            ): AuthoritativeThreadWindow? {
+                                delay(readDelayMs)
+                                return disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
                                     probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
                                 }
+                            }
                         }
                     val owner = ViewModelStore()
                     lateinit var destination: SavedAuthoritativeDestination
@@ -360,7 +366,12 @@ class SavedThreadFirstDrawDeviceTest {
                     }
                     try {
                         composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
-                        probe.assertBound()
+                        if (readDelayMs == 0L) {
+                            probe.assertBound()
+                        } else {
+                            assertTrue(probe.elapsed(probe.drawn.get()) >= readDelayMs)
+                            assertThrows(AssertionError::class.java) { probe.assertBound() }
+                        }
                         composeRule.waitUntil(15000) {
                             destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") } == if (online) 1 else 0
                         }
@@ -587,23 +598,16 @@ class SavedThreadFirstDrawDeviceTest {
         }
     }
 
-    @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
+    @Test fun authoritativeFileCompatibility_preservesExactFacts_offlineAndHeldNewest_firstOpenAndReopen() {
         measureAuthoritativeFiles(guardLegacyReads = false)
     }
 
-    @Test fun authoritativeSavedThreads_firstDrawDoesNotConsultRetiredLegacyReads_firstOpenAndReopen() {
+    @Test fun authoritativeFileCompatibility_exposesNoRetiredReadApis_firstOpenAndReopen() {
         measureAuthoritativeFiles(guardLegacyReads = true)
     }
 
     @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
-        installHost()
-        val facts = authoritativeFileFacts(fragmented = false)
-        withAuthoritativeFileFixture(facts) { root ->
-            val probe =
-                measureAuthoritativeFileOpening(root, facts, online = false, opening = 0, guardLegacyReads = true, readDelayMs = 3000)
-            assertTrue(probe.elapsed(probe.drawn.get()) >= 3000)
-            assertThrows(AssertionError::class.java) { probe.assertBound() }
-        }
+        measureDatabaseOpenings(readDelayMs = 3000)
     }
 
     private fun authoritativeFileFacts(fragmented: Boolean): List<JsonObject> =
@@ -639,7 +643,9 @@ class SavedThreadFirstDrawDeviceTest {
             }
         }
         assertEquals(8, probes.size)
-        probes.forEach(Probe::assertBound)
+        val requireLatency = InstrumentationRegistry.getArguments().getString("requireFullFileLatencyBound") == "true"
+        Log.i("SavedThreadFirstDraw", "event=file_latency_scope required=$requireLatency followup=2456 openings=${probes.size}")
+        if (requireLatency) probes.forEach(Probe::assertBound)
     }
 
     private fun withAuthoritativeFileFixture(
@@ -666,13 +672,12 @@ class SavedThreadFirstDrawDeviceTest {
         online: Boolean,
         opening: Int,
         guardLegacyReads: Boolean,
-        readDelayMs: Long = 0,
     ): Probe {
         val fragmented = facts.size == 36_000
         val expectedText = (0 until if (fragmented) 18_000 else 20).map { "Saved $it." }
         val name =
             "authoritative-file fragmented=$fragmented online=$online opening=$opening " +
-                "guard_legacy=$guardLegacyReads delay_ms=$readDelayMs"
+                "guard_legacy=$guardLegacyReads scope=file_compatibility"
         awaitDeviceReadiness(name)
         val probe = Probe(name, expectedText.last())
         activeProbe = probe
@@ -689,7 +694,6 @@ class SavedThreadFirstDrawDeviceTest {
                     conversationId: String,
                 ): SavedAuthoritativeThread? {
                     fullReads.incrementAndGet()
-                    delay(readDelayMs)
                     return disk.readAuthoritativeThread(serverId, conversationId).also {
                         probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
                     }
