@@ -248,7 +248,12 @@ class AuthoritativeReaderPagingTest {
                     val state =
                         withContext(Dispatchers.IO) {
                             withTimeoutOrNull(5_000) {
-                                vm.state.first { it.authoritativeThread?.sourceSnapshot?.items?.any { row -> row.id == 2L } == true }
+                                vm.state.first {
+                                    it.authoritativeThread
+                                        ?.sourceSnapshot
+                                        ?.items
+                                        ?.any { row -> row.id == 2L } == true
+                                }
                             }
                         }
                     val current = repo.authoritativeThreads.current("host", "c")
