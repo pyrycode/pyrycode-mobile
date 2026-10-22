@@ -119,3 +119,47 @@ Run the new growth probe red against the extracted old one-shot operation, then 
 ## Documentation handoff
 
 Pending for documentation stage: `docs/knowledge/features/thread-screen-subagent-tool-rows.md`, Agent navigation evidence, and `docs/knowledge/features/development-verification-compose-evidence.md`, Compose evidence: distinguish this earlier finished-marker reveal race from proof-entry readiness; record the new controlled red/green and native source/recording identities without claiming the historical geometry was captured.
+
+## Recurrence repair plan (2026-10-22)
+
+### Files read and context
+
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/QuestionAnswerPhone.kt`: `questionAnswerLocation` unconditionally follows the atomic current-key reveal with a separate matcher scroll.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentRunNavigationProof.kt`: `assertFinishedAgentMarker` already supplies absolute-deadline readiness and atomic index/scroll dispatch; its geometry reads resample current identity.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentBlocksScreenTest.kt`: preserve earlier growth, generation, reset and wrong-family probes; use the real screen for the new boundary.
+- `docs/knowledge/features/thread-screen-agent-navigation-evidence.md` and `development-verification-agent-reveal-evidence.md`: earlier acceptance is historical; preserve three geometry measurements, exact ownership and default helper behavior.
+- Original #2387 failed/rerun logs in fleet bundle `1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`, digest `9333794885bccfb789b342ec160b879816d7d4d4359528f35e2e19c78d95dd6c`: the first assertion is the redundant `performScrollToNode` inside the finished-marker bridge on `eda298fca8e0584107dbbb1ec3993ffd13b45eb6`. Its merged scroll container is absent; the diagnostic's later unmerged match is not a simultaneous snapshot. The summary XML marks this case failed, then passed on the same tree; stderr retains the assertion stack. No suppressed replay-close failure or phone timeline is retained for this occurrence. Do not transfer older teardown explanations to this one.
+
+One useful behavior: finish revealing the exact owned marker across a reset after atomic keyed reveal. Both previous repairs are on baseline `2df547ab26c1264ee79d9aca16709702487ec5cf`. The new failure is before navigation entry readiness, and after the atomic keyed-scroll boundary added by #2430. No product, visual, recording or protocol change; no decision record. No remote feature branch overlaps the two intended files at planning time.
+
+Forecast: under 250 written lines including this revision and probes; zero new exported types, no consumer/signature migration, four criteria and fewer than ten rejection branches. The causal probe and local repair form one deliverable.
+
+### Design and error handling
+
+Add a content-free `keyed-ready` evidence stage after the current-key readiness check, before the existing unconditional matcher scroll, so a controlled probe can publish a real empty projection at exactly that boundary. Run the probe against the unchanged operation and retain the missing merged-list assertion. Restore the exact owned family only when the next identity/readiness sample observes the reset.
+
+For the opt-in current-key path, use its existing atomic keyed reveal directly and proceed to the existing bounded geometry measurements. Omit the redundant matcher scroll only on that path. Every geometry read continues through current-key readiness; an absent or wrong-family projection must time out within the original absolute deadline. Default `questionAnswerTarget` and `questionAnswerTap` retain their matcher scroll, strict key-removal assertion and signatures. No exception catching, scenario/tap retry, extra input, forced expansion, sleep or deadline/measurement increase.
+
+### State and concurrency model
+
+No application state, jobs or lifecycle changes. Controlled test publication uses `runOnIdle`; the existing identity sampler owns readiness and its original absolute deadline. All three geometry measurements and final owned finished-text assertion remain authoritative.
+
+### State transitions and identity reuse
+
+| Event | Regression |
+| --- | --- |
+| Reset removes the list after atomic reveal; the same owned family returns | `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` |
+| Same boundary resets permanently, or returns only another finished Agent | `resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` |
+| Earlier growth, reset, generation replacement and stale dispatch | Retain the complete `BackgroundAgentBlocksScreenTest` class, including its existing negative probes |
+
+### Testing strategy
+
+Run the new reset regression red on the baseline containing both landed repairs, then green with the local branch change. Run all Agent block/prose/authoritative screen coverage and the short-thread question scroll caller. Run the focused scripted background-Agent scenario and five consecutive separate native invocations of the named recorded method on the final pushed Kotlin revision, retaining fresh XML/logs and source/recording hashes. Native replay needs the real asynchronous activity/transport lifecycle. Run lint, assembly, instrumented compilation, formatting and final pre-verify after merging main. Complete configured UI/scripted acceptance remains dispatcher-owned and pending; macOS is outside scope.
+
+### Open questions
+
+The historical stack identifies the unsafe operation, but the original phone timeline and failure-time semantics geometry are unavailable in the published bundle. The controlled reset will establish the mechanism without claiming it recovers that historical interleaving.
+
+### Documentation handoff
+
+Pending documentation stage: `docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, finished-marker recurrence, and `docs/knowledge/features/development-verification-agent-reveal-evidence.md`, atomic scroll dispatch. Record the post-keyed-reveal reset boundary, its causal evidence, relationship to both earlier repairs and counted Linux acceptance; preserve historical failures and evidence limits.
