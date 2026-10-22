@@ -804,7 +804,11 @@ class CachingConversationRepository(
                             delay(openingRetryMs)
                             openingRetryMs = (openingRetryMs * 2).coerceAtMost(1000L)
                         }
-                        val baseline = persistedAuthoritative[conversationId]?.authoritative
+                        // Restore publishes the store and its committed baseline under this monitor.
+                        val baseline =
+                            withContext(processingDispatcher) {
+                                synchronized(authoritativeThreads) { persistedAuthoritative[conversationId]?.authoritative }
+                            }
                         if (snapshot.openingRows != null && snapshot.generation == 0L && baseline != null) {
                             val needsClosure =
                                 withContext(processingDispatcher) {

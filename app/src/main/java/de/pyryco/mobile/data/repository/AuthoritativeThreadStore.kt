@@ -295,7 +295,8 @@ internal class AuthoritativeThreadStore {
                 checkpoint = checkpoint,
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
                 openingRows = openingRows?.plus(current.openingRows ?: current.items.flatMap { listOf(it.id to false, it.id to true) }),
-                repairNeeded = current.repairNeeded || completedVersion > checkpoint,
+                // Live updates may lead the checkpoint until completion; a known-live supplement adds no new gap.
+                repairNeeded = current.repairNeeded || saved.completedVersion > current.completedVersion && completedVersion > checkpoint,
             ),
             restoring = true,
             preservePlacement = olderSaved,

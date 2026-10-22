@@ -135,7 +135,9 @@ class ReplySuggestionReadsTest {
             assertTrue(echo.await().owner.connection === replacement)
         }
 
-    private class Source : ConversationRepository by FakeConversationRepository() {
+    private class Source :
+        ConversationRepository by FakeConversationRepository(),
+        SyntheticThreadEvidenceProducer {
         val conversations = MutableStateFlow(listOf(conversation))
         val offer = MutableStateFlow<ReplySuggestion?>(null)
         val items = MutableStateFlow<List<ThreadItemDto>>(emptyList())
@@ -158,6 +160,8 @@ class ReplySuggestionReadsTest {
 
                 override fun cancel(conversationId: String) = Unit
             }
+
+        override fun evidenceSnapshots(conversationId: String) = negotiatedThread.observe(conversationId)
 
         override fun observeConversations(filter: ConversationFilter) = conversations
 

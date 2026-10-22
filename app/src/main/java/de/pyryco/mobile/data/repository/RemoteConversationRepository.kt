@@ -993,6 +993,9 @@ class RemoteConversationRepository internal constructor(
             TYPE_TURN_STATE -> {
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeLiveSessionEvent(envelope)?.let { event ->
+                        if (event is LiveSessionEvent.TurnState) {
+                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
+                        }
                         stallProjection.clear(event.conversationId)
                         turnPhaseProjection.apply(event)
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {

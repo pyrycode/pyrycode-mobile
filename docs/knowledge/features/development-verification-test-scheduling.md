@@ -465,3 +465,157 @@ device at the same time as a ticketed run. It never waits on a ticket either, so
 it can still cut in. Fairness holds only among ticketed waiters. `DeviceHoldTest`
 covers arrival order, a dead waiter's ticket, a lost ticket counter and an old
 poller mixed with ticketed waiters, all with real second processes.
+
+### Background permission replay consumption (#2348)
+
+The original macOS main sweep on `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`
+executed 1,815 tests: 1,810 passed, five failed, exit 1. The background permission
+scenario first rejected request 30 on `phone/host-0/3`: its `thread_catch_up`
+checkpoint was zero, while the first eligible recorded request at tape index 153
+required 12. Owner, conversation and epoch agreed; the other eligible checkpoints
+were 12 and 18. The preceding connection's batch and terminal were queued at indices
+111/112 before close at 113, but queued delivery did not prove terminal consumption.
+Permission-answer and teardown errors propagated the sticky first mismatch.
+
+This was a replay consumption-boundary defect. A real repository can apply the batch
+without certifying its checkpoint until it consumes the separate terminal. Cancelling
+its collector in that interval makes the next connection resume from zero. The focused
+main baseline on `3be8ab916` passed 1/1, exit 0, but did not establish suite independence.
+The held-terminal and cancellation regressions reproduced the defect without preceding
+scenarios: two executed/failed before repair, then two executed/passed after repair,
+zero skips, exits 1 and 0 respectively. Original shard order and machine load remain
+unestablished.
+
+The [close fence](../../recorded-tests.md#downstream-consumption-before-close-2348)
+now waits for successful downstream consumption of the exact pump's queued prefix
+within the existing timeout. Synthetic fixtures must keep scoped collectors alive:
+`Flow.first` cancels before post-emit acknowledgement. Correlated receipts observe
+actual replies; they cannot grant admission. Activity, host-removal and both restart
+owners retain their consumers through close. The combined restart fixture control
+executed 28 tests, passed 27 and failed one before adaptation; afterwards all 28 passed,
+zero errors/skips, exits 1 and 0. Strict payload, causal, owner, observation and
+complete-tape checks remain; no production contract or background recording changed.
+
+**Final macOS ARM64 evidence, 2026-10-22.**
+[PR #2359's accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2359#issuecomment-6339540163)
+reviews `5a71edfebebad7ac35187c3794298d8bda1ee9b0`, including main `704435a73`.
+Counts below distinguish initial configured runs from dispatcher-selected reruns.
+
+| Run | Executed | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused background-alert native replay | 1 | 1 | 0 | 0 | 0 |
+| Focused permission-isolation native replay | 1 | 1 | 0 | 0 | 0 |
+| Affected focused JVM classes | 88 | 88 | 0 | 0 | 0 |
+| Configured JVM with build checks | 5270 | 5270 | 0 | 0 | 0 |
+| Configured UI, initial | 328 | 326 | 2 | 1 | 1 |
+| Selected UI rerun | 2 | 2 | 0 | 0 | 0 |
+| Configured scripted-all, initial | 24 | 23 | 1 | 0 | 1 |
+| Selected scripted rerun | 2 | 2 | 0 | 0 | 0 |
+
+The exact `RecordedMobileSuiteTest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+executed/passed once in the initial configured UI XML (40.005 seconds) and focused
+`ui-hrhfz0a8` (41.429 seconds), zero failures/errors/skips for that method.
+`interactiveTurn_permissionPrompts_heldPerConversation` likewise passed once in each.
+The JVM gate passed cleanup, consumption, activity, connections, tape and
+authoritative-query classes with 7, 2, 2, 28, 49 and 23 cases respectively. Focused
+JVM evidence covers the first five classes, 88 total. The configured UI rename capture
+was skipped, not passed. The verifier accepted unrelated model-change (#2368),
+peer-attachment (recorded first sighting) and scripted ping (#2469) failures after
+their selected reruns; their initial failures remain recorded above.
+
+The previously blocking session-error method passed in the initial configured
+scripted gate and in combined-tree focused `scripted-5e6vvjue` on `a6ebcb7e2`
+(1 executed/passed, zero failures/errors/skips, exit 0). Both recovery arms completed.
+The owning #2344 repair and clean Core `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`
+were present. Earlier status-clear failures with Core `fbd5f2c9` remain failed evidence;
+the owning ticket's earlier acceptance alone did not certify this combined candidate.
+
+Private artifacts were retained under `$AGENTS_REPO_PATH/logs/evidence/2348/`:
+`builder-20261021-consumption/` holds original logs, baseline XML/phone diagnostics
+and red/green consumption evidence; `builder-20261022-combined/` holds focused raw
+XML, phone logs, revisions, package hashes and manifests, including
+`native-background/`, `native-permission/`, `connections-red/`, `connections-green/`
+and `session-error/`. Historical activity/cleanup and session-error failures remain
+in the corresponding `builder-20261021-rework-*-consumption/` and
+`builder-20261021-rework-session-error/` folders.
+
+Accepted verifier evidence run
+`07f9345119ab60637989ca37cdaae490b572d80c8dc974d61ecb79724f57dde7`
+retains gate-5/6 counted XML, rerun logs and the verdict; all 147 available manifest
+entries verified during documentation. Full gate-4 output was retained separately as
+agents `logs/verifier-gate_#2348_4.log` (the bundle keeps its tail). These identify
+retention locations at review time, not permanent storage. Counts and structural
+diagnosis above contain no private payload content.
+
+The scenario still checks token registration, background transition, wake observation,
+captured permission fields, private preview/public redaction, one active alert,
+unchanged notification post time after the second reconnect, resolution and cleanup.
+Replay supplies no new FCM, encryption or transport-timing certification. Linux was
+outside this macOS ticket's verification scope.
+
+### Stream report execution ownership (#2455)
+
+`scripts/e2e-stream-scenarios.py` clears pre-existing `TEST-*.xml` within the
+selected device report directory immediately before each scenario subprocess,
+then collects all matching XML without comparing mtimes. Existing host/device
+admission supplies exclusive execution ownership; the original
+`PYRY_TEST_ADMISSION_FD` is still forwarded. Do not widen cleanup to other device
+paths or replace it with a timestamp tolerance: even future-dated old XML cannot
+satisfy a new execution, and a genuinely new report can predate the launch clock.
+
+Each execution must produce exactly one testcase with the expected class and
+method, without failure, error or skip. Missing, zero-count and wrong-identity
+reports remain unsuccessful, as does a nonzero child status despite passing XML.
+Copy collected XML to temporary retention and remove its original before the
+next launch can reuse `TEST-run.xml`; per-scenario archives live under
+`build/dispatcher-tests/stream-methods/run-*/`. The `finally` restoration returns
+already collected reports to the selected report directory on normal completion
+or interruption. This preserves the first outcome when the second launch writes
+nothing or interrupts; it does not claim to collect unfinished child output.
+
+`StreamScenarioReportsTest.run_cases` controls the launch clock at
+2,000,000,000 ns and the first report mtime at 1,000,000,000 ns. With the second
+mtime at 3,000,000,000 ns, the old filter omits the first XML without copying or
+removing it; the next writer overwrites that filename. The deterministic
+`test_earlier_report_mtime_keeps_both_independent_outcomes` reproduces `2 != 1`,
+including passing-first/skipped-second. Both-older reports, future-dated stale XML,
+missing second output, interruption, invalid outcomes and admission forwarding
+are also covered, with exact archive/restored bytes checked. This proves a causal
+loss mechanism, not the originating Linux host's actual clock behavior.
+
+[PR #2457's accepted verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2457#issuecomment-6335301526)
+retains these distinct results. Builder runs used macOS Darwin 25.6.0 arm64 and
+`python3 -m unittest -v scripts.test_e2e_stream_scenarios.StreamScenarioReportsTest`:
+
+| Run | Revision | Executed | Passed methods | Failure records | Errors | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Controlled red, unchanged production | `3869d7289281bf848820fc7cd848f5a6b98c1b48` | 8 | 5 | 6 across 3 methods | 0 | 0 |
+| Focused green | `1a4eeeb9f1db272a48860e8837f01b0b4802b2ce` | 8 | 8 | 0 | 0 | 0 |
+
+The raw logs were `/tmp/builder-2455/checks/controlled-red.log` and
+`controlled-green.log`, SHA-256 respectively
+`3982bb5cf87d23e3891e89eb137e09f1f5b70f53cf3978018ff60ccd085f5db2` and
+`97d0bdead2b1004a8d0d325ac3f6b33a8bab13bef27f80b1c7ab747703616292`.
+These are retained-file locations at review time, not promises of permanent storage.
+
+At the green revision, completed dispatcher macOS gates supersede the PR body's
+pending-gates statement: scripts discovery executed/passed 214, JVM with build
+checks executed/passed 5,259, and `scripted-all` executed/passed 24; each had zero
+failures, errors or skips. The scripts raw report is
+`verifier-gate_#2455_3.stderr.log` in verifier evidence run
+`e1b2d3f14106d6804577dc06bee73da184d85deb75c28a72c03d438b2f896c5c`.
+The verifier confirmed both independent deterministic stream methods in the full
+scripted run. Pre-verify and docs guard passed. The configured UI command skipped
+this scripts-only branch and executed no UI tests; no UI pass is claimed.
+
+The original Linux scripts gate at `544fca1f7721f5ddf2a4092efd738251fb017958`
+remains failed: 211 executed, one failure, zero errors/skips, in
+`test_a_skipped_twin_cannot_count_as_success`. The identical focused failure on
+merged main `206eb3927d29819b7b2ff11cad760c6e5dcaa192` occurred on execution 50
+after 49 passes; those passes do not replace it. Original evidence is ticket
+\#2373 / PR #2454, run
+`36c833f91ea567fc3a3247bef09ab2e54ad5deceb4393bbf2bf4be0c9dde1fec`, bundle digest
+`3b3d6332da7e1f8389f0bc44ec127dfa8d603fca3cd6e7deb1fd8e35d90bda9f`,
+`logs/verifier-gate__2373_3.stderr.log`. The restricted-sandbox full baseline is
+non-authoritative. Linux is outside this macOS ticket's verification scope;
+PR #2454's Agent acceptance remains independent.
