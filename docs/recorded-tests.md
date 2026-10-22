@@ -115,6 +115,17 @@ are rebound by their original session, turn, role, full producer text and user m
 identity, using only the newly received canonical rows. Same-epoch facts retain exact
 canonical identity. Neither path uses a legacy history request.
 
+Parent attribution remains part of that cross-epoch match. Omitted and explicit-zero
+parents both identify the main-thread root; compare nullable `Long` parents with
+`(left ?: 0L) == (right ?: 0L)`. Untyped `0` fallbacks can produce incompatible boxed
+numeric representations and reject an otherwise identical root row. Nonzero owned
+parents must still match exactly: neither a root nor a different parent can replace
+them. `DurableGapDiagnosticsTest.omittedAndExplicitRootParentsMatchWithoutErasingOwnedParents`
+guards this boundary (#2344). Terminal-turn certification and retained-baseline identity
+are separate predicates; finding the exact terminal does not prove baseline retention.
+The controlled regression passed after repair; the repaired native captures reused the
+epoch, so they do not establish native epoch-replacement coverage.
+
 The offscreen cache check proves the exact certified baseline family is saved. It does
 not require unrelated newer live facts to be certified. The same immutable saved snapshot
 is also inspected for every raw missed-turn assistant fact, including hidden or partial

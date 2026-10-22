@@ -9072,6 +9072,67 @@ so assert its pill and empty backlog immediately after blocked, then require the
 before release. A settled optimistic user row can remain after give-up: absence of its queued
 state, delivery IDs and completed child inputs prove non-delivery, not disappearance of text.
 
+#### Progress publication and macOS recovery (#2344)
+
+The retained-arm failure was caused by Core suppressing admitted non-idle progress
+when a newer idle revision overtook it at publisher/relay freshness boundaries.
+A controlled held-publication probe and correlated native capture distinguished this
+from Mobile admission or projection failure: the legacy peer observed responding,
+but the phone decoded only idle and never cleared its held error. Peer receipt alone
+does not prove phone admission. [Core #3711](https://github.com/pyrycode/pyrycode/issues/3711),
+merged in [PR #3712](https://github.com/pyrycode/pyrycode/pull/3712) at
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, preserves admitted thinking/responding
+edges through both boundaries. Mobile still clears on recognized non-idle turn state;
+assistant content and idle alone must preserve the error.
+
+Select a Core checkout containing that repair through `PYRYCODE_SRC`.
+`scripts/e2e-emulator.sh` builds the recovery daemon separately with
+`go build -tags e2e_realclaude`; changing only `PYRY_BIN` leaves this separate build's
+source unchanged. Retain its own source/build provenance and binary hash, along with
+effective app/test APK hashes. A stale default checkout reproduced the original failure
+after the repair had merged.
+
+The fresh focused macOS arm64 run used
+`python3 scripts/android-test-gate.py scripted session-error`, Mobile
+`d7d58d187923f16217bf79d82da5249334a412aa`, agents
+`2ffd702a09190fc1e6d4e4d8cbe89e0e35bf6cfe` and the repaired Core revision above.
+The exact deterministic method executed/passed **1/1**, with **0 failures/errors/skips**
+and exit **0**. Both arms reached complete, with independent held/fresh child-input
+counts **1/0 retained, 0/1 dropped**, stable daemon/Runner/session identities and both
+owned daemons absent after cleanup. The method also passed its unchanged delivery,
+local-status and final preceding-host restoration assertions. The phone decoded
+responding and cleared the retained error. No real-Claude turn was used.
+
+Private XML, phone logcat, dedicated fixture/control/daemon captures, source revisions,
+APK hashes and explicit byte-reproduction receipt were retained under agents
+`logs/evidence/2344/repaired-macos-d7d58d187/`. The tagged binary SHA-256 was
+`4ef62bac62a5ae93f22de8b8788bb6115dae0d8266b37a9c08a28dd066d83a78`;
+its automatic VCS stamp was unavailable, so `binary-provenance.json` records the
+separate source/build proof. Historical failed captures remain preserved.
+
+The [2026-10-22 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2441#issuecomment-6337695438)
+reviews Mobile `5c5824373e8e1823c9390e496e654ccda407afac` on macOS. Configured results
+are distinct from that focused run:
+
+| Gate | Executed | Passed | Failed | Skipped | Acceptance |
+| --- | ---: | ---: | ---: | ---: | --- |
+| JVM/build checks | 5268 | 5268 | 0 | 0 | Passed |
+| UI | 328 | 326 | 2 | 1 | Accepted after dispatcher comparisons |
+| Scripted-all | 24 | 23 | 1 | 0 | Accepted after same-tree rerun |
+
+The original device gates exited **1**, with zero errors. UI's model-change failure
+was reproduced on main and accepted as inherited under #2351; attention-pills passed
+the same-tree selection (2 executed, 1 passed, 1 failed). Scripted missed-events replay
+passed its same-tree selection (1 executed/passed, zero failures/errors/skips).
+The original scripted XML explicitly passes the exact recovery method once, with
+zero failures/errors/skips; both dedicated journals reach complete. This is a method
+pass within the configured suite, not another focused run. Ping's two methods and
+reply-suggestion also pass; the separate ping read-mark intermittency remains #2462.
+Counted reports survive in verifier evidence bundle
+`0c26e2e8cf17abb77f87baa992bf9c7279aad9f05ed7f02c685e0a1c61d5d965`.
+Configured acceptance includes these declared exceptions; later main acceptance
+remains dispatcher-owned. Linux is outside this ticket's verification scope.
+
 #### Arm, phase and readiness diagnostics (#1977)
 
 Both harnesses retain the same recovery assertions and timeouts. Each arm resets
