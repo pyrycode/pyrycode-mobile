@@ -11,7 +11,8 @@ Only supported authoritative facts can be stored/restored. #2385 retired legacy-
 and exclusive models. See the [supported cache contract](conversation-cache-contract.md#the-contract),
 [#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
 and [#2386 upgrade evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
-\#2364 retains final integrated acceptance.
+The [integrated acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+accepts this authoritative-only storage route without certifying #2447's replacement timing probes.
 
 ## Restore and ownership
 
