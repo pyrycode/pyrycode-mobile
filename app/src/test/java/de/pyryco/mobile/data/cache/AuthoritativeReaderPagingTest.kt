@@ -134,6 +134,39 @@ class AuthoritativeReaderPagingTest {
                 }
         }
 
+    @Test fun indexedLiveSupplementKeepsTheHeldReplyAdmittedWithoutCertification() =
+        runTest {
+            val empty = SavedAuthoritativeThread("e", emptyList(), 0, 0)
+            val cache = disk()
+            cache.writeAuthoritativeThread("host", "c", empty).getOrThrow()
+            destination(cache) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.sourceSnapshot?.epoch == "e" }
+                val raw = JsonObject(fact(1) + mapOf("active" to JsonPrimitive(true), "status" to JsonPrimitive("running")))
+                // The real durable writer may win before the reader handles the corresponding live facts.
+                val committed = empty.copy(items = listOf(raw), appliedVersion = 10)
+                cache.upsertAuthoritativeThread("host", "c", committed, false, empty, emptyMap()).getOrThrow()
+                repo.authoritativeThreads.applyBatch("host", "c", "e", 10, listOf(ThreadItemDto.decodeReplacement(raw)), 0)
+                val state =
+                    vm.state.first {
+                        it.authoritativeThread
+                            ?.sourceSnapshot
+                            ?.items
+                            ?.any { fact -> fact.id == 1L } == true
+                    }
+                val snapshot = requireNotNull(state.authoritativeThread).sourceSnapshot
+                assertFalse("indexed supplementation cannot revoke a healthy live reply", snapshot.repairNeeded)
+                assertFalse(snapshot.resetNeeded)
+                assertEquals(listOf(raw), snapshot.items.map { it.raw })
+                assertEquals(10L, snapshot.completedVersion)
+                assertEquals(0L, snapshot.checkpoint)
+                assertEquals(null, snapshot.coverage)
+                assertEquals(listOf("Saved exact 1"), state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
+                assertTrue(state.items.filterIsInstance<ThreadItem.MessageItem>().single().message.isStreaming)
+                assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
+                assertEquals(0, cache.authoritativeFullReads)
+            }
+        }
+
     @Test fun savedOpaqueNumbersRemainExactThroughFileDestinationColdReopen() =
         runTest {
             val root = File(temporary.root, "opaque-numbers")
