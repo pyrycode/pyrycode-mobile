@@ -4,6 +4,11 @@ Split from [thread-screen-testing.md](thread-screen-testing.md) for #1985 to kee
 The [historical comparisons](thread-screen-testing-saved-first-draw-comparisons.md)
 retain allocation, restore and projection evidence, including every earlier miss.
 
+## Authoritative reader paging (#2334)
+
+See the [paging contract and evidence](authoritative-reader-paging.md) for binding workload/timing,
+lifecycle probes, historical failures and pending independent acceptance.
+
 ## Bounded database and retained file acceptance (#2333)
 
 The database opening/offline/older-demand requirements remain current. The file-compatibility

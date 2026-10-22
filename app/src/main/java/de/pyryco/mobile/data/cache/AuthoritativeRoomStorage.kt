@@ -16,6 +16,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import java.util.UUID
+import java.util.WeakHashMap
 
 /** Selected raw facts with committed certification. Local exhaustion says nothing about the server. */
 class AuthoritativeThreadPage internal constructor(
@@ -54,6 +55,27 @@ class AuthoritativeRoomStorage internal constructor(
 
     private val dao = database.authoritative()
     private val mutex = Mutex()
+
+    private data class ReaderBoundary(
+        val generation: String,
+        val key: String,
+        val launch: Boolean,
+    ) {
+        override fun toString(): String = "ReaderBoundary(redacted)"
+    }
+
+    // Accessed only under mutex. Values never refer back to their weak cursor keys.
+    private val readerBoundaries = WeakHashMap<AuthoritativeDisplayCursor, ReaderBoundary>()
+    private val pendingReaderBoundaries = mutableMapOf<AuthoritativeDisplayCursor, ReaderBoundary>()
+
+    private fun displayCursor(
+        header: AuthoritativeHeader,
+        key: String,
+        launch: Boolean,
+    ): AuthoritativeDisplayCursor =
+        AuthoritativeDisplayCursor(header.host, header.conversation, header.epoch, header.incarnation).also {
+            readerBoundaries[it] = ReaderBoundary(header.generation, key, launch)
+        }
 
     internal data class ReadCounts(
         val itemReads: Int = 0,
@@ -289,7 +311,45 @@ class AuthoritativeRoomStorage internal constructor(
                 lastWriteCounts = lastWriteCounts.copy(itemDeletes = lastWriteCounts.itemDeletes + trimmed)
             }
             val affectedIds = placementChanged + assigned.keys + saved.retirements.keys + trimmedRecords.map { it.id }
-            updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents)
+            val nextGeneration = UUID.randomUUID().toString()
+            val previousActive = changes.associate { it.first.id to it.second?.active }
+            val readers =
+                readerBoundaries.entries
+                    .filter { (cursor, boundary) ->
+                        cursor.host == host &&
+                            cursor.conversation == conversation &&
+                            cursor.epoch == saved.epoch &&
+                            cursor.incarnation == saved.incarnation &&
+                            boundary.generation == header?.generation
+                    }.associate { it.key to it.value }
+            val movedReaders = readers.mapValues { (_, boundary) -> boundary.copy(generation = nextGeneration) }.toMutableMap()
+            updatePlacements(host, conversation, saved.epoch, affectedIds, formerParents) { record, keys ->
+                // Old positions classify reachability. Do not widen this classification as the
+                // traversal extends a bound, or unrelated newer components could join it.
+                if (!(previousActive[record.id] ?: record.active)) {
+                    for ((cursor, boundary) in readers) {
+                        for ((launch, oldKey, newKey) in listOf(
+                            Triple(false, record.displayKey, keys.first),
+                            Triple(true, record.launchKey, keys.second),
+                        )) {
+                            if (oldKey.isEmpty() ||
+                                oldKey.startsWith("!") ||
+                                newKey.isEmpty() ||
+                                newKey.startsWith("!") ||
+                                oldKey == newKey
+                            ) {
+                                continue
+                            }
+                            if (oldKey < boundary.key || (oldKey == boundary.key && (!launch || boundary.launch))) {
+                                val inclusive = "$newKey~"
+                                val held = movedReaders.getValue(cursor)
+                                if (inclusive > held.key) movedReaders[cursor] = held.copy(key = inclusive, launch = false)
+                            }
+                        }
+                    }
+                }
+            }
+            pendingReaderBoundaries.putAll(movedReaders)
             val applied = maxOf(saved.appliedVersion, previous?.appliedVersion ?: 0)
             // Completion can inherit a certificate whose required facts retention already removed.
             // Advancing metadata alone never restores those prerequisites.
@@ -324,7 +384,7 @@ class AuthoritativeRoomStorage internal constructor(
                     host,
                     conversation,
                     saved.epoch,
-                    UUID.randomUUID().toString(),
+                    nextGeneration,
                     applied,
                     checkpoint,
                     coverage?.let { MobileJson.encodeToString(it) },
@@ -434,6 +494,7 @@ class AuthoritativeRoomStorage internal constructor(
         epoch: String,
         changed: Set<Long>,
         formerParents: Set<Long>,
+        moved: (AuthoritativeItem, Pair<String, String>) -> Unit,
     ) {
         val facts = linkedMapOf<Long, AuthoritativeItem>()
         val visited = mutableSetOf<Long>()
@@ -451,6 +512,7 @@ class AuthoritativeRoomStorage internal constructor(
         val placement = SavedPlacementIndex(facts.values.sortedBy { it.ordinal })
         for (id in facts.keys) {
             val keys = placement.keys.getValue(id)
+            moved(facts.getValue(id), keys)
             val anchor = placement.anchors[id]
             dao.placement(host, conversation, epoch, id, keys.first, keys.second, anchor?.third?.id ?: 0, anchor?.second?.id ?: 0)
             val summary = placement.contributions.getValue(id)
@@ -524,18 +586,158 @@ class AuthoritativeRoomStorage internal constructor(
             val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
             val fences = relevantRetirements(host, conversation, records.keys)
             lastReadCounts = lastReadCounts.copy(itemReads = sqlRows)
-            RelayLog.d {
-                "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} " +
-                    "queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
-            }
             val window = saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences).also { it.toSnapshot() }
             val rows = contributions.mapTo(mutableSetOf()) { (key, record) -> record.id to (key == record.launchKey) }
             extras.filter { it.active }.forEach { record ->
                 if (record.display) rows += record.id to false
                 if (record.launchKey.isNotEmpty()) rows += record.id to true
             }
-            AuthoritativeThreadWindow(host, conversation, window, rows)
+            AuthoritativeThreadWindow(
+                host,
+                conversation,
+                window,
+                rows,
+                contributions.firstOrNull()?.let { (key, record) ->
+                    displayCursor(header, key, key == record.launchKey)
+                },
+            ).also {
+                RelayLog.d {
+                    "event=authoritative_window rows=${selected.size} extras=${records.size - selected.size} " +
+                        "queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+                }
+            }
         }
+
+    /** Seek from the reader, not from newest, even after an owned save invalidated its generation. */
+    internal suspend fun beforeDisplayWindow(
+        host: String,
+        conversation: String,
+        cursor: AuthoritativeDisplayCursor,
+        admitted: Set<Pair<Long, Boolean>>,
+        size: Int,
+    ): AuthoritativeThreadWindow? =
+        read("read_older_display_window") {
+            require(size in 1..200)
+            val header = header(host, conversation) ?: return@read null
+            if (cursor.host != host ||
+                cursor.conversation != conversation ||
+                cursor.epoch != header.epoch ||
+                cursor.incarnation != header.incarnation
+            ) {
+                return@read null
+            }
+            // Only a continuous chain of committed writes by this storage owner can
+            // translate a reader's seek bound. Unknown generations retain local retry.
+            val boundary = readerBoundaries[cursor]?.takeIf { it.generation == header.generation } ?: return@read null
+            var before = boundary.key
+            var boundaryLaunch = boundary.launch
+            val contributions = mutableListOf<Pair<Boolean, AuthoritativeItem>>()
+            while (contributions.size < size) {
+                val candidates = displayCandidates(host, conversation, header.epoch, before, boundaryLaunch, size)
+                if (candidates.isEmpty()) break
+                val unseen = candidates.filter { (launch, item) -> (item.id to launch) !in admitted }
+                contributions.addAll(0, unseen.takeLast(size - contributions.size))
+                val oldest = candidates.first()
+                before = if (oldest.first) oldest.second.launchKey else oldest.second.displayKey
+                boundaryLaunch = oldest.first
+            }
+            val saved = metadata(header, includeRetirements = false)
+            val selected = contributions.mapTo(mutableSetOf()) { it.second.id }
+            val records = linkedMapOf<Long, AuthoritativeItem>()
+            if (selected.isNotEmpty()) {
+                dao.selectedItems(host, conversation, header.epoch, selected).forEach { records[it.id] = it }
+                lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                require(records.keys == selected)
+            }
+            val extras = dao.rendererExtras(host, conversation, header.epoch)
+            var payloadResults = selected.size + extras.size
+            lastReadCounts =
+                lastReadCounts.copy(
+                    queries = lastReadCounts.queries + 1,
+                    itemReads = selected.size + extras.size,
+                )
+            extras.forEach { records[it.id] = it }
+            val pending = ArrayDeque(records.values)
+            val lookedUp = records.keys.toMutableSet()
+            val witnessed = mutableSetOf<String>()
+            val decoded = linkedMapOf<Long, JsonObject>()
+            while (pending.isNotEmpty()) {
+                val record = pending.removeFirst()
+                val raw = decode(listOf(record), saved).single()
+                val item = ThreadItemDto.decodeReplacement(raw)
+                require(record.display == item.savedDisplayRow() && record.extra == item.savedRendererExtra())
+                require(
+                    record.parentId == (item.parent ?: 0L) &&
+                        record.agent == (item.kind == "agent") &&
+                        record.background == item.savedBackgroundAgent() &&
+                        record.active == item.active &&
+                        record.endedOrder == (item.endedOrder ?: 0L) &&
+                        record.rendererOrder == (item.order ?: Long.MAX_VALUE),
+                )
+                decoded[item.id] = raw
+                val parents = placementWitnesses(host, conversation, header.epoch, record, witnessed).toMutableList()
+                payloadResults += parents.size
+                item.parent?.takeIf { it > 0 && lookedUp.add(it) }?.let { parent ->
+                    lastReadCounts = lastReadCounts.copy(queries = lastReadCounts.queries + 1)
+                    dao.item(host, conversation, header.epoch, parent)?.let {
+                        parents.add(it)
+                        payloadResults++
+                    }
+                }
+                for (parent in parents) {
+                    if (parent.id !in records) {
+                        lookedUp += parent.id
+                        records[parent.id] = parent
+                        pending.addLast(parent)
+                    }
+                }
+            }
+            val fences = relevantRetirements(host, conversation, records.keys)
+            lastReadCounts = lastReadCounts.copy(itemReads = payloadResults)
+            val ordered = records.values.sortedWith(compareBy<AuthoritativeItem> { it.orderKey }.thenBy { it.ordinal })
+            val rows = contributions.mapTo(mutableSetOf()) { (launch, item) -> item.id to launch }
+            extras.filter { it.active }.forEach { item ->
+                if (item.display) rows += item.id to false
+                if (item.launchKey.isNotEmpty()) rows += item.id to true
+            }
+            val next =
+                contributions.firstOrNull()?.let { (launch, item) ->
+                    displayCursor(header, if (launch) item.launchKey else item.displayKey, launch)
+                }
+            RelayLog.d {
+                "event=authoritative_local_page rows=${contributions.size} queries=${lastReadCounts.queries} decodes=${lastReadCounts.itemDecodes}"
+            }
+            AuthoritativeThreadWindow(
+                host,
+                conversation,
+                saved.copy(items = ordered.map { decoded.getValue(it.id) }, retirements = fences),
+                rows,
+                next,
+            )
+        }
+
+    /** Bounded metadata seeks; neither lookahead nor skipped admitted contributions decode payloads. */
+    private suspend fun displayCandidates(
+        host: String,
+        conversation: String,
+        epoch: String,
+        before: String,
+        launch: Boolean,
+        size: Int,
+    ): List<Pair<Boolean, AuthoritativeItem>> {
+        val content = dao.displayBefore(host, conversation, epoch, before + if (launch) "~" else "", size)
+        val launches = dao.launchBefore(host, conversation, epoch, before, size)
+        lastReadCounts =
+            lastReadCounts.copy(
+                queries = lastReadCounts.queries + 2,
+                ordinalReads = lastReadCounts.ordinalReads + content.size + launches.size,
+            )
+        return (content.map { false to it } + launches.map { true to it })
+            .sortedWith(
+                compareBy<Pair<Boolean, AuthoritativeItem>> { if (it.first) it.second.launchKey else it.second.displayKey }
+                    .thenBy { it.first },
+            ).takeLast(size)
+    }
 
     /** Required winning-live parents and overlapping retirement evidence, under the same disk owner. */
     internal suspend fun parentClosure(
@@ -878,12 +1080,21 @@ class AuthoritativeRoomStorage internal constructor(
         try {
             withContext(ioDispatcher) {
                 mutex.withLock {
-                    when (val done = database.classifiedTransaction(beforeCommit, block)) {
-                        is CacheTransaction.Committed -> Result.success(Unit).also { log(operation, "ok") }
-                        is CacheTransaction.Failed -> {
-                            log(operation, done.code)
-                            Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+                    pendingReaderBoundaries.clear()
+                    try {
+                        when (val done = database.classifiedTransaction(beforeCommit, block)) {
+                            is CacheTransaction.Committed ->
+                                Result.success(Unit).also {
+                                    readerBoundaries.putAll(pendingReaderBoundaries)
+                                    log(operation, "ok")
+                                }
+                            is CacheTransaction.Failed -> {
+                                log(operation, done.code)
+                                Result.failure(ConversationCacheException("conversation cache $operation failed: ${done.code}"))
+                            }
                         }
+                    } finally {
+                        pendingReaderBoundaries.clear()
                     }
                 }
             }
