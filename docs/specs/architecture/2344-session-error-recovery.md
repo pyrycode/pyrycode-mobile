@@ -50,6 +50,7 @@ The existing single inbound collector owns ordering. No new jobs, mutable applic
 | Give-up, recovery and fresh delivery | Same native method's dropped arm retains no-replay assertions |
 | Fixture removal and preceding-host restoration | Same native method's final saved-pairing and connection-identity assertions |
 | Connection closes or repository switches | Existing completion, cancellation and facade tests |
+| Authoritative epoch replacement with omitted/explicit-zero roots | `omittedAndExplicitRootParentsMatchWithoutErasingOwnedParents` plus the existing durable native proof; nonzero parent identities remain exact |
 
 ## Error handling
 
@@ -111,6 +112,9 @@ Run focused tests, lint, debug assembly, instrumented Kotlin compilation if inst
 
 - 2026-10-22: the real extracted parent predicate failed `omittedAndExplicitRootParentsMatchWithoutErasingOwnedParents` at omitted-versus-explicit-zero equality: 4 executed, 3 passed, 1 failed, no errors/skips. The unanchored `0` fallbacks allow incompatible boxed numeric representations in this equality context. Use `0L` on both sides, preserving exact nonzero parent equality; use the same predicate for the diagnostic parent count. This repairs a Mobile-owned test proof, not daemon facts, admission, queue ordering or session-error clearing. Raw controlled red XML is retained alongside the native failures. Security re-review remains PASS: only primitive equality changes, with no new external input or authority.
 
+- 2026-10-22: repair `227282b54928e520dfd7f02bb770a9b6c2fe2d1c` passed the controlled class 4/4 and its first native ping scenario 2/2. One same-input follow-up passed durable-gap again but failed original ping's final 90-second read-mark wait (2 executed, 1 passed, 1 failed, no errors/skips). The two repaired runs have identical app/test APK, daemon and relay hashes, establishing ping intermittency independently of the now-passing durable proof. Both native durable runs reused the epoch; native replacement coverage is not claimed, while the controlled omitted/zero regression directly covers the repaired branch. Full failed reports and source/binary/APK receipts remain under `repaired-parent-227282b54-ping{,-followup}/`. Keep original ping and reply-suggestion in dispatcher recovery and configured acceptance, preserving their assertions and deadlines; no unsupported selector, skip, timeout extension or speculative product repair was used.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/e2e-interactive-stream.md`, “Session-error recovery”: record the diagnosed Core #3711 progress-suppression cause and fresh macOS focused evidence, preserving the distinction from pending dispatcher-wide acceptance. Explain that `PYRYCODE_SRC` must contain the repair because the recovery daemon is built separately with `e2e_realclaude`; changing only `PYRY_BIN` does not select that source.
+- Pending documentation stage: `docs/recorded-tests.md`, “What replay proves”: preserve the cross-epoch baseline identity contract and record that root-parent comparisons need `Long` zero fallbacks; omitted and explicit zero roots agree while nonzero parent IDs remain distinct.
