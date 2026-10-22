@@ -258,38 +258,39 @@ class CachingConversationRepository(
                         } catch (_: SecurityException) {
                             AuthoritativeRestore.Unavailable
                         }
-                    val forwardOlder = synchronized(authoritativeThreads) {
-                        if (!isActive ||
-                            authoritativeReaders[conversationId] !== reader ||
-                            conversationId in deleted ||
-                            !authoritativeCurrent(conversationId) ||
-                            authoritativeThreads.current(serverId, conversationId).generation != 0L
-                        ) {
-                            return@launch
+                    val forwardOlder =
+                        synchronized(authoritativeThreads) {
+                            if (!isActive ||
+                                authoritativeReaders[conversationId] !== reader ||
+                                conversationId in deleted ||
+                                !authoritativeCurrent(conversationId) ||
+                                authoritativeThreads.current(serverId, conversationId).generation != 0L
+                            ) {
+                                return@launch
+                            }
+                            when {
+                                result is AuthoritativeRestore.Validated -> {
+                                    page?.cursor?.let { authoritativeCursors[conversationId] = it }
+                                    publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
+                                    RelayLog.d { "event=authoritative_restore code=reader_page" }
+                                    false
+                                }
+                                page?.cursor == null && page != null -> {
+                                    publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
+                                    RelayLog.d { "event=authoritative_restore code=local_exhausted" }
+                                    true
+                                }
+                                result == AuthoritativeRestore.Unavailable -> {
+                                    publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Retry)
+                                    RelayLog.d { "event=authoritative_restore code=local_unavailable" }
+                                    false
+                                }
+                                else -> {
+                                    publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
+                                    false
+                                }
+                            }
                         }
-                        when {
-                            result is AuthoritativeRestore.Validated -> {
-                                page?.cursor?.let { authoritativeCursors[conversationId] = it }
-                                publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
-                                RelayLog.d { "event=authoritative_restore code=reader_page" }
-                                false
-                            }
-                            page?.cursor == null && page != null -> {
-                                publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
-                                RelayLog.d { "event=authoritative_restore code=local_exhausted" }
-                                true
-                            }
-                            result == AuthoritativeRestore.Unavailable -> {
-                                publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Retry)
-                                RelayLog.d { "event=authoritative_restore code=local_unavailable" }
-                                false
-                            }
-                            else -> {
-                                publishLocalHistory(conversationId, reader, AuthoritativeHistoryLoad.Idle)
-                                false
-                            }
-                        }
-                    }
                     // The coordinator takes its own lock before the store; never call it while holding the store monitor.
                     if (forwardOlder && isActive && authoritativeReaders[conversationId] === reader) hostThread?.older(conversationId)
                 } finally {
