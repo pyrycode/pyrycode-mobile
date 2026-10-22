@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.CachingConversationRepository
@@ -131,6 +132,38 @@ class AuthoritativeReaderPagingTest {
                 disk.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves).also {
                     if (it.isSuccess && raw in saved.items) committed.complete(Unit)
                 }
+        }
+
+    @Test fun savedOpaqueNumbersRemainExactThroughFileDestinationColdReopen() =
+        runTest {
+            val root = File(temporary.root, "opaque-numbers")
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val opaque =
+                MobileJson.parseToJsonElement(
+                    """{"nested":[-0,1e-400,1e400,1.234567890123456789,9007199254740993123456789,"1e-400",true,null]}""",
+                )
+            val raw = JsonObject(fact(1) + mapOf("future" to opaque))
+            val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 9)
+            FileConversationCache(root, dispatcher).writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            for (online in listOf(false, true)) {
+                repeat(2) {
+                    destination(FileConversationCache(root, dispatcher), online) { fixture, vm, repo ->
+                        val state = vm.state.first { it.authoritativeThread?.sourceSnapshot?.items?.size == 1 }
+                        assertEquals(listOf(raw), state.authoritativeThread?.sourceSnapshot?.items?.map { it.raw })
+                        assertEquals(listOf(raw), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                        advanceTimeBy(300)
+                        runCurrent()
+                        val requests = fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") }
+                        assertEquals(if (online) 1 else 0, requests.size)
+                        advanceTimeBy(300)
+                        runCurrent()
+                        assertEquals(requests, fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") })
+                    }
+                    val reopened = FileConversationCache(root, dispatcher).readAuthoritativeThread("host", "c")
+                    assertEquals(saved, reopened)
+                    assertEquals(opaque, reopened?.items?.single()?.get("future"))
+                }
+            }
         }
 
     @Test fun demandIsIndependentAndNeverWalksAtRest() =
