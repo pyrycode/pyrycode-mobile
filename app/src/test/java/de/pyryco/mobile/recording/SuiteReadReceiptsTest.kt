@@ -250,7 +250,7 @@ class SuiteReadReceiptsTest {
                         "phone/host0/0",
                         frame(93, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}"""),
                     ).deliveries
-                    .isEmpty(),
+                    .none { it.message?.inReplyTo == 93L || it.direction == "inbound_end" },
             )
             val payload = if (type == "list_conversations") "{}" else """{"conversation_id":"chat","epoch":"e","version":15}"""
             val released = tape.send("phone/host0/0", frame(92, type, payload)).deliveries

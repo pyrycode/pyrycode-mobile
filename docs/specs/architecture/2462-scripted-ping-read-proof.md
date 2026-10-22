@@ -131,6 +131,8 @@ The first repaired pair passed Agent restart but permission still stalled at the
 
 The controlled notification run executed 20 tests: 19 passed and the new notification assertion failed because its delivery list was empty. Preserve genuine unsolicited notifications rather than deleting equal payloads; `permits` still fences them on observed same-host confirmed progress. Security re-review: PASS; foreign-host progress cannot release the notification, and no acknowledgement, certification or required query is invented. Final forecast is below 1600 written lines, with no new exported type or state-machine branch.
 
+Retaining genuine notifications also releases a qualified ordinary notification while a list prerequisite remains unmatched. The termination regression therefore checks that neither its correlated acknowledgement nor termination is released early, while allowing that independent notification; all original production/native assertions remain unchanged. Its first over-broad empty-list assertion failure is retained separately.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
