@@ -786,6 +786,10 @@ class DeterministicInteractiveStreamE2ETest {
                                             "ReopenStreamProof",
                                             "phase=prefix_read source_current=${current === coordinator.currentRepository.value} " +
                                                 "admitted=${reading.admitted} assistants=${reading.assistantRecords().size} " +
+                                                "live=${(current as? RemoteConversationRepository)?.usesAuthoritativeLiveState} " +
+                                                "has_epoch=${reading.sourceSnapshot?.epoch != null} " +
+                                                "repair=${reading.sourceSnapshot?.repairNeeded} reset=${reading.sourceSnapshot?.resetNeeded} " +
+                                                "generation=${reading.sourceSnapshot?.generation} facts=${reading.sourceSnapshot?.items?.size} " +
                                                 "prefix=${reading.openReply(reading.owner)?.fullText == REOPEN_PREFIX}",
                                         )
                                     }
