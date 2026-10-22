@@ -5,6 +5,9 @@
   "nativeRunHead": "9866c8e209e26e6ee7dea85ad56a0759c8e3e790",
   "nativeSourceNote": "Production, Gradle configuration, exported schemas and shared migration fixture are byte-identical at both revisions; the later commit changes only a JVM-only fixture and its plan revision.",
   "sharedFixtureSha256": "35af5f23b890a2c46420c54c443d8615f630f681c2b34607d1e8d9768e5fc3c0",
+  "nativeAppApkSha256": "04bdec77c7cff40b7a93fbc1a827909bd0e4c57b1a1bbc5c4bb6e6e132b3dbf6",
+  "nativeTestApkSha256": "5ccaff7203613cd79a5119b9963cb6599c6a46b66a9964d76ed52c2cda7b51a3",
+  "nativeXmlSha256": "65532b7befaa6b2142ad2614345d59a61c8040a1783eb2859e781ec80d22de41",
   "persistentEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-20261022-129144c6f",
   "checks": [
     {
@@ -42,11 +45,39 @@
       "coverage": "Schemas 2 and 11 plus fresh creation on real Android SQLite; original exact-preservation and post-upgrade operation assertions run unchanged."
     }
   ],
-  "historicalFailures": [
+  "finalJvm": {
+    "revision": "c1f2ce9d6047d8afa51993010671889946e7891a",
+    "sharedFixtureSha256": "89133c846e391d1d9797b355df401094be6262a7581469afed37ecf2992d4b3e",
+    "sourceNote": "The shared fixture differs from native execution only by one whitespace line break. The final matrix ran again after formatting. The authoritative fixture also includes the optional-index repair.",
+    "commandTemplate": "python3 scripts/gradle-gate.py testDebugUnitTest --tests <class> --console=plain",
+    "exitCodeEach": 0,
+    "errorsEach": 0,
+    "checks": [
+      {"class": "de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest", "executed": 3, "passed": 3, "failed": 0, "skipped": 0, "report": "matrix-formatted-final.xml"},
+      {"class": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest", "executed": 13, "passed": 13, "failed": 0, "skipped": 0, "report": "authoritative-storage-final.xml"},
+      {"class": "de.pyryco.mobile.data.cache.MigratingConversationCacheTest", "executed": 13, "passed": 13, "failed": 0, "skipped": 0, "report": "migrating-cache-final.xml"},
+      {"class": "de.pyryco.mobile.di.ConversationCacheFactoryTest", "executed": 3, "passed": 3, "failed": 0, "skipped": 0, "report": "cache-factory-final.xml"},
+      {"class": "de.pyryco.mobile.data.repository.AuthoritativeSendReconciliationTest", "executed": 7, "passed": 7, "failed": 0, "skipped": 0, "report": "send-reconciliation-final.xml"},
+      {"class": "de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest", "executed": 18, "passed": 18, "failed": 0, "skipped": 0, "report": "owned-removal-final.xml"},
+      {"class": "de.pyryco.mobile.data.cache.FileConversationCacheReadPositionTest", "executed": 3, "passed": 3, "failed": 0, "skipped": 0, "report": "read-positions-final.xml"}
+    ]
+  },
+  "focusedFixtureRecovery": {
+    "method": "de.pyryco.mobile.data.cache.AuthoritativeRoomStorageTest.availabilityInvariant_nestedAgentsKeepBoundedKeysThroughImportUpgradeAndStructuralWrites",
+    "sourceBase": "9866c8e209e26e6ee7dea85ad56a0759c8e3e790",
+    "uncommittedRepairedFixtureSha256": "e9def34d41f0f996a67f65908ba64f400740b679aacb782b3446b8a72de35d0a",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "report": "authoritative-storage-repaired-method.xml"
+  },
+  "historicalRuns": [
     "fixture-invalid.xml retains the initial fixture-development failure; it is not migration evidence.",
     "initial-matrix.xml retains an earlier 3/3 pass before strengthening placement/import probes; final acceptance uses matrix-final.xml.",
     "authoritative-storage-fixture-red.xml at 9866c8e209e26e6ee7dea85ad56a0759c8e3e790 retains 13 executed, 12 passed, 1 failed, 0 skipped: the new historical fixture assumed an optional indices key was present."
   ],
+  "staticAndBuildChecks": "Linux lint and spotlessApply passed; final assembly, forced Spotless and Kotlin compilation are recorded in the PR after execution.",
   "completeConfiguredAcceptance": "Pending: dispatcher/verifier-owned build, JVM, UI and scripted gates.",
   "macos": "Outside this Linux ticket's verification scope."
 }
