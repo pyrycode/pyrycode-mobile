@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.harnessThreadEvidence
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
@@ -223,6 +224,45 @@ class AuthoritativeReaderPagingTest {
             assertEquals(requests, fixture.requests)
         }
     }
+
+    @Test fun connectionReplacementKeepsTheOriginalReaderPublishingWithPassiveEvidence() =
+        runTest {
+            for (observeEvidence in listOf(false, true)) {
+                databaseName = "replacement-$observeEvidence.db"
+                val cache = disk()
+                cache.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)).getOrThrow()
+                destination(cache, online = true) { fixture, vm, repo ->
+                    vm.state.first { it.authoritativeThread?.rows?.size == 1 }
+                    val route = requireNotNull(repo.negotiatedThread)
+                    val original = route.support.first { it is ThreadSupport.Supported } as ThreadSupport.Supported
+                    if (observeEvidence) harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                    fixture.disconnect()
+                    runCurrent()
+                    fixture.connect()
+                    route.support.first { it is ThreadSupport.Supported && it.connection !== original.connection }
+                    runCurrent()
+                    if (observeEvidence) harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                    val requests = fixture.requests.toList()
+                    val added = fact(2)
+                    repo.authoritativeThreads.applyBatch("host", "c", "e", 101, listOf(ThreadItemDto.decodeReplacement(added)), 0)
+                    val state =
+                        withContext(Dispatchers.IO) {
+                            withTimeoutOrNull(5_000) {
+                                vm.state.first { it.authoritativeThread?.sourceSnapshot?.items?.any { row -> row.id == 2L } == true }
+                            }
+                        }
+                    val current = repo.authoritativeThreads.current("host", "c")
+                    println("replacement_reader evidence=$observeEvidence facts=${current.items.size} ui_updated=${state != null}")
+                    assertTrue("the original UI reader must publish after connection replacement", state != null)
+                    assertEquals(listOf(fact(1), added), current.items.map { it.raw })
+                    assertEquals(100L, current.checkpoint)
+                    assertFalse(current.repairNeeded)
+                    assertFalse(current.resetNeeded)
+                    assertEquals(0, cache.authoritativeFullReads)
+                    assertEquals(requests, fixture.requests)
+                }
+            }
+        }
 
     @Test fun evidenceObservationPreservesSettledRetryAndItsReaderBoundary() =
         runTest {
