@@ -66,10 +66,10 @@ single-echo and visible-marker assertions remain unchanged.
 Streaming assertions exposed a further production allocation regression in the
 complete UI sequence: the candidate exhausted the normal heap during query lease
 release, while complete main passed both compatibility cases. Root sharing under
-#2477 addresses the extra summary/full-model allocation. The failed complete run
+Repair #2477 addresses the extra summary/full-model allocation. The failed complete run
 and exact main comparison remain retained alongside the earlier helper failures.
 
-**Counted macOS evidence, 2026-10-22.** Final implementation/test candidate
+**Counted macOS evidence, 2026-10-22–23.** Final implementation/test candidate
 `0ced42f66c3d31002ec9ed4885741db9e2d245d5` includes main `ecad147dd8a2`.
 Script discovery passed 214 tests. Complete JVM/build acceptance freshly executed
 and passed 5,324, with zero failures/errors/skips, at `1b4b0398c4ef01f348349f2cad78ad12ee43c253`.
@@ -94,8 +94,8 @@ Both compatibility cases and the peer-attachment scenario passed the complete
 confirmation at `1b4b0398c`.
 
 Current-candidate complete UI at `0ced42f66` executed 333, passed 331 and failed
-two, with the same one additional rename skip. Model change remains tracked by
-#2351. The recorded restart method is tracked by open
+two, with the same one additional rename skip. Model change remains tracked by #2351.
+The recorded restart method is tracked by open
 [#2476](https://github.com/pyrycode/pyrycode-mobile/issues/2476): it passed the exact
 candidate repeat and failed the exact merged-main comparison. Its candidate-first
 checkpoint mismatch (87 versus recorded 0) differs from main's premature-close
