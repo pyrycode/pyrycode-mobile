@@ -769,7 +769,10 @@ class DeterministicInteractiveStreamE2ETest {
         severAndRestoreLink()
         assertTrue("the prefix must arrive through a replacement source", coordinator.currentRepository.value !== repository)
         typeAndSend(SEND_PROMPT)
-        android.util.Log.i("ReopenStreamProof", "phase=await_prefix captured_source_current=${repository === coordinator.currentRepository.value}")
+        android.util.Log.i(
+            "ReopenStreamProof",
+            "phase=await_prefix captured_source_current=${repository === coordinator.currentRepository.value}",
+        )
         val arrived =
             try {
                 runBlocking {
