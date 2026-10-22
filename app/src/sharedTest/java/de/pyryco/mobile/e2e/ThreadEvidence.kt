@@ -186,6 +186,11 @@ internal class ThreadEvidenceSource private constructor(
     }
 }
 
+/** Controlled fixture projection only; real destinations retain passive same-store evidence. */
+internal interface SyntheticThreadEvidenceProducer {
+    fun evidenceSnapshots(conversationId: String): Flow<AuthoritativeThreadSnapshot>
+}
+
 /**
  * The single negotiation seam (#2175), bound to the production selection: a host repository carrying the
  * negotiated route, or a live connection serving one, yields only authoritative evidence. Only the legacy
@@ -194,10 +199,10 @@ internal class ThreadEvidenceSource private constructor(
 internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource {
     repository.negotiatedThread?.let { route ->
         // The concrete demo maps its in-memory authored fixtures lazily; it has no cache reader lease.
-        return if (repository is FakeConversationRepository) {
-            ThreadEvidenceSource.negotiated(route, route::observe)
-        } else {
-            ThreadEvidenceSource.negotiated(route)
+        return when (repository) {
+            is SyntheticThreadEvidenceProducer -> ThreadEvidenceSource.negotiated(route, repository::evidenceSnapshots)
+            is FakeConversationRepository -> ThreadEvidenceSource.negotiated(route, route::observe)
+            else -> ThreadEvidenceSource.negotiated(route)
         }
     }
     if (repository is RemoteConversationRepository && repository.authoritativeHost.isNotEmpty()) {
