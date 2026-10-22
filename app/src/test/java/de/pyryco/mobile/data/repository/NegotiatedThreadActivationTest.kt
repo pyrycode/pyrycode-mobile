@@ -564,153 +564,201 @@ class NegotiatedThreadActivationTest {
 
     @Test fun unreadPostWithAvailableSummaryNeedsNoCertificationRefresh() = unreadPostSummaryAfterRecovery(shownAfterPost = 13)
 
-    private fun unreadPostSummaryAfterRecovery(shownAfterPost: Long?) =
-        runTest {
-            val host = host("h")
-            var source: HostConversationSource? = null
+    @Test fun certifiedRecoveryWaitsForItsPendingAvailableSummary() =
+        unreadPostSummaryAfterRecovery(shownAfterPost = 13, summaryAfterCertification = true)
 
-            fun summary(
-                shown: Long?,
-                read: Long = 9,
-            ) = Envelope(
-                300,
-                "conversations",
-                "2026-10-17T10:00:00Z",
-                MobileJson.parseToJsonElement(
-                    """{"conversations":[{"id":"c","name":"Channel","is_promoted":true,"cwd":"","current_session_id":"s",
+    @Test fun unavailableSummaryAfterCertificationRefreshesOnceOnItsOwner() =
+        unreadPostSummaryAfterRecovery(shownAfterPost = null, summaryAfterCertification = true)
+
+    @Test fun repeatedCertificationCannotRefreshTheSameLiveSummaryAgain() =
+        unreadPostSummaryAfterRecovery(shownAfterPost = null, summaryAfterCertification = true, repeatCertification = true)
+
+    private fun unreadPostSummaryAfterRecovery(
+        shownAfterPost: Long?,
+        summaryAfterCertification: Boolean = false,
+        repeatCertification: Boolean = false,
+    ) = runTest {
+        val host = host("h")
+        var source: HostConversationSource? = null
+
+        fun summary(
+            shown: Long?,
+            read: Long = 9,
+        ) = Envelope(
+            300,
+            "conversations",
+            "2026-10-17T10:00:00Z",
+            MobileJson.parseToJsonElement(
+                """{"conversations":[{"id":"c","name":"Channel","is_promoted":true,"cwd":"","current_session_id":"s",
                         "last_message_ts":"2026-10-17T10:00:00Z","last_used_at":"2026-10-17T10:00:00Z",
                         "read_up_to":$read,"latest_entry_id":13${shown?.let { ",\"last_shown_version\":$it" }.orEmpty()}}]}""",
+            ),
+        )
+        try {
+            host.coordinator.authoritativeThreads.reset("h", "c", "e")
+            val retiredPump = host.connect()
+            retiredPump.open(CAPABLE)
+            runCurrent()
+            val retired = host.repo()
+            retiredPump.push(summary(9))
+            runCurrent()
+            val pump = host.connect()
+            pump.open(CAPABLE)
+            runCurrent()
+            val repo = host.repo()
+            assertNotSame(retired, repo)
+            assertNull(repo.currentReadMarks("c"))
+            val connection =
+                HostConversationConnection("h", null, host.coordinator.currentRepository, host.coordinator.connectionStatus)
+            val hostSource =
+                HostConversationSource(
+                    MutableStateFlow(listOf(connection)),
+                    { host.repo() },
+                    StandardTestDispatcher(testScheduler),
+                )
+            source = hostSource
+            runCurrent()
+            pump.push(summary(9))
+            val lease = requireNotNull(repo.acquireAuthoritativeThread("c"))
+            val opening = pump.queries().single()
+            pump.push(batch(opening, 12, listOf(item(9, 10, 9))))
+            pump.push(window(opening, 12, 9, 10, false))
+            runCurrent()
+            lease.close()
+
+            fun settled(fact: ThreadItemDto) = ThreadItemDto.decodeReplacement(JsonObject(fact.raw + ("active" to JsonPrimitive(false))))
+            val post = settled(item(13, 13, 13, status = "done", text = "post"))
+            val terminal = settled(item(14, 14, 14, kind = "turn_end", status = "done"))
+            assertTrue("the supplied completion must pass production admission", terminal.isCompletion())
+            val updates =
+                listOf(post, terminal).map { fact ->
+                    Envelope(
+                        200,
+                        "thread_item_added",
+                        "2026-10-17T10:00:00Z",
+                        buildJsonObject {
+                            put("conversation_id", "c")
+                            put("epoch", "e")
+                            put("version", fact.rev)
+                            put("item", fact.raw)
+                        },
+                    )
+                }
+            updates.forEach(pump::push)
+            runCurrent()
+            val liveSummary = pump.sent.last { it.type == "list_conversations" }
+            // Metadata can become unavailable while the live summary is still pending.
+            pump.push(summary(null))
+            if (!summaryAfterCertification) pump.push(summary(shownAfterPost).copy(inReplyTo = liveSummary.id))
+            runCurrent()
+            val shownBeforeCertification = shownAfterPost.takeUnless { summaryAfterCertification }
+            assertEquals(shownBeforeCertification?.toULong(), repo.currentReadMarks("c")?.unreadWatermark)
+            assertEquals(
+                "c",
+                hostSource.snapshots.value
+                    .single()
+                    .channels
+                    .single()
+                    .id,
+            )
+
+            fun attention() = hostSource.attention.value["h"]?.get("c") ?: ConversationAttention.Idle
+            val expectedAttention = if (shownBeforeCertification == null) ConversationAttention.Idle else ConversationAttention.Unread
+            assertEquals(expectedAttention, attention())
+            val beforeCertification = pump.sent.count { it.type == "list_conversations" }
+            // Only a new request after recovery gets usable daemon facts; no unsolicited update.
+            val refreshes = mutableListOf<Envelope>()
+            pump.onSend = { if (it.type == "list_conversations") refreshes += it }
+            val recovery = pump.queries().last()
+            pump.push(batch(recovery, 14, listOf(post, terminal)))
+            pump.push(
+                reply(
+                    recovery,
+                    buildJsonObject {
+                        put("conversation_id", "c")
+                        put("epoch", "e")
+                        put("version", 14)
+                        put("items", JsonArray(emptyList()))
+                        put("final", true)
+                        put("from_version", 12)
+                    },
                 ),
             )
-            try {
-                host.coordinator.authoritativeThreads.reset("h", "c", "e")
-                val retiredPump = host.connect()
-                retiredPump.open(CAPABLE)
+            runCurrent()
+            assertEquals(
+                "certified recovery must refresh only an unavailable daemon summary",
+                beforeCertification + if (shownAfterPost == null && !summaryAfterCertification) 1 else 0,
+                pump.sent.count { it.type == "list_conversations" },
+            )
+            assertEquals(
+                "certification itself is not shown metadata",
+                shownBeforeCertification?.toULong(),
+                repo.currentReadMarks("c")?.unreadWatermark,
+            )
+            assertEquals(expectedAttention, attention())
+            if (summaryAfterCertification) {
+                pump.push(summary(shownAfterPost).copy(inReplyTo = liveSummary.id))
                 runCurrent()
-                val retired = host.repo()
-                retiredPump.push(summary(9))
-                runCurrent()
-                val pump = host.connect()
-                pump.open(CAPABLE)
-                runCurrent()
-                val repo = host.repo()
-                assertNotSame(retired, repo)
-                assertNull(repo.currentReadMarks("c"))
-                val connection =
-                    HostConversationConnection("h", null, host.coordinator.currentRepository, host.coordinator.connectionStatus)
-                val hostSource =
-                    HostConversationSource(
-                        MutableStateFlow(listOf(connection)),
-                        { host.repo() },
-                        StandardTestDispatcher(testScheduler),
-                    )
-                source = hostSource
-                runCurrent()
-                pump.push(summary(9))
-                val lease = requireNotNull(repo.acquireAuthoritativeThread("c"))
-                val opening = pump.queries().single()
-                pump.push(batch(opening, 12, listOf(item(9, 10, 9))))
-                pump.push(window(opening, 12, 9, 10, false))
-                runCurrent()
-                lease.close()
-
-                fun settled(fact: ThreadItemDto) =
-                    ThreadItemDto.decodeReplacement(JsonObject(fact.raw + ("active" to JsonPrimitive(false))))
-                val post = settled(item(13, 13, 13, status = "done", text = "post"))
-                val terminal = settled(item(14, 14, 14, kind = "turn_end", status = "done"))
-                assertTrue("the supplied completion must pass production admission", terminal.isCompletion())
-                val updates =
-                    listOf(post, terminal).map { fact ->
-                        Envelope(
-                            200,
-                            "thread_item_added",
-                            "2026-10-17T10:00:00Z",
-                            buildJsonObject {
-                                put("conversation_id", "c")
-                                put("epoch", "e")
-                                put("version", fact.rev)
-                                put("item", fact.raw)
-                            },
-                        )
-                    }
-                updates.forEach(pump::push)
-                runCurrent()
-                // The live refresh can report either an available fold or temporary unavailability.
-                pump.push(summary(shownAfterPost))
-                runCurrent()
-                assertEquals(shownAfterPost?.toULong(), repo.currentReadMarks("c")?.unreadWatermark)
-                assertEquals(
-                    "c",
-                    hostSource.snapshots.value
-                        .single()
-                        .channels
-                        .single()
-                        .id,
-                )
-
-                fun attention() = hostSource.attention.value["h"]?.get("c") ?: ConversationAttention.Idle
-                val expectedAttention = if (shownAfterPost == null) ConversationAttention.Idle else ConversationAttention.Unread
-                assertEquals(expectedAttention, attention())
-                val beforeCertification = pump.sent.count { it.type == "list_conversations" }
-                // Only a new request after recovery gets usable daemon facts; no unsolicited update.
-                val refreshes = mutableListOf<Envelope>()
-                pump.onSend = { if (it.type == "list_conversations") refreshes += it }
-                val recovery = pump.queries().last()
-                pump.push(batch(recovery, 14, listOf(post, terminal)))
+            }
+            assertEquals(
+                beforeCertification +
+                    if (shownAfterPost ==
+                        null
+                    ) {
+                        1
+                    } else {
+                        0
+                    },
+                pump.sent.count { it.type == "list_conversations" },
+            )
+            if (repeatCertification) {
+                assertTrue(repo.openAuthoritativeThread("c"))
+                val repeated = pump.queries().last()
                 pump.push(
                     reply(
-                        recovery,
+                        repeated,
                         buildJsonObject {
                             put("conversation_id", "c")
                             put("epoch", "e")
                             put("version", 14)
                             put("items", JsonArray(emptyList()))
                             put("final", true)
-                            put("from_version", 12)
+                            put("from_version", 14)
                         },
                     ),
                 )
                 runCurrent()
-                assertEquals(
-                    "certified recovery must refresh only an unavailable daemon summary",
-                    beforeCertification + if (shownAfterPost == null) 1 else 0,
-                    pump.sent.count { it.type == "list_conversations" },
-                )
-                assertEquals(
-                    "certification itself is not shown metadata",
-                    shownAfterPost?.toULong(),
-                    repo.currentReadMarks("c")?.unreadWatermark,
-                )
-                assertEquals(expectedAttention, attention())
-                if (shownAfterPost == null) {
-                    pump.push(summary(13).copy(inReplyTo = refreshes.single().id))
-                } else {
-                    assertTrue(refreshes.isEmpty())
-                }
-                runCurrent()
-
-                assertEquals(ConversationAttention.Unread, attention())
-                pump.push(summary(13))
-                pump.push(summary(9))
-                runCurrent()
-                assertEquals(ConversationAttention.Unread, attention())
-                pump.push(summary(13, read = 13))
-                runCurrent()
-                assertEquals(ConversationAttention.Idle, attention())
-                val afterConfirmation = pump.sent.count { it.type == "list_conversations" }
-                updates.reversed().forEach(pump::push)
-                retiredPump.push(summary(50, read = 50))
-                runCurrent()
-                assertEquals(afterConfirmation, pump.sent.count { it.type == "list_conversations" })
-                assertEquals(ConversationAttention.Idle, attention())
-                assertEquals(13uL, repo.currentReadMarks("c")?.readUpTo)
-                assertEquals(9uL, retired.currentReadMarks("c")?.readUpTo)
-                assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
-            } finally {
-                source?.dispose()
-                host.coordinator.close()
+                assertEquals("one answered live summary permits only one follow-up", 1, refreshes.size)
             }
+            if (shownAfterPost == null) {
+                pump.push(summary(13).copy(inReplyTo = refreshes.single().id))
+            } else {
+                assertTrue(refreshes.isEmpty())
+            }
+            runCurrent()
+
+            assertEquals(ConversationAttention.Unread, attention())
+            pump.push(summary(13))
+            pump.push(summary(9))
+            runCurrent()
+            assertEquals(ConversationAttention.Unread, attention())
+            pump.push(summary(13, read = 13))
+            runCurrent()
+            assertEquals(ConversationAttention.Idle, attention())
+            val afterConfirmation = pump.sent.count { it.type == "list_conversations" }
+            updates.reversed().forEach(pump::push)
+            retiredPump.push(summary(50, read = 50))
+            runCurrent()
+            assertEquals(afterConfirmation, pump.sent.count { it.type == "list_conversations" })
+            assertEquals(ConversationAttention.Idle, attention())
+            assertEquals(13uL, repo.currentReadMarks("c")?.readUpTo)
+            assertEquals(9uL, retired.currentReadMarks("c")?.readUpTo)
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
+        } finally {
+            source?.dispose()
+            host.coordinator.close()
         }
+    }
 
     @Test fun productionSendBeforeFirstBatchShowsOnlyScopedPreAcceptanceFeedback() =
         runTest {
