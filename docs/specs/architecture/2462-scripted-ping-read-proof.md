@@ -34,11 +34,11 @@ No new production state, jobs or flows. Compose's existing polling wait continue
 
 | Event | Coverage |
 | --- | --- |
-| Stable connection, rendered reply, delayed certification/acknowledgement | New controlled read-proof tests and original paired ping scenario |
-| Connection replacement during final wait | Controlled regression; paired scenario retains replacement attribution |
-| Epoch/generation replacement or reused item ID | Negative controls requiring freshly admitted exact reply and certification |
-| Foreign host/conversation, unsupported route, local pending write only | Negative controls reject these proofs |
-| Replacement while sampling | Recheck owner after sample; controlled negative control |
+| Stable connection, rendered reply, delayed certification/acknowledgement | `replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner`, `qualifiedSightAndPendingWritesCannotSubstituteForDaemonConfirmation` and paired ping |
+| Connection replacement during final wait | `replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner`; controlled native reconnect |
+| Epoch/generation replacement or reused item ID | `certificationMustBeCurrentAndCoverTheExactReplyRevision`, `reusedReplyIdsCannotCrossHostConversationEpochOrChangedFacts` |
+| Foreign host/conversation, unsupported route, local pending write only | `reusedReplyIdsCannotCrossHostConversationEpochOrChangedFacts`, `qualifiedSightAndPendingWritesCannotSubstituteForDaemonConfirmation` |
+| Replacement while sampling | `replacementWhileSamplingCannotMixOwnersOrUseRetiredFacts`; recheck coordinator and support after sample |
 
 ## Error handling
 
@@ -50,7 +50,7 @@ Write a controlled regression before the repair and observe its failure. Test st
 
 ## Open Questions
 
-- Which exact conjunct remains false after reconnect? Resolve with the diagnostic managed run before repair.
+- Resolved: `ownsConnection()` stays false after replacement; the controlled capture below distinguishes it from missing acknowledgement.
 
 ## Security review
 
@@ -76,3 +76,11 @@ Write a controlled regression before the repair and observe its failure. Test st
 The first diagnostic managed pair passed 2/2 on `5ea831bdc4098fcdeb2e5836bcec3dc16734dc2a`: certification was already 12 while shown was 9 and confirmed was 0; after qualified sight, confirmed became 9 on the same connection. Raw evidence is retained at agents `logs/evidence/2462/diagnostic-stable-5ea831bdc/`. This stable run does not erase the retained #2344 failure, where the connection ended and a replacement applied read 9 while the wait remained bound to the retired repository.
 
 `replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner` executed once and failed exactly at fresh replacement completion against the extracted original predicate. To make the managed diagnostic causal rather than dependent on intermittent timing, use the existing `severAndRestoreLink` after the original certification wait and before the original 90000 ms final wait. Retain this controlled transition as the native regression; both methods still run together and all original assertions and teardown remain. The repair itself is still pending the diagnostic result.
+
+### 2026-10-22 — Demonstrated stale captured connection
+
+The controlled pair on `27ff7e3cc4eab1b1d5c1a3b1e67a06e6b24c3d75` executed both methods: durable-gap passed and ping failed at the original 90000 ms final wait. Terminal diagnostics show `captured_owned=false`, `owner_match=true`, checkpoint 12, admitted authoritative facts, supported shown 9 and confirmed 9 on the current connection. Captured connection identity 153744155 differs from current 13692088, with equal hashed host/conversation/epoch and generation 0. The daemon also records the read advance to 9. Missing acknowledgement is therefore not the cause. Raw failed evidence and effective inputs are retained at agents `logs/evidence/2462/diagnostic-replacement-27ff7e3cc/`; the earlier intermittent failure remains retained under #2344.
+
+Repair contract: each final-wait sample reads the coordinator's current repository and its authoritative evidence and confirmed read facts. Require the route still supports that exact repository after sampling. Rebind the selected target only within its original host, conversation, authoritative kind and epoch, to the sample's connection and certified generation. Strict `ThreadEvidenceOwner.matches` validates this fresh owner, and the exact original reply DTO must still be present with checkpoint at least its revision, admitted and without repair/reset flags. Missing or clamped acknowledgement remains false. Generation reuse cannot substitute another reply, and a changed epoch cannot prove the original target. No old sight or pending write is reused. Production matching, retries and transport remain unchanged.
+
+Security re-review: PASS. This is a test-only re-observation, not an ownership relaxation or a new command. Keep bounded content-free diagnostics, now using full SHA-256 routing correlation; all raw DTO equality checks remain in memory. Final forecast remains below 600 written lines with no exported production declarations or migrations.

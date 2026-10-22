@@ -516,6 +516,7 @@ class DeterministicInteractiveStreamE2ETest {
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         var readSamples = 0
         var previousReadSample = ""
+
         fun readSample(terminal: Boolean = false): Boolean =
             runBlocking {
                 val marks = repository.observeReadMarks(conversationId).first()
@@ -524,14 +525,24 @@ class DeterministicInteractiveStreamE2ETest {
                 val currentEvidence = current?.let { harnessThreadEvidence(it).observe(conversationId).first() }
                 val currentMarks = current?.observeReadMarks(conversationId)?.first()
                 val held = evidence.observe(conversationId).first()
+
                 fun hash(value: String?) =
                     value?.let {
-                        java.security.MessageDigest.getInstance("SHA-256").digest(it.toByteArray())
-                            .take(8).joinToString("") { byte -> "%02x".format(byte) }
+                        java.security.MessageDigest
+                            .getInstance("SHA-256")
+                            .digest(it.toByteArray())
+                            .joinToString("") { byte -> "%02x".format(byte) }
                     } ?: "none"
+
                 fun owner(value: ThreadEvidenceOwner?) =
                     "host=${hash(value?.host)} conversation=${hash(value?.conversation)} " +
-                        "connection=${value?.connection?.let(System::identityHashCode)} epoch=${hash(value?.epoch)} generation=${value?.generation}"
+                        "connection=${value?.connection?.let(
+                            System::identityHashCode,
+                        )} epoch=${hash(value?.epoch)} generation=${value?.generation}"
+                val supportedConnection = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+                val proved =
+                    current != null && currentEvidence != null && current === coordinator.currentRepository.value &&
+                        pingReadMarkConfirmed(reply.owner, replyFact, currentEvidence, currentMarks, supportedConnection)
                 val sample =
                     "captured_owned=${ownsConnection()} owner_match=${held.owner.matches(reply.owner)} " +
                         "supported=${marks?.threadSupported} shown=$shown confirmed=${marks?.readUpTo} " +
@@ -539,19 +550,15 @@ class DeterministicInteractiveStreamE2ETest {
                         "captured=[${owner(reply.owner)}] held=[${owner(held.owner)}] current=[${owner(currentEvidence?.owner)}] " +
                         "current_checkpoint=${currentEvidence?.sourceSnapshot?.checkpoint} current_admitted=${currentEvidence?.admitted} " +
                         "current_supported=${currentMarks?.threadSupported} current_shown=${currentMarks?.lastShownVersion} " +
-                        "current_confirmed=${currentMarks?.readUpTo}"
+                        "current_confirmed=${currentMarks?.readUpTo} current_owned=${current != null && supportedConnection === current} " +
+                        "current_reply_match=${currentEvidence?.records?.any { it.fact?.raw == replyFact.raw }} proved=$proved"
                 if (terminal || sample != previousReadSample && readSamples < 12) {
                     android.util.Log.i("PingReadProof", "event=ping_read_proof terminal=$terminal $sample")
                     readSamples++
                     previousReadSample = sample
                 }
-                pingReadMarkConfirmed(
-                    reply.owner,
-                    replyFact,
-                    held,
-                    marks,
-                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection,
-                )
+                proved && current === coordinator.currentRepository.value &&
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current
             }
         try {
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { readSample() }

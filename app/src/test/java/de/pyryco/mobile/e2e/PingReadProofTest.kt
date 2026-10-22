@@ -3,9 +3,9 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationReadMarks
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -34,8 +34,12 @@ class PingReadProofTest {
     private val snapshot = AuthoritativeThreadSnapshot(epoch = "epoch", items = listOf(reply), checkpoint = 12, completedVersion = 12)
     private val confirmed = ConversationReadMarks(12u, null, 9u, true)
 
-    private fun evidence(connection: Any = first, state: AuthoritativeThreadSnapshot = snapshot, host: String = "host", chat: String = "chat") =
-        authoritativeThreadEvidence(host, chat, connection, state)
+    private fun evidence(
+        connection: Any = first,
+        state: AuthoritativeThreadSnapshot = snapshot,
+        host: String = "host",
+        chat: String = "chat",
+    ) = authoritativeThreadEvidence(host, chat, connection, state)
 
     @Test fun replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner() {
         val captured = evidence().owner
@@ -43,7 +47,10 @@ class PingReadProofTest {
         val replacement = evidence(second, snapshot.copy(generation = 1))
         assertFalse("strict evidence ownership still rejects replacement", captured.matches(replacement.owner))
         assertFalse(pingReadMarkConfirmed(captured, reply, replacement, confirmed.copy(readUpTo = 0u), second))
-        assertTrue("fresh replacement facts must complete the final proof", pingReadMarkConfirmed(captured, reply, replacement, confirmed, second))
+        assertTrue(
+            "fresh replacement facts must complete the final proof",
+            pingReadMarkConfirmed(captured, reply, replacement, confirmed, second),
+        )
     }
 
     @Test fun qualifiedSightAndPendingWritesCannotSubstituteForDaemonConfirmation() {
@@ -81,8 +88,12 @@ class PingReadProofTest {
         )) {
             assertFalse(pingReadMarkConfirmed(captured, reply, foreign, confirmed, first))
         }
-        for ((key, value) in listOf("rev" to JsonPrimitive(13), "session" to JsonPrimitive("other"), "turn" to JsonPrimitive("other"),
-            "content" to buildJsonObject { put("text", "another reply") })) {
+        for ((key, value) in listOf(
+            "rev" to JsonPrimitive(13),
+            "session" to JsonPrimitive("other"),
+            "turn" to JsonPrimitive("other"),
+            "content" to buildJsonObject { put("text", "another reply") },
+        )) {
             val changed = ThreadItemDto.decode(JsonObject(reply.raw + (key to value)))
             assertFalse(pingReadMarkConfirmed(captured, reply, evidence(state = snapshot.copy(items = listOf(changed))), confirmed, first))
         }
