@@ -67,13 +67,16 @@ class ThreadUpdateDecoderTest {
     fun replacementDecodeDoesNotEnumerateUnrelatedRawFieldsWithoutClears() {
         val fields = addition().getValue("item").jsonObject
         var enumerations = 0
-        val raw = JsonObject(object : Map<String, JsonElement> by fields {
-            override val entries: Set<Map.Entry<String, JsonElement>>
-                get() {
-                    enumerations++
-                    return fields.entries
-                }
-        })
+        val raw =
+            JsonObject(
+                object : Map<String, JsonElement> by fields {
+                    override val entries: Set<Map.Entry<String, JsonElement>>
+                        get() {
+                            enumerations++
+                            return fields.entries
+                        }
+                },
+            )
         enumerations = 0
         val item = ThreadItemDto.decodeReplacement(raw)
         assertSame(raw, item.raw)
