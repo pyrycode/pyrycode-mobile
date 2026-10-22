@@ -53,8 +53,8 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPosition
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
@@ -77,8 +77,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -600,7 +600,8 @@ class SavedThreadFirstDrawDeviceTest {
         installHost()
         val facts = authoritativeFileFacts(fragmented = false)
         withAuthoritativeFileFixture(facts) { root ->
-            val probe = measureAuthoritativeFileOpening(root, facts, online = false, opening = 0, guardLegacyReads = true, readDelayMs = 3000)
+            val probe =
+                measureAuthoritativeFileOpening(root, facts, online = false, opening = 0, guardLegacyReads = true, readDelayMs = 3000)
             assertTrue(probe.elapsed(probe.drawn.get()) >= 3000)
             assertThrows(AssertionError::class.java) { probe.assertBound() }
         }
@@ -610,12 +611,13 @@ class SavedThreadFirstDrawDeviceTest {
         (0 until if (fragmented) 36_000 else 20).map { index ->
             val visible = !fragmented || index % 2 == 0
             val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
-            MobileJson.parseToJsonElement(
-                """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
+            MobileJson
+                .parseToJsonElement(
+                    """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
                 "kind":"${if (visible) "assistant_message" else "future_fixture"}",
                 "status":"done","active":false,"shown":$visible,"summary":"",
                 "content":{"text":"Saved ${if (fragmented) index / 2 else index}."},"future":{"clear":null}}""",
-            ).jsonObject
+                ).jsonObject
         }
 
     private fun measureAuthoritativeFiles(guardLegacyReads: Boolean) {
@@ -641,12 +643,16 @@ class SavedThreadFirstDrawDeviceTest {
         probes.forEach(Probe::assertBound)
     }
 
-    private fun withAuthoritativeFileFixture(facts: List<JsonObject>, block: (File) -> Unit) {
+    private fun withAuthoritativeFileFixture(
+        facts: List<JsonObject>,
+        block: (File) -> Unit,
+    ) {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "authoritative-file-${SystemClock.elapsedRealtimeNanos()}")
         try {
             runBlocking {
-                FileConversationCache(root).writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 100_000, 90_000))
+                FileConversationCache(root)
+                    .writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 100_000, 90_000))
                     .getOrThrow()
             }
             block(root)
@@ -675,50 +681,74 @@ class SavedThreadFirstDrawDeviceTest {
         val disk = FileConversationCache(root)
         val legacyReads = AtomicInteger()
         val fullReads = AtomicInteger()
-        val measured = object : ConversationCache by disk {
-            override suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? {
-                fullReads.incrementAndGet()
-                delay(readDelayMs)
-                return disk.readAuthoritativeThread(serverId, conversationId).also {
-                    probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+        val measured =
+            object : ConversationCache by disk {
+                override suspend fun readAuthoritativeThread(
+                    serverId: String,
+                    conversationId: String,
+                ): SavedAuthoritativeThread? {
+                    fullReads.incrementAndGet()
+                    delay(readDelayMs)
+                    return disk.readAuthoritativeThread(serverId, conversationId).also {
+                        probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                    }
+                }
+
+                override suspend fun readThread(
+                    serverId: String,
+                    conversationId: String,
+                ): List<ThreadItem> {
+                    legacyReads.incrementAndGet()
+                    check(!guardLegacyReads) { "Retired thread read invoked" }
+                    return disk.readThread(serverId, conversationId)
+                }
+
+                override suspend fun readHistoryPosition(
+                    serverId: String,
+                    conversationId: String,
+                ): HistoryPosition? {
+                    legacyReads.incrementAndGet()
+                    check(!guardLegacyReads) { "Retired coverage read invoked" }
+                    return disk.readHistoryPosition(serverId, conversationId)
                 }
             }
-
-            override suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> {
-                legacyReads.incrementAndGet()
-                check(!guardLegacyReads) { "Retired thread read invoked" }
-                return disk.readThread(serverId, conversationId)
-            }
-
-            override suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? {
-                legacyReads.incrementAndGet()
-                check(!guardLegacyReads) { "Retired coverage read invoked" }
-                return disk.readHistoryPosition(serverId, conversationId)
-            }
-        }
         val owner = ViewModelStore()
         lateinit var destination: SavedAuthoritativeDestination
         lateinit var vm: ThreadViewModel
         composeRule.runOnUiThread {
-            destination = SavedAuthoritativeDestination(measured, decorate = { repository ->
-                val route = requireNotNull(repository.negotiatedThread)
-                object : ConversationRepository by repository {
-                    override val negotiatedThread = object : NegotiatedThread() {
-                        override val host = route.host
-                        override val support = route.support
-                        override val store = route.store
-                        override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
-                            route.observe(conversationId).onEach {
-                                if (it.items.isNotEmpty()) probe.snapshot.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+            destination =
+                SavedAuthoritativeDestination(measured, decorate = { repository ->
+                    val route = requireNotNull(repository.negotiatedThread)
+                    object : ConversationRepository by repository {
+                        override val negotiatedThread =
+                            object : NegotiatedThread() {
+                                override val host = route.host
+                                override val support = route.support
+                                override val store = route.store
+
+                                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+                                    route.observe(conversationId).onEach {
+                                        if (it.items.isNotEmpty()) probe.snapshot.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                    }
+
+                                override fun progress(
+                                    conversationId: String,
+                                    connection: Any,
+                                ) = route.progress(conversationId, connection)
+
+                                override suspend fun open(conversationId: String) = route.open(conversationId)
+
+                                override suspend fun acquire(
+                                    conversationId: String,
+                                    connection: Any,
+                                ) = route.acquire(conversationId, connection)
+
+                                override fun older(conversationId: String) = route.older(conversationId)
+
+                                override fun cancel(conversationId: String) = route.cancel(conversationId)
                             }
-                        override fun progress(conversationId: String, connection: Any) = route.progress(conversationId, connection)
-                        override suspend fun open(conversationId: String) = route.open(conversationId)
-                        override suspend fun acquire(conversationId: String, connection: Any) = route.acquire(conversationId, connection)
-                        override fun older(conversationId: String) = route.older(conversationId)
-                        override fun cancel(conversationId: String) = route.cancel(conversationId)
                     }
-                }
-            })
+                })
             if (online) destination.connect()
             vm = destination.open()
             owner.put("thread", vm)
@@ -740,7 +770,13 @@ class SavedThreadFirstDrawDeviceTest {
                 assertEquals(null, snapshot.coverage)
                 assertEquals(expectedText, state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
                 assertEquals(expectedText.size, state.items.size)
-                assertEquals(facts.size, snapshot.items.map { it.id }.distinct().size)
+                assertEquals(
+                    facts.size,
+                    snapshot.items
+                        .map { it.id }
+                        .distinct()
+                        .size,
+                )
                 val orders = snapshot.items.map { requireNotNull(it.order) }
                 islands = 1 + orders.zipWithNext().count { (before, after) -> after != before + 1 }
                 assertEquals(if (fragmented) 18_000 else 1, islands)
