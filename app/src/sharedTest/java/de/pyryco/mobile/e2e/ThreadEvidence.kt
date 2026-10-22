@@ -168,7 +168,8 @@ internal class ThreadEvidenceSource private constructor(
 
         fun negotiated(route: NegotiatedThread) =
             ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
-                combine(route.support, route.observe(conversation)) { support, snapshot ->
+                // Evidence is passive: the destination, not its assertions, owns the cache reader lease.
+                combine(route.support, route.store.observe(route.host, conversation)) { support, snapshot ->
                     val connection =
                         when (support) {
                             is ThreadSupport.Supported -> support.connection
