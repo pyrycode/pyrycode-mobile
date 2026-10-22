@@ -428,19 +428,6 @@ class LegacyRoomStorage internal constructor(
             replace(serverId, conversationId, payloads, retained, kept)
         }
 
-    /** #2161: a file import's replacement inside the caller's transaction, so its completion marker commits with it. */
-    internal suspend fun importThread(
-        serverId: String,
-        conversationId: String,
-        rows: List<ThreadItem>,
-        history: HistoryPosition?,
-    ) {
-        val kept = cacheableThreadRows(rows)
-        val payloads = kept.map(::encodeLegacyRow)
-        decodeLegacyRows(payloads)
-        replace(serverId, conversationId, payloads, history, kept)
-    }
-
     private suspend fun replace(
         serverId: String,
         conversationId: String,

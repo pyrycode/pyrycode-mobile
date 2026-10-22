@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-22T01:07:16.386Z" hostname="0eeeba6d2d09" time="3.659">
+  <properties/>
+  <testcase name="migrationInvariant_existingRowsGainOwnedIndexWithoutChangingHeldOrder" classname="de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest" time="3.161"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

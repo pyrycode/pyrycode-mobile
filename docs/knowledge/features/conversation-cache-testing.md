@@ -4,6 +4,48 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 
 ## Testing
 
+### Authoritative import and inert legacy files (#2385)
+
+`MigratingConversationCacheTest.ownershipInvariant_legacyFilesStayInertAcrossReopens`
+seeds both file families for two case-distinct hosts sharing conversation ids, unknown-owner
+hashed legacy files and different pre-existing legacy Room rows. Two fresh cache/database
+reopens must preserve exact legacy Room content and source bytes, with no legacy import
+bookkeeping. Empty legacy pages are valid empty pages, not null. The same probe checks exact
+owner-scoped authoritative content/certification, metadata and supported read state.
+`idempotenceInvariant_committedImportIsNeverRepeatedOrOverwritten` additionally keeps a newer
+Room save across restart despite its older authoritative source.
+
+Keep the authoritative `classificationInvariant_*` probes for invalid, unsupported and
+wrong-owner sources, retryable access/IO failures, inaccessible parents across restart,
+deferred-import write refusal and cancelled read/write result delivery after commit.
+`atomicityInvariant_interruptedImportKeepsSourceAndRetries` checks rollback/retry and
+pre-commit cancellation; `certificationInvariant_importAndPagesKeepSavedCheckpoint` retains
+exact page certification. Conversation/host `retirementInvariant_*` probes keep leftover-file
+and held-work fences. Check the other host's legacy source bytes directly: expecting those
+files to import would reintroduce the retired behavior. Pending sends remain independent.
+`ConversationCacheFactoryTest` uses authoritative snapshots to prove production no-backup
+custody and saved-pairing admission, including cancellation while waiting for the cache mutex.
+
+The [retained Linux manifest and sibling XML/raw output](../../../app/src/test/resources/verification/legacy-import-2385/results.json)
+record **89 executed/passed, 0 failed/errors/skipped**, with each class selected separately:
+`MigratingConversationCacheTest` 13, `ConversationCacheFactoryTest` 3,
+`OwnedLegacyMigrationTest` 1, `LegacyRoomStorageTest` 18, `AuthoritativeRoomStorageTest` 14
+and `FileConversationCacheThreadTest` 40. The cache/factory runs used the recorded pre-format
+source hashes; the other four used implementation revision
+`4854376725a204030779deffd8865a2eeb976b3f`. Formatting left production hashes unchanged.
+Historical red evidence at `f7b5aee1484fd4d2feb47ce83b6a2b3318c23b24` remains
+**1 executed, 0 passed, 1 failed, 0 errors/skips**, failing on unexpected legacy import bookkeeping.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2446#issuecomment-6330757434)
+at `7c60f58390f9e66ee102788bda8b088bdce17675` records complete Linux JVM/build evidence:
+**5338 executed/passed, 0 failed/errors/skipped**. All 13 cache methods and both named
+pairing-admission methods executed and passed; the six classes above account for 89 passes
+in this full-suite run as well. Configured UI evidence records **327 executed/passed,
+0 failed/errors, 1 skipped** (`renameAtFigmaViewport`); scripted-all records **24 executed/passed,
+0 failed/errors/skipped**. These dispatcher results are separate from the focused builder runs.
+Native production-opener upgrade proof belongs to #2386 and final integration to #2364;
+macOS is outside this Linux ticket's verification scope. Documentation ran no tests.
+
 ### Indexed legacy disk probes (#2162)
 
 `LegacyRoomStorageTest` uses Robolectric with a real on-disk Room database and fresh database/
@@ -289,8 +331,8 @@ verification scope; no device or real-Claude acceptance was required. See the
 ### Cancelled committed import cleanup (#2260)
 
 `MigratingConversationCacheTest.classificationInvariant_cancelledCommittedImportCannotReadmitUnobservedWrites`
-observes the Room commit before cancelling its paused reader. Preserve all four combinations of
-read/write import and legacy/authoritative storage, the cancelled-child assertion,
+observes the Room commit before cancelling its paused reader. Since #2385, preserve both
+authoritative read/write import cases, the cancelled-child assertion,
 `import_unobserved` rejection, exact imported content and fresh-instance restart/no-replacement
 checks. Letting the reader observe the committed result before cancellation would miss the fence
 these assertions exercise.
