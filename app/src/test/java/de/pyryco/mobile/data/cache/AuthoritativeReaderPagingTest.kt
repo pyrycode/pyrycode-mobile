@@ -148,9 +148,27 @@ class AuthoritativeReaderPagingTest {
             for (online in listOf(false, true)) {
                 repeat(2) {
                     destination(FileConversationCache(root, dispatcher), online) { fixture, vm, repo ->
-                        val state = vm.state.first { it.authoritativeThread?.sourceSnapshot?.items?.size == 1 }
-                        assertEquals(listOf(raw), state.authoritativeThread?.sourceSnapshot?.items?.map { it.raw })
-                        assertEquals(listOf(raw), repo.authoritativeThreads.current("host", "c").items.map { it.raw })
+                        val state =
+                            vm.state.first {
+                                it.authoritativeThread
+                                    ?.sourceSnapshot
+                                    ?.items
+                                    ?.size == 1
+                            }
+                        assertEquals(
+                            listOf(raw),
+                            state.authoritativeThread
+                                ?.sourceSnapshot
+                                ?.items
+                                ?.map { it.raw },
+                        )
+                        assertEquals(
+                            listOf(raw),
+                            repo.authoritativeThreads
+                                .current("host", "c")
+                                .items
+                                .map { it.raw },
+                        )
                         advanceTimeBy(300)
                         runCurrent()
                         val requests = fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") }
