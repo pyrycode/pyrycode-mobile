@@ -86,3 +86,63 @@ The original #2467 failure at `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` remains
 Recovery assessment `d1d37640cc5df8d75b97f904f6a33adbf7c74f476a02fdc36d1481f30740d503` is queued with **zero executed tests**. Its request references this ticket's retained refiner bundle `29f082c5a681b641a7de45dd607a57a41409916b3185c752ce41d0385ce2ac25`, digest `72a2aa1be0f9fbfe58718618a223618257175b9e37be581a52478a68b5c59737`. First recover the original first-failure phone log; if unavailable, assess only the exact named method at the observed `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` revision. No complete suite was requested or launched. The request is retained beside the private diagnostic evidence as `investigation-request.json`.
 
 The assessment becomes eligible only after this worker ends. Cause, controlled regression, repair and repaired-candidate acceptance remain pending. No speculative code change or recording replacement is justified by these diagnostic passes; no implementation PR is opened. Resume implementation from the first actual failing boundary supplied by recovery, updating the design and writing its causal regression before the repair.
+
+### 2026-10-22 — recovered premature replacement-Activity close
+
+The recovered bundle `49d8bcba4a25f3d28ea03920a6bbde795f40a2569b00d39c97c94155053c0b77`
+(digest `dd4e208bb4a95b25b78f8c83aa15fac53a698ce25ddeffba0f771949996e3581`),
+`logs/verifier-gate__2467_5.stderr.log.failure-1792690822568.log`, resolves the first open
+question. At source `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`, the first sticky mismatch
+is lifecycle step 69: `phone/host-0/2:close` precedes required `thread_catch_up` and
+`test-control:test-end`. Query request 13/checkpoint 0 is unmapped at tape index 480.
+The stack originates in `LifecycleConnectionDriver.onStop`; subsequent end/finish
+exceptions preserve that mismatch. The separate same-candidate rerun passed. No evidence
+establishes the historical host load or requires preceding tests to trigger this race.
+
+`proveNegotiatedAgentRestart` currently uses the replacement Activity as a lexical
+resource. It closes before `backgroundAgentReplyProof` fixture/peer cleanup and the
+outer `LiveSessionCleanupRule.end`. The final recorded Activity fence therefore cannot
+protect the replacement's request producers or inbound consumers. This is distinct from
+#2470's already merged passive observation and placement repair.
+
+Add `LiveSessionCleanupRule.withRestartedActivity(activity, proof)`, transferring the
+replacement into rule ownership before running the proof. After the existing `end`
+callback completes (or fails), close retained Activities exactly once, preserving the
+first body/end failure and suppressing later close failures. Extend the restart proof
+with an injected activity runner, defaulting to its existing lexical lifetime for the
+standalone scripted caller; the interactive caller supplies the cleanup rule's runner.
+Do not change replay readiness, consume controls early, or wait for a close whose tape
+boundary requires a later end control. All original scenario assertions remain intact.
+
+The causal regression in `SuiteCloseConsumptionTest` drives the real remote repository:
+certify a query, reset the same epoch, hold the resulting checkpoint-0 query across proof
+return, then release it during ordered session cleanup. It must establish a fresh
+generation/checkpoint from the real reply, consume the cleanup control and test-end,
+and only then close its resource. First run this against an extraction of the existing
+lexical `.use` behaviour and retain its premature-close failure; run unchanged after
+ownership repair. Existing missing-query, changed-owner/checkpoint and terminal-tail
+negative controls stay enabled. Add rule tests for success, body failure, end failure,
+close failure and once-only cleanup. No new job outlives the owned resource.
+
+Additional files read: `LiveSessionCleanupRule`, its JVM tests, `RecordedActivityRule`,
+`SuiteCloseConsumptionTest`, `SuiteConnections`, `RecordedSuiteTape`, and
+`AuthoritativeThreadQueries.reset`. Compare remote #2360's foreground fence without
+importing its older tape/consumption implementation; this repair needs no hub/tape edit.
+Remote overlap: #2175 contains the superseded original restart block; the other shared
+`InteractiveStreamE2ETest` branches change separate scenarios. Keep the caller edit local.
+One behaviour plus its causal proof remains one deliverable, forecast under 950 written
+lines, no new production exports, one caller adaptation and three acceptance criteria.
+Documentation stage: pending update to `docs/recorded-tests.md`, explicit graph-restart
+readiness, and `docs/e2e-interactive-stream.md`, negotiated Agent restart and settlement,
+describing replacement ownership and counted Linux evidence.
+
+| Event | Regression |
+| --- | --- |
+| Same-epoch reset query held beyond proof return | `replacementActivitySurvivesResetQueryAndOrderedSessionCleanup` |
+| Body/end/close failure with a retained replacement | `LiveSessionCleanupRuleTest` ownership and failure tests |
+| Complete repaired scenario with fresh graph/cache | Three independent focused Linux invocations of the original method |
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, “Negotiated Agent restart and settlement (#2246)”: counted repaired Linux invocations and dispatcher acceptance status.
