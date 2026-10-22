@@ -1,0 +1,5 @@
+daf3aba8d6c395f82c4485be7e0623f62ae53d1f78721950bf77bd2a8df1df57  app/src/main/java/de/pyryco/mobile/data/cache/MigratingConversationCache.kt
+7c461b9b6f11835f022f50e9399063bcb246c197be365492740715fde3f32c13  app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt
+46eefadf2c2ea9cdcf892d31d057a80f0e0687ae9678a26006a93d085c5ff16d  app/src/main/java/de/pyryco/mobile/data/cache/LegacyRoomStorage.kt
+5753a2177e1255aadaf5c6ef6cd3109ead3984e4e7f263a89b37a94ab2bdafe2  app/src/test/java/de/pyryco/mobile/data/cache/MigratingConversationCacheTest.kt
+e148c9461c703d69366349f9ba515494d88de25c245995c98cf5c40e655427af  app/src/test/java/de/pyryco/mobile/di/ConversationCacheFactoryTest.kt

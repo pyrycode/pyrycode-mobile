@@ -8,7 +8,7 @@
 - `app/src/test/java/de/pyryco/mobile/data/cache/MigratingConversationCacheTest.kt`: on-disk reopen, classification, cancellation delivery and removal probes.
 - `app/src/test/java/de/pyryco/mobile/di/ConversationCacheFactoryTest.kt`: production no-backup opener and saved-pairing admission.
 - `docs/knowledge/features/conversation-cache.md`, `conversation-cache-layout.md`, `conversation-cache-testing.md`: source custody, fresh-instance reads and bounded cancellation cleanup. Keep `cancelAndDrain` and its adversarial tests.
-- `docs/knowledge/decisions/0009-room-indexed-conversation-storage.md` and `docs/specs/architecture/2161-import-saved-threads-room.md`: existing plaintext app-private threat model, atomic content/ledger commits and unobserved-write fences.
+- `docs/knowledge/decisions/0009-room-for-indexed-conversation-cache.md` and `docs/specs/architecture/2161-import-saved-threads-room.md`: existing plaintext app-private threat model, atomic content/ledger commits and unobserved-write fences.
 - #2364 archived original scope, #2386/#2387 allocations and #2367 completion: runtime consumers are detached; schema/API retirement and native upgrade proof belong to siblings.
 
 ## Context
@@ -57,7 +57,7 @@ Preserve authoritative static rejection/outcome codes, retryable IO/access failu
 
 First add the inert-file regression and run it red against unchanged production. Adapt mixed-family tests to authoritative assertions, removing only legacy-import-only tests/helpers. Keep cancellation cleanup probes unchanged. Move factory storage and pairing proofs to authoritative snapshots. Use real on-disk Room with fresh instances and existing Robolectric fixtures, without a new device test. Existing supported read-state/metadata checks remain. Native production upgrade proof belongs to #2386 and final integration to #2364.
 
-Run Linux focused `MigratingConversationCacheTest`, `ConversationCacheFactoryTest`, `FileConversationCacheThreadTest`, `LegacyRoomStorageTest` and `AuthoritativeRoomStorageTest`; retain raw output, fresh XML, source identities and executed/passed/failed/skipped counts. Run required lint, assemble, formatting and final `pre-verify.py --gradle`. Complete configured acceptance is dispatcher-owned. macOS is outside this ticket's scope.
+Run Linux focused `MigratingConversationCacheTest`, `ConversationCacheFactoryTest`, `FileConversationCacheThreadTest`, `LegacyRoomStorageTest`, `OwnedLegacyMigrationTest` and `AuthoritativeRoomStorageTest`, one class per invocation; retain raw output, fresh XML, source identities and executed/passed/failed/skipped counts. Run required lint, assemble, formatting and final `pre-verify.py --gradle`. Complete configured acceptance is dispatcher-owned. macOS is outside this ticket's scope.
 
 Forecast: about 850 written lines including plan/tests/evidence; 4 production files, no new exported types, no signature migrations, 3 exclusive import callers, 3 acceptance criteria, no new reject branches. One useful behavior; regression and supporting plumbing stay together.
 
@@ -85,3 +85,9 @@ Pending documentation stage: update import descriptions in `docs/knowledge/featu
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-22
+
+## Revisions
+
+### 2026-10-22: regression details confirmed during implementation
+
+An empty legacy Room page is a valid empty page rather than null; the inert-file regression asserts its empty rows. The red run failed earlier, on unexpected legacy import bookkeeping, so its failure still proves the retired import path. Scoped removal tests now compare the other host's legacy source bytes directly instead of expecting those files to import. No production contract changed from the design above.

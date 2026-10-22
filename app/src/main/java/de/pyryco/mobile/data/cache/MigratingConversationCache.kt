@@ -17,9 +17,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The app's [ConversationCache] (#2161): conversation lists and read positions stay in [FileConversationCache]
- * under [root]; both thread families are served from Room after each exact owner's saved file is imported once.
+ * under [root]; authoritative files import once for each exact owner. Legacy entry points use Room only.
  *
- * Import runs before any thread read or write of that owner and family. Its content and its completion marker
+ * Import runs before any authoritative thread read or write. Its content and its completion marker
  * commit in one transaction, so an interrupted import leaves the file to retry and a committed one is never
  * repeated or overwritten by a leftover file. A rejected file keeps its bytes. A file that cannot be imported right
  * now (IO, access, database) is retried, and that family's writes fail meanwhile. When its content does arrive after
@@ -163,7 +163,7 @@ internal class MigratingConversationCache(
             authoritative.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves)
         }
 
-    /** Bounded pages, imported first so no page reader can bypass the saved file (#2068 activates readers). */
+    /** Dormant legacy pages read Room only; obsolete source files never participate. */
     internal suspend fun newestLegacyPage(
         serverId: String,
         conversationId: String,
@@ -291,14 +291,16 @@ internal class MigratingConversationCache(
         }
 
     /** [Import.Arrived] when this call committed the file's content; any other settled outcome is [Import.Ready]. */
-    private suspend fun ensureImported(key: Triple<String, String, String>): Import =
-        try {
+    private suspend fun ensureImported(key: Triple<String, String, String>): Import {
+        if (key.third == LEGACY) return Import.Ready
+        return try {
             importFamily(key)
         } catch (cancelled: CancellationException) {
             // Room may have committed before cancellation prevents delivery back to this caller's dispatcher.
             servedWithout += key
             throw cancelled
         }
+    }
 
     private suspend fun importFamily(key: Triple<String, String, String>): Import {
         if (key in settled) return Import.Ready
@@ -313,22 +315,9 @@ internal class MigratingConversationCache(
             settled += key
             return Import.Ready
         }
-        val source =
-            if (family == LEGACY) {
-                files.legacySource(serverId, conversationId)
-            } else {
-                files.authoritativeSource(serverId, conversationId)
-            }
+        val source = files.authoritativeSource(serverId, conversationId)
         if (source is SavedSource.Unavailable) return unavailable(family, source.code)
         var attempt = importSource(serverId, conversationId, family, source)
-        val readable = (source as? SavedSource.Readable<*>)?.value as? LegacySource
-        if ((attempt as? CacheTransaction.Failed)?.code == INVALID_DATA && readable?.history != null) {
-            // Today's reader serves a retained history projection without validating it again; Room validates what
-            // it stores. Rejected claims certify nothing, so the rows stay readable without them, as the reader keeps
-            // rows beside any other invalid optional history.
-            logImport(family, "history_rejected")
-            attempt = importSource(serverId, conversationId, family, SavedSource.Readable(LegacySource(readable.rows, null)))
-        }
         if ((attempt as? CacheTransaction.Failed)?.code == INVALID_DATA) {
             attempt = commit { INVALID.also { database.imports().record(listOf(FileImport(serverId, conversationId, family, it))) } }
         }
@@ -347,24 +336,16 @@ internal class MigratingConversationCache(
         serverId: String,
         conversationId: String,
         family: String,
-        source: SavedSource<*>,
+        source: SavedSource<SavedAuthoritativeThread>,
     ): CacheTransaction<String> =
         commit {
-            val holds =
-                if (family == LEGACY) {
-                    database.legacy().header(serverId, conversationId) != null
-                } else {
-                    database.authoritative().header(serverId, conversationId) != null
-                }
+            val holds = database.authoritative().header(serverId, conversationId) != null
             val outcome =
                 when {
                     holds -> SUPERSEDED
                     source is SavedSource.Rejected -> if (source.code == "unsupported_version") UNSUPPORTED else INVALID
-                    source is SavedSource.Readable<*> -> {
-                        when (val value = source.value) {
-                            is LegacySource -> legacy.importThread(serverId, conversationId, value.rows, value.history)
-                            is SavedAuthoritativeThread -> authoritative.importThread(serverId, conversationId, value)
-                        }
+                    source is SavedSource.Readable -> {
+                        authoritative.importThread(serverId, conversationId, source.value)
                         IMPORTED
                     }
                     else -> ABSENT

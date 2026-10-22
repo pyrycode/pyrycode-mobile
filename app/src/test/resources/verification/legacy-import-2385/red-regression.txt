@@ -1,0 +1,40 @@
+Base: f7b5aee14 (production unchanged from af6721b314e4414034a7a8b58c5630ad0e42eecb)
+File: app/src/test/java/de/pyryco/mobile/data/cache/MigratingConversationCacheTest.kt
+Inserted immediately before ownershipInvariant_bothFamiliesMigrateExactlyAndStayIsolated:
+
+    @Test fun ownershipInvariant_legacyFilesStayInertAcrossReopens() =
+        runBlocking {
+            val owners = listOf("Host" to "thread", "host" to "thread", "Host" to "file-only")
+            owners.forEachIndexed { index, (host, thread) ->
+                files.writeThread(host, thread, listOf(row(index + 1))).getOrThrow()
+                files.writeHistoryPosition(host, thread, HistoryPosition("old-cursor", true)).getOrThrow()
+                files.writeAuthoritativeThread(host, thread, saved("epoch-$index", listOf(index + 1))).getOrThrow()
+            }
+            // There is no ownership envelope in old hashed thread paths. Never scan or guess their owner.
+            val unknown = legacyFile("unknown-owner", "unknown-thread")
+            unknown.parentFile?.mkdirs()
+            unknown.writeBytes(legacyFile("Host", "thread").readBytes())
+            val sources = owners.map { (host, thread) -> legacyFile(host, thread) } + unknown
+            val originalBytes = sources.map { it.readBytes() }
+            open()
+            val stored = LegacyRoomStorage(requireNotNull(database))
+            stored.writeThread("Host", "thread", allKinds).getOrThrow()
+            stored.writeHistoryPosition("Host", "thread", HistoryPosition("room-cursor", false)).getOrThrow()
+            val header = requireNotNull(database).legacy().header("Host", "thread")
+
+            repeat(2) {
+                val cache = open()
+                owners.forEachIndexed { index, (host, thread) ->
+                    assertEquals(if (index == 0) allKinds else emptyList<ThreadItem>(), cache.readThread(host, thread))
+                    assertEquals(if (index == 0) HistoryPosition("room-cursor", false) else null, cache.readHistoryPosition(host, thread))
+                    assertEquals(saved("epoch-$index", listOf(index + 1)).retained(), cache.readAuthoritativeThread(host, thread))
+                    assertTrue(requireNotNull(database).imports().settled(host, thread, "legacy").isEmpty())
+                    assertEquals("imported", outcome(host, thread, "authoritative"))
+                }
+                assertEquals(header, requireNotNull(database).legacy().header("Host", "thread"))
+                assertEquals(emptyList<ThreadItem>(), cache.readThread("unknown-owner", "unknown-thread"))
+                assertNull(cache.readAuthoritativeThread("unknown-owner", "unknown-thread"))
+                assertNull(cache.newestLegacyPage("host", "thread", 2))
+                sources.zip(originalBytes).forEach { (file, bytes) -> assertArrayEquals(bytes, file.readBytes()) }
+            }
+        }
