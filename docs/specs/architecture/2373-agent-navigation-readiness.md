@@ -160,6 +160,8 @@ Run the new reset regression red on the baseline containing both landed repairs,
 
 The historical stack identifies the unsafe operation, but the original phone timeline and failure-time semantics geometry are unavailable in the published bundle. The controlled reset will establish the mechanism without claiming it recovers that historical interleaving.
 
+2026-10-22 — `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` executed once and failed on the baseline containing both prior repairs, at the same `questionAnswerLocation` / `performScrollToNode` missing merged-list assertion as #2387. The only helper addition in that red control was the content-free boundary callback. The real screen had no list after reset; restoration required the next readiness sample, which the old matcher scroll never reached. Raw XML and the exact source patch are retained under `recurrence-20261022/reset-red-complete/`. Omit that redundant scroll only for the current-key bridge; default callers and the three geometry measurements remain unchanged. The original bundle's 138 file hashes were verified. Its summary marks this method failed once and passed once on the two-method same-tree rerun; no phone timeline or suppressed teardown stack is present, so historical render ordering remains unknown.
+
 ### Documentation handoff
 
 Pending documentation stage: `docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, finished-marker recurrence, and `docs/knowledge/features/development-verification-agent-reveal-evidence.md`, atomic scroll dispatch. Record the post-keyed-reveal reset boundary, its causal evidence, relationship to both earlier repairs and counted Linux acceptance; preserve historical failures and evidence limits.
