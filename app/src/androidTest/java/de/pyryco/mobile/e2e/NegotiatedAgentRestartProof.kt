@@ -218,17 +218,36 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 }.maxByOrNull { requireNotNull(it.order) },
         ) { "release message must anchor the Agent between launch and finish" }
 
+    var placementProbe = 0
+
     fun assertUiPlacement(
         reading: ThreadEvidence,
         after: ThreadEvidenceRecord? = null,
     ) {
         val root = reading.records.single { it.fact?.id == rootId }
         val before = reading.records.single { it.fact?.id == beforeAnchor.id }
+        val probe = ++placementProbe
+        var previousIndexes: List<Int>? = null
         var indexes = emptyList<Int>()
         waitUntil(120_000) {
             val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
             indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
                 after?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+            if (indexes != previousIndexes) {
+                previousIndexes = indexes
+                val current = requireNotNull(source().negotiatedThread).store.current(host, conversation)
+                val rootPresent = current.items.any { it.id == rootId }
+                val beforePresent = current.items.any { it.id == beforeAnchor.id }
+                val rootOpening = current.openingRows?.any { it.first == rootId }
+                val beforeOpening = current.openingRows?.any { it.first == beforeAnchor.id }
+                Log.i(
+                    "NegotiatedAgentRestart",
+                    "event=placement_probe probe=$probe indexes=$indexes facts=${current.items.size} " +
+                        "checkpoint=${current.checkpoint} opening_count=${current.openingRows?.size} " +
+                        "root_present=$rootPresent before_present=$beforePresent " +
+                        "root_opening=$rootOpening before_opening=$beforeOpening",
+                )
+            }
             indexes.all { it >= 0 }
         }
         // The lazy list is reversed: a newer row has a smaller index.
