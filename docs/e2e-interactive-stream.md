@@ -4038,6 +4038,69 @@ reruns and four reviewed strict-comparison replacements retain their recorded me
 
 ### Negotiated Agent restart and settlement (#2246)
 
+**Replacement ownership repair (#2476).** The existing
+`InteractiveStreamE2ETest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+and its `RecordedMobileSuiteTest` wrapper retain graph/cache replacement,
+historical Agent/child identity and full content, finished placement, child
+navigation, session boundary and replacement-connection settlement assertions.
+The replacement now belongs to the session cleanup rule through fixture/peer
+cleanup and session end. The standalone
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+keeps its lexical lifetime. The [ownership contract and causal regression](recorded-tests.md#explicit-graph-restart-readiness-2347)
+explain why an outer teardown fence alone is insufficient. No new genuine Claude
+turn, recording replacement, assertion retry or deadline increase was needed.
+
+At source `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`, the original #2467 failure
+closed `phone/host-0/2` at lifecycle step 69 before required catch-up and test-end;
+request 13/checkpoint 0 remained unmapped. Its separate same-candidate rerun
+passed 2 executed methods, including this restart, with zero failures/skips.
+The failure remains failed. Bundle
+`49d8bcba4a25f3d28ea03920a6bbde795f40a2569b00d39c97c94155053c0b77`
+retains the first mismatch in
+`logs/verifier-gate__2467_5.stderr.log.failure-1792690822568.log` and rerun in
+`logs/2026-10-22T17-40-22-579Z_verifier-gate-rerun__2467.log`.
+Historical host load and preceding non-recorded test effects remain unestablished;
+the controlled lifecycle regression establishes the cause without attributing them.
+
+On Linux, repaired implementation `a3bfa8ad7629c75e86c20db9484700e8a237d6c7`
+passed the exact recorded method in three separate invocations with fresh scenario
+state. Counts exclude skips from executed totals; all commands exited zero.
+
+| Focused invocation | Gate directory | Executed | Passed | Failed | Errors | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Native 1 | `ui-pjkxu39n` | 1 | 1 | 0 | 0 | 0 |
+| Native 2 | `ui-o90tw8ks` | 1 | 1 | 0 | 0 | 0 |
+| Native 3 | `ui-6453ivcl` | 1 | 1 | 0 | 0 | 0 |
+
+Affected focused JVM checks passed 113 executed tests, zero failures/errors/skips.
+The accepted [PR #2478 verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2478)
+is PASS on `0472d3713fd7a23f9eaff534a2b9bb094169082c`; only plan notes changed
+after the focused native source. This later accepted stage record supersedes the
+initial gate report's absence of a recorded verifier pass.
+
+| Configured Linux gate | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JVM with build checks | 5313 | 5313 | 0 | 0 | 0 |
+| UI | 333 | 333 | 0 | 0 | 1 |
+| Scripted-all | 24 | 24 | 0 | 0 | 0 |
+
+The configured UI XML explicitly passes the named recorded restart method;
+the JVM gate passes `replacementActivitySurvivesResetQueryAndOrderedSessionCleanup`.
+`renameAtFigmaViewport` is the additional UI skip and is not credited as passed.
+No green gate was rerun. Dispatcher acceptance for #2476 is complete; macOS
+execution is outside this Linux ticket's scope.
+
+Raw XML, phone logs, revision/APK receipts, original failure/rerun and controlled
+red/green evidence were retained under agents
+`logs/evidence/2476/builder-lifetime-repair/`, including `native-1`, `native-2`,
+`native-3` and `original-2467`. Accepted verifier bundle
+`37457a81c12e9f495c2a38d3c60a0b7ac9870785d6b37f0039d0257a335b0587`
+retains `handoff/verifier-2476.md` and configured gate logs
+`logs/verifier-gate__2476_{4,5,6}.log` (gate 4 as a retained tail).
+These paths identify evidence retention at review time, not permanent availability.
+
+The following evidence records the original #2246 acceptance separately.
+
 Implementation and verification ran on Linux, Android API 33, with Claude Code
 2.1.280. Other operating systems are outside this ticket's verification scope.
 The accepted verifier stage record for [PR #2337](https://github.com/pyrycode/pyrycode-mobile/pull/2337)
@@ -7596,7 +7659,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   failures and accepted reruns remain explicit. [#1963](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963)
   completes deterministic older-page/simultaneously-running-Agent coverage, with a
   new-revision delivery fence before stale-replay assertions; it adds no live scenario.
-  The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+  [#2476's replacement-Activity ownership repair](#negotiated-agent-restart-and-settlement-2246)
+  retains this scenario and its recording, with a causal regression, three fresh
+  Linux replay passes and completed configured acceptance. No acceptance follow-up
+  remains for that repair. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **Passive peer-turn evidence (#2317):**
   `InteractiveStreamE2ETest.interactiveTurn_peerStartedTurn_continuesOnPhone`

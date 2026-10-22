@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.item
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.e2e.LiveSessionCleanupRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,6 +18,9 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -27,6 +31,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.Description
+import org.junit.runners.model.Statement
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteCloseConsumptionTest {
@@ -39,6 +45,110 @@ class SuiteCloseConsumptionTest {
     @After fun restoreLogs() {
         RelayLog.sink = previousSink
     }
+
+    @Test fun replacementActivitySurvivesResetQueryAndOrderedSessionCleanup() =
+        runTest {
+            val owner = "phone/host/2"
+            val fixtureCleanup = frame(1, "test-control:checkpoint", """{"body":"fixture-cleanup"}""")
+            val testEnd = frame(2, "test-control:test-end", """{"body":""}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner, capabilities = capabilities),
+                        SuiteStep("client", owner, query(1, 0)),
+                        SuiteStep("daemon", owner, batch(2, 1)),
+                        SuiteStep("daemon", owner, terminal(3, 1)),
+                        SuiteStep("client", owner, query(13, 0)),
+                        SuiteStep("daemon", owner, batch(14, 13, version = 24)),
+                        SuiteStep("daemon", owner, terminal(15, 13, version = 24)),
+                        SuiteStep("client", "control", fixtureCleanup),
+                        SuiteStep("client", "control", testEnd),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val hub = SuiteConnections.replaying(CoroutineScope(backgroundScope.coroutineContext + dispatcher), tape)
+            val activityScope = CoroutineScope(coroutineContext + SupervisorJob() + dispatcher)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                val releaseQuery = CompletableDeferred<Unit>()
+                var heldQuery: Envelope? = null
+                var hold = false
+                val delayedPump =
+                    object : SessionPump by pump {
+                        override fun send(envelope: Envelope): Boolean {
+                            if (!hold || envelope.type != "thread_catch_up") return pump.send(envelope)
+                            check(heldQuery == null)
+                            heldQuery = envelope
+                            activityScope.launch {
+                                releaseQuery.await()
+                                check(pump.send(envelope))
+                            }
+                            return true
+                        }
+                    }
+                val store = AuthoritativeThreadStore()
+                store.reset("host", "chat", "epoch")
+                val repository = repository(delayedPump, activityScope, store)
+                assertTrue(repository.openAuthoritativeThread("chat"))
+                runCurrent()
+                assertEquals(12L, store.current("host", "chat").checkpoint)
+                val generation = store.current("host", "chat").generation
+                var closeCount = 0
+                val activity =
+                    AutoCloseable {
+                        closeCount++
+                        try {
+                            transport.close()
+                            runBlocking { hub.awaitIdle() }
+                        } finally {
+                            activityScope.cancel()
+                        }
+                    }
+                val cleanup =
+                    LiveSessionCleanupRule(begin = {}, end = {
+                        assertEquals("replacement is alive through fixture cleanup", 0, closeCount)
+                        releaseQuery.complete(Unit)
+                        runCurrent()
+                        assertEquals("same-epoch reset gets a new generation", generation + 1, store.current("host", "chat").generation)
+                        assertEquals("real reset reply certifies the checkpoint", 24L, store.current("host", "chat").checkpoint)
+                        assertEquals(
+                            "real reset query retains the exact checkpoint",
+                            query(13, 0).payload,
+                            requireNotNull(heldQuery).payload,
+                        )
+                        hub.control("checkpoint", "fixture-cleanup") { error("Live control started") }
+                        hub.control("test-end", "") { error("Live control started") }
+                        assertEquals("test-end precedes replacement destruction", 0, closeCount)
+                    })
+                cleanup
+                    .apply(
+                        object : Statement() {
+                            override fun evaluate() {
+                                cleanup.withRestartedActivity(activity) {
+                                    hold = true
+                                    assertTrue(repository.resetAuthoritativeThread("chat", "epoch"))
+                                    assertEquals(0L, store.current("host", "chat").checkpoint)
+                                    assertTrue("the real query is held across proof return", heldQuery != null && !releaseQuery.isCompleted)
+                                }
+                            }
+                        },
+                        Description.EMPTY,
+                    ).evaluate()
+                runCurrent()
+                assertEquals("replacement closes exactly once", 1, closeCount)
+                hub.assertComplete()
+            } finally {
+                activityScope.cancel()
+                hub.close()
+            }
+        }
 
     @Test fun closeWaitsForTerminalConsumptionBeforeReplacementResumes() =
         runTest {
@@ -215,10 +325,11 @@ class SuiteCloseConsumptionTest {
     private fun batch(
         id: Long,
         reply: Long,
+        version: Int = 12,
     ) = frame(
         id,
         "thread_items",
-        """{"conversation_id":"chat","epoch":"epoch","version":12,"items":[${item(1, 12, 1).raw}],"final":false}""",
+        """{"conversation_id":"chat","epoch":"epoch","version":$version,"items":[${item(1, version.toLong(), 1).raw}],"final":false}""",
         reply,
     )
 
@@ -226,13 +337,14 @@ class SuiteCloseConsumptionTest {
         id: Long,
         reply: Long,
         from: Int? = null,
+        version: Int = 12,
     ) = frame(
         id,
         "thread_items",
         if (from == null) {
-            """{"conversation_id":"chat","epoch":"epoch","version":12,"items":[],"final":true,"lower_order":1,"upper_order":2,"continuation":1,"older_exists":false}"""
+            """{"conversation_id":"chat","epoch":"epoch","version":$version,"items":[],"final":true,"lower_order":1,"upper_order":2,"continuation":1,"older_exists":false}"""
         } else {
-            """{"conversation_id":"chat","epoch":"epoch","version":12,"items":[],"final":true,"from_version":$from}"""
+            """{"conversation_id":"chat","epoch":"epoch","version":$version,"items":[],"final":true,"from_version":$from}"""
         },
         reply,
     )
