@@ -40,20 +40,20 @@ internal class ThreadItemDto private constructor(
     override fun toString(): String = "ThreadItemDto(content=***)"
 
     companion object {
+        private val replacementOptionalKeys = setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype")
+
         internal fun decode(raw: JsonObject): ThreadItemDto = ThreadItemDto(raw)
 
         /** Patch null clears retain exact raw presence while typed optional facts become unset. */
-        internal fun decodeReplacement(raw: JsonObject): ThreadItemDto =
-            ThreadItemDto(
-                raw,
-                JsonObject(
-                    raw.filterNot { (key, value) ->
-                        key in
-                            setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype") &&
-                            value == JsonNull
-                    },
-                ),
-            )
+        internal fun decodeReplacement(raw: JsonObject): ThreadItemDto {
+            val optionalFields =
+                if (replacementOptionalKeys.any { raw[it] == JsonNull }) {
+                    JsonObject(raw.filterNot { (key, value) -> value == JsonNull && key in replacementOptionalKeys })
+                } else {
+                    raw
+                }
+            return ThreadItemDto(raw, optionalFields)
+        }
     }
 }
 
@@ -162,11 +162,11 @@ internal fun validThreadJson(root: JsonElement): Boolean {
             is JsonObject -> remaining.addAll(value.values)
             is JsonArray -> remaining.addAll(value)
             is JsonPrimitive ->
-                if (!value.isString &&
-                    value.content !in setOf("null", "true", "false") &&
-                    !threadJsonNumber.matches(value.content)
-                ) {
-                    return false
+                if (!value.isString) {
+                    when (val token = value.content) {
+                        "null", "true", "false" -> Unit
+                        else -> if (!threadJsonNumber.matches(token)) return false
+                    }
                 }
         }
     }

@@ -21,3 +21,7 @@ Add a deterministic decoder regression using a map whose entry enumeration is co
 ## Documentation handoff
 
 Record actual causal regression, exact fixture timings/counts and final accepted-candidate evidence in authoritative-reader-paging.md. Keep approved mapping and historical misses visible. Reviewed child targets feature/2447, then2447/2437/2334 each complete their own required acceptance/documentation/workflow.
+
+## Confirmed causal red
+
+Source6659a0a9c7b9d552ac3966f8e6ac490f69433dae ran the one selected regression against unchanged production: 1 executed, 0 passed, 1 failed, zero errors/skips; expected zero raw entry enumerations but observed one. Actual fresh XML/full Gradle log/test/production source are retained in logs/evidence/2449/manual-20261022/red-6659, manifestc5dc6017c69f09a5e4c7feb597518dba3837fdb99f7b0616ef080354d30017d1. The production repair only removes per-field set/copy allocation in ThreadUpdatePayloads.kt. It preserves the full strict validation traversal and all lexical checks and adds no mutable state or decoded-result cache. Passing focused/native evidence remains pending.
