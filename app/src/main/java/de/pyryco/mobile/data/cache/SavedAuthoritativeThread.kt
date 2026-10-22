@@ -1,7 +1,7 @@
 package de.pyryco.mobile.data.cache
 
-import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.network.validThreadJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot

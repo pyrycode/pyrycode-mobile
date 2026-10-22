@@ -43,8 +43,16 @@ class AuthoritativeFileCacheTest {
             FileConversationCache(temporary.root, dispatcher).writeAuthoritativeThread("host", "c", saved).getOrThrow()
             val owned = requireNotNull(FileConversationCache(temporary.root, dispatcher).readAuthoritativeThread("host", "c"))
             assertEquals(saved, owned)
-            assertEquals(raw, owned.toSnapshot().items.single().raw)
+            assertEquals(
+                raw,
+                owned
+                    .toSnapshot()
+                    .items
+                    .single()
+                    .raw,
+            )
             val values = owned.items.single()["extension"] as kotlinx.serialization.json.JsonArray
+
             @Suppress("UNCHECKED_CAST")
             val iterator = values.listIterator() as MutableListIterator<kotlinx.serialization.json.JsonElement>
             iterator.next()
