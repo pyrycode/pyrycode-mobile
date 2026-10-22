@@ -32,7 +32,11 @@ internal data class AuthoritativeThreadSnapshot(
     val retirements: Map<Long, Long> = emptyMap(),
     /** Transient opening contributions: false is content, true is a launch. Never durable certification. */
     val openingRows: Set<Pair<Long, Boolean>>? = null,
+    val bodyLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
+    val bodyContents: Map<Pair<Long, Long>, JsonObject> = emptyMap(),
 ) {
+    fun hasToolBody(item: ThreadItemDto): Boolean = item.hasToolBody || (item.id to item.rev) in bodyContents
+
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
 }
 
@@ -259,6 +263,59 @@ internal class AuthoritativeThreadStore {
         conversation: String,
     ): Flow<AuthoritativeThreadSnapshot> =
         snapshots.map { it[host to conversation] ?: AuthoritativeThreadSnapshot() }.distinctUntilChanged()
+
+    @Synchronized
+    fun bodyLoad(
+        host: String,
+        conversation: String,
+        id: Long,
+        revision: Long,
+        state: BodyLoad?,
+    ) {
+        val current = current(host, conversation)
+        if (current.items.none { it.id == id && it.rev == revision && !current.hasToolBody(it) }) return
+        val loads = current.bodyLoads.filterKeys { it.first != id }.toMutableMap()
+        if (state != null) loads[id to revision] = state
+        if (loads != current.bodyLoads) publish(host, conversation, current.copy(bodyLoads = loads))
+    }
+
+    /** Expansion certifies only this body, never history, placement or a recovery watermark. */
+    @Synchronized
+    fun enrichBody(
+        host: String,
+        request: ThreadQueryRequest.Body,
+        data: ThreadQueryReply.Body,
+        generation: Long,
+        incarnation: String,
+    ): Boolean {
+        val current = current(host, request.conversationId)
+        if (current.generation != generation ||
+            current.incarnation != incarnation ||
+            current.epoch != request.epoch ||
+            current.resetNeeded
+        ) {
+            return false
+        }
+        val held =
+            current.items.firstOrNull {
+                it.id.toULong() == request.itemId &&
+                    it.rev.toULong() == request.expectedRev &&
+                    it.kind == request.kind
+            }
+                ?: return false
+        if (current.hasToolBody(held)) return true
+        val contents = data.content ?: return false
+        publish(
+            host,
+            request.conversationId,
+            current.copy(
+                bodyContents = current.bodyContents.filterKeys { it.first != held.id } + ((held.id to held.rev) to contents),
+                bodyLoads = current.bodyLoads - (held.id to held.rev),
+            ),
+        )
+        RelayLog.i { "event=thread_body code=loaded" }
+        return true
+    }
 
     /** Disk facts do not own a runtime generation, connection capabilities or transient state. */
     @Synchronized

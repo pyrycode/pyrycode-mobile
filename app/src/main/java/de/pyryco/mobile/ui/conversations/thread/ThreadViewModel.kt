@@ -712,10 +712,49 @@ class ThreadViewModel(
 
     private val taskControlLock = Any()
     private val taskControls = MutableStateFlow(TaskControls())
+    private val bodyConsumer = Any()
+    private var bodyRelease: java.io.Closeable? = null
+    private var bodyConnection: Any? = null
+
+    private fun demandToolBodies(event: ThreadEvent.ToolBodyDemand) {
+        if (viewModelScope.coroutineContext[Job]?.isActive != true) return
+        val controls = taskControls.value
+        val p = event.presentation
+        val route = negotiated ?: return
+        if (controls.authoritative !== p ||
+            controls.authoritativeBinding !== event.binding ||
+            p.host != serverId ||
+            p.conversation != conversationId ||
+            route.store.current(serverId, conversationId) !== p.sourceSnapshot
+        ) {
+            return
+        }
+        val connection = (route.support.value as? ThreadSupport.Supported)?.connection
+        if (connection == null || event.keys.isEmpty()) {
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
+            return
+        }
+        if (p.sourceConnection !== connection) return
+        if (bodyConnection !== connection) bodyRelease?.close()
+        val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
+        bodyRelease = route.bodies(
+            conversationId,
+            connection,
+            bodyConsumer,
+            p.sourceSnapshot,
+            ids,
+            event.retry?.takeIf { it in event.keys }?.let { p.bodyItem(it)?.id },
+        ) ?: bodyRelease
+        bodyConnection = connection
+    }
+
     private val taskStopAttempts = mutableMapOf<String, Any>()
     private val taskStopOwners = mutableMapOf<String, String?>()
 
     init {
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion { bodyRelease?.close() }
         viewModelScope.launch {
             backgroundTaskStopRefusals(conversationId).collect { taskId ->
                 synchronized(taskControlLock) {
@@ -779,6 +818,9 @@ class ThreadViewModel(
             val old = taskControls.value
             // A fresh lambda can publish to this same owner before its predecessor retires.
             if (old.authoritativeBinding !== binding) return
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
             taskStopAttempts.clear()
             taskStopOwners.clear()
             publishTaskControls(old.copy(authoritative = null, authoritativeBinding = null))
@@ -904,7 +946,13 @@ class ThreadViewModel(
                             combine(snapshots, progress) { snapshot, reading ->
                                 withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
                                     // An empty epoch can still carry scoped local Sending feedback.
-                                    projectDeferredAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                    projectDeferredAuthoritativeThread(
+                                        route.host,
+                                        conversationId,
+                                        snapshot,
+                                        reading,
+                                        sourceConnection = (support as? ThreadSupport.Supported)?.connection,
+                                    )
                                 }
                             }.paceThreadContent(contentScheduling),
                         )
@@ -3148,6 +3196,7 @@ class ThreadViewModel(
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
             is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.ToolBodyDemand -> demandToolBodies(event)
             is ThreadEvent.AuthoritativeQueueAction -> {
                 val presentation = taskControls.value.authoritative
                 if (presentation?.host != serverId || presentation.conversation != conversationId) return

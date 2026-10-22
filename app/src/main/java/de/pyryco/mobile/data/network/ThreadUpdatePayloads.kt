@@ -36,6 +36,7 @@ internal class ThreadItemDto private constructor(
     val summary: String = raw.threadString("summary")
     val subtype: String? = optionalFields.optionalString("subtype")
     val content: JsonElement = requireNotNull(raw["content"])
+    val hasToolBody: Boolean get() = raw["detail_omitted"] != JsonPrimitive(true) && content is JsonObject
 
     override fun toString(): String = "ThreadItemDto(content=***)"
 

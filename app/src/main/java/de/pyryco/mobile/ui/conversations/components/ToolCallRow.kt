@@ -100,6 +100,10 @@ internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
 /** The thread shares saved expansion with unplaced boundary measurements of the same row. */
 internal data class ToolCallExpansion(
     val expanded: Boolean,
+    val missingBody: Boolean = false,
+    val bodyLoad: de.pyryco.mobile.data.repository.BodyLoad? = null,
+    val offline: Boolean = false,
+    val retry: () -> Unit = {},
     val toggle: () -> Unit,
 )
 
@@ -407,6 +411,30 @@ private fun StatusGlyph(
 
 @Composable
 private fun ExpandedBody(toolCall: ToolCall) {
+    val expansion = LocalToolCallExpansion.current
+    if (expansion?.missingBody == true) {
+        Column(Modifier.testTag(TOOL_EXPANDED_BODY_TAG)) {
+            Text(
+                stringResource(
+                    if (expansion.offline) {
+                        R.string.tool_body_offline
+                    } else if (expansion.bodyLoad ==
+                        de.pyryco.mobile.data.repository.BodyLoad.Retry
+                    ) {
+                        R.string.tool_body_failed
+                    } else {
+                        R.string.tool_body_loading
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!expansion.offline && expansion.bodyLoad == de.pyryco.mobile.data.repository.BodyLoad.Retry) {
+                androidx.compose.material3.TextButton(onClick = expansion.retry) { Text(stringResource(R.string.tool_body_retry)) }
+            }
+        }
+        return
+    }
     Column(
         modifier =
             Modifier

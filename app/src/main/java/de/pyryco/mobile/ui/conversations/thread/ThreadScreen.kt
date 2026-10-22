@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -226,6 +228,24 @@ private class AuthoritativeThreadActionPublisher {
     )
 
     private var published: Binding? = null
+    private var bodyKeys: Set<String> = emptySet()
+
+    fun demandBodies(
+        presentation: AuthoritativeThreadPresentation,
+        keys: Set<String>,
+        retry: String? = null,
+    ) {
+        val binding = published?.takeIf { it.presentation === presentation } ?: return
+        bodyKeys = keys
+        binding.receiver(ThreadEvent.ToolBodyDemand(presentation, keys, binding.token, retry))
+    }
+
+    fun retryBody(
+        presentation: AuthoritativeThreadPresentation,
+        key: String,
+    ) {
+        if (key in bodyKeys) demandBodies(presentation, bodyKeys, key)
+    }
 
     fun present(
         presentation: AuthoritativeThreadPresentation?,
@@ -782,6 +802,36 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(authoritative, state.items) { authoritative?.depths ?: toolNestingDepths(state.items) }
                         val listState = key(interactionScope) { rememberLazyListState() }
+                        val bodyPresentation by rememberUpdatedState(authoritative)
+                        val bodyRows by rememberUpdatedState(rows)
+                        val bodyConnected by rememberUpdatedState(connected)
+                        LaunchedEffect(listState, destinationLifecycle) {
+                            destinationLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                                try {
+                                    snapshotFlow {
+                                        val p = bodyPresentation
+                                        val visibleKeys = listState.layoutInfo.visibleItemsInfo.mapTo(HashSet()) { it.key }
+                                        val keys =
+                                            if (!bodyConnected ||
+                                                p == null
+                                            ) {
+                                                emptySet()
+                                            } else {
+                                                bodyRows
+                                                    .filterIsInstance<ThreadRow.Delivered>()
+                                                    .filter { row ->
+                                                        row.listKey(0) in visibleKeys &&
+                                                            ((row.item as? ThreadItem.MessageItem)?.message?.id in expandedTools) &&
+                                                            p.missingBody(row.listKey(0))
+                                                    }.mapTo(mutableSetOf()) { it.listKey(0) }
+                                            }
+                                        p to keys
+                                    }.collect { (p, keys) -> if (p != null) actionPublisher.demandBodies(p, keys) }
+                                } finally {
+                                    bodyPresentation?.let { actionPublisher.demandBodies(it, emptySet()) }
+                                }
+                            }
+                        }
                         val readerViewport = remember(listState) { ThreadListViewport(listState) }
                         val compositionObserver = LocalThreadListCompositionObserver.current
                         SideEffect { compositionObserver?.invoke(listState) }
@@ -962,7 +1012,14 @@ fun ThreadScreen(
                                 (row as? ThreadRow.Delivered)?.agentBlockId?.takeIf { toolId != null && it != toolId }
                             val toolExpansion =
                                 toolId?.let { id ->
-                                    ToolCallExpansion(id in expandedTools) {
+                                    val source = authoritative?.bodyItem(row.listKey(0))
+                                    ToolCallExpansion(
+                                        id in expandedTools,
+                                        missingBody = authoritative?.missingBody(row.listKey(0)) == true,
+                                        bodyLoad = source?.let { authoritative.sourceSnapshot.bodyLoads[it.id to it.rev] },
+                                        offline = !connected,
+                                        retry = { authoritative?.let { actionPublisher.retryBody(it, row.listKey(0)) } },
+                                    ) {
                                         expandedTools =
                                             if (id in expandedTools) expandedTools - id else expandedTools + id
                                     }

@@ -26,12 +26,20 @@ internal class AuthoritativeThreadQueries(
     private val nowMillis: () -> Long,
     private val retireConnection: () -> Unit = {},
     private val onCertified: (String, Long, ThreadQueryReply.Success) -> Unit = { _, _, _ -> },
+    private val expansionEnabled: () -> Boolean = { false },
 ) {
+    private data class BodyKey(
+        val request: ThreadQueryRequest.Body,
+        val generation: Long,
+        val incarnation: String,
+    )
+
     private data class Intent(
         val conversation: String,
         val older: Boolean,
         val attentionRetries: Int = 0,
         val generation: Long? = null,
+        val body: BodyKey? = null,
     )
 
     private class Active(
@@ -39,8 +47,10 @@ internal class AuthoritativeThreadQueries(
         val generation: Long,
         val started: Long,
         val attentionRetries: Int,
+        val body: BodyKey? = null,
     ) {
         var abandonedAt: Long? = null
+        var bodyData: ThreadQueryReply.Body? = null
     }
 
     private val connection = UUID.randomUUID().toString()
@@ -52,6 +62,81 @@ internal class AuthoritativeThreadQueries(
     private val ownedRequests = mutableSetOf<Long>()
     private var active: Active? = null
     private var closed = false
+    private val bodyConsumers = mutableMapOf<Any, Set<BodyKey>>()
+
+    @Synchronized
+    fun bodies(
+        conversation: String,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+    ): Closeable? {
+        if (closed || !enabled() || !expansionEnabled() || store.current(host, conversation) !== snapshot) return null
+        val epoch = snapshot.epoch?.takeIf { it.isNotEmpty() } ?: return null
+        val keys =
+            snapshot.items
+                .filter {
+                    it.id in ids &&
+                        it.shown &&
+                        (it.order ?: 0) > 0 &&
+                        !snapshot.hasToolBody(it) &&
+                        it.kind in setOf("tool_call", "agent")
+                }.mapTo(mutableSetOf()) {
+                    BodyKey(
+                        ThreadQueryRequest.Body(conversation, epoch, it.id.toULong(), it.rev.toULong(), it.kind),
+                        snapshot.generation,
+                        snapshot.incarnation,
+                    )
+                }
+        bodyConsumers[consumer] = keys
+        pruneBodies()
+        for (key in keys) {
+            val request = key.request
+            val state = store.current(host, conversation).bodyLoads[request.itemId.toLong() to request.expectedRev.toLong()]
+            if (state == BodyLoad.Retry && retry?.toULong() != request.itemId) continue
+            if (active?.takeIf { it.abandonedAt == null }?.body == key || queued.any { it.body == key }) continue
+            store.bodyLoad(host, conversation, request.itemId.toLong(), request.expectedRev.toLong(), BodyLoad.Loading)
+            queued.addLast(Intent(conversation, false, body = key))
+        }
+        dispatch()
+        return Closeable { releaseBodies(consumer) }
+    }
+
+    @Synchronized
+    fun releaseBodies(consumer: Any) {
+        bodyConsumers.remove(consumer)
+        pruneBodies()
+        dispatch()
+    }
+
+    private fun bodyCurrent(key: BodyKey): Boolean {
+        val snapshot = store.current(host, key.request.conversationId)
+        return expansionEnabled() &&
+            bodyConsumers.values.any { key in it } &&
+            snapshot.generation == key.generation &&
+            snapshot.incarnation == key.incarnation &&
+            snapshot.epoch == key.request.epoch &&
+            snapshot.items.any {
+                it.id.toULong() == key.request.itemId &&
+                    it.rev.toULong() == key.request.expectedRev &&
+                    it.kind == key.request.kind
+            }
+    }
+
+    private fun pruneBodies() {
+        queued.removeAll { intent ->
+            intent.body?.let { key ->
+                if (bodyCurrent(key)) {
+                    false
+                } else {
+                    store.bodyLoad(host, intent.conversation, key.request.itemId.toLong(), key.request.expectedRev.toLong(), null)
+                    true
+                }
+            } == true
+        }
+        active?.body?.let { if (!bodyCurrent(it)) retire("cancelled") }
+    }
 
     @Synchronized
     fun open(conversation: String): Boolean {
@@ -120,6 +205,7 @@ internal class AuthoritativeThreadQueries(
 
     @Synchronized
     fun cancel(conversation: String) {
+        bodyConsumers.entries.removeAll { (_, keys) -> keys.any { it.request.conversationId == conversation } }
         consumers.remove(conversation)
         opened -= conversation
         queued.removeAll { it.conversation == conversation }
@@ -160,10 +246,11 @@ internal class AuthoritativeThreadQueries(
     fun accept(envelope: Envelope): Boolean {
         val held = active
         if (held == null || envelope.inReplyTo != held.decoder.requestId) {
-            return envelope.type in setOf("thread_items", "thread_reset") ||
+            return envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body") ||
                 (envelope.type == "error" && envelope.inReplyTo in ownedRequests)
         }
         val request = held.decoder.request
+        if (held.body?.let { !bodyCurrent(it) } == true) retire("cancelled")
         if (store.current(host, request.conversationId).generation != held.generation) {
             retire("generation")
             if (request.conversationId in opened) enqueue(Intent(request.conversationId, false))
@@ -182,6 +269,20 @@ internal class AuthoritativeThreadQueries(
                 is ThreadDecodeOutcome.Repair -> retire("malformed", remoteComplete = isTerminal(envelope, held))
                 is ThreadDecodeOutcome.Complete ->
                     when (val reply = outcome.value) {
+                        is ThreadQueryReply.Body -> {
+                            if (!reply.final) {
+                                held.bodyData = reply
+                            } else {
+                                val key = held.body
+                                val data = held.bodyData
+                                val applied =
+                                    key != null &&
+                                        data != null &&
+                                        bodyCurrent(key) &&
+                                        store.enrichBody(host, key.request, data, key.generation, key.incarnation)
+                                retire(if (applied) "complete" else "cancelled", failed = !applied, remoteComplete = true)
+                            }
+                        }
                         is ThreadQueryReply.Batch -> {
                             val checkpoint = reply.checkpoint
                             val applied =
@@ -285,12 +386,14 @@ internal class AuthoritativeThreadQueries(
         queued.clear()
         opened.clear()
         consumers.clear()
+        bodyConsumers.clear()
         retire("disconnected", remoteComplete = true)
     }
 
     private fun enqueue(intent: Intent) {
         val running = active?.decoder?.request
         if (active?.abandonedAt == null &&
+            running !is ThreadQueryRequest.Body &&
             running?.conversationId == intent.conversation &&
             (running is ThreadQueryRequest.Page) == intent.older
         ) {
@@ -302,11 +405,14 @@ internal class AuthoritativeThreadQueries(
     private fun dispatch() {
         while (!closed && active == null && queued.isNotEmpty()) {
             val intent = queued.removeFirst()
-            if (!enabled() || intent.conversation !in opened) continue
+            if (!enabled() || intent.body == null && intent.conversation !in opened) continue
             val snapshot = store.current(host, intent.conversation)
             if (intent.generation != null && intent.generation != snapshot.generation) continue
+            if (intent.body?.let { !bodyCurrent(it) } == true) continue
             val request =
-                if (intent.older) {
+                if (intent.body != null) {
+                    intent.body.request
+                } else if (intent.older) {
                     val coverage = snapshot.coverage?.takeIf { it.olderExists } ?: continue
                     ThreadQueryRequest.Page(intent.conversation, coverage.continuation)
                 } else {
@@ -320,6 +426,7 @@ internal class AuthoritativeThreadQueries(
                     snapshot.generation,
                     nowMillis(),
                     intent.attentionRetries,
+                    intent.body,
                 )
             RelayLog.i { "event=thread_sync code=requested" }
             if (!send(Envelope(id, request.type, Clock.System.now().toString(), request.payload()))) {
@@ -336,7 +443,22 @@ internal class AuthoritativeThreadQueries(
         val held = active ?: return
         if (remoteComplete) active = null
         held.decoder.abandon()
-        if (failed && held.abandonedAt == null && store.current(host, held.decoder.request.conversationId).generation == held.generation) {
+        held.bodyData = null
+        if (held.body != null && held.abandonedAt == null) {
+            val request = held.body.request
+            store.bodyLoad(
+                host,
+                request.conversationId,
+                request.itemId.toLong(),
+                request.expectedRev.toLong(),
+                if (failed && code != "cancelled" && code != "disconnected") BodyLoad.Retry else null,
+            )
+        }
+        if (held.body == null &&
+            failed &&
+            held.abandonedAt == null &&
+            store.current(host, held.decoder.request.conversationId).generation == held.generation
+        ) {
             store.requestRepair(host, held.decoder.request.conversationId)
         }
         if (!remoteComplete && held.abandonedAt == null) held.abandonedAt = nowMillis()
@@ -353,8 +475,7 @@ internal class AuthoritativeThreadQueries(
         ) {
             return false
         }
-        val drain = ThreadQueryDecoder(host, connection, held.decoder.requestId, held.decoder.request, nowMillis = nowMillis)
-        return drain.decode(envelope).any {
+        return held.decoder.drain(envelope).any {
             it is ThreadDecodeOutcome.Complete && it.value !is ThreadQueryReply.Batch
         }
     }
