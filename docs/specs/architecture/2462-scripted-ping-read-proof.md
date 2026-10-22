@@ -107,6 +107,12 @@ Before launching validation, the Mac manager reported only this admitted builder
 
 Security re-review: PASS. The integrated summary query uses the existing encrypted transport and owned scope, adds no credential or storage surface and is bounded to one consumed follow-up. Strict connection/generation fencing, independent daemon read authority and content-free capped diagnostics remain intact. No new security-sensitive implementation is needed. The combined retained diff is 1420 written lines before this revision; forecast remains below 1600, with no further types, call-site migrations or acceptance criteria.
 
+### 2026-10-23 — Integrated macOS proof
+
+On pushed `6bbc74832003cb582a5529baf7dd07c0d987fe77`, `python3 scripts/android-test-gate.py scripted ping` passed both original methods together: 2 executed/passed, zero failures/errors/skips, exit 0. The terminal reply sample has current ownership, exact reply, checkpoint 12 and shown/confirmed 9/9 while the retired repository remains confirmed 0. The separate list sample has one current-owned row, shown/read 13/9, projected/rendered Unread, and no competing waiting/running state. The original peer-read-to-idle assertion and teardown passed. No native retry was needed.
+
+All five planned focused JVM classes passed in separate single-class invocations: 111 executed/passed, zero failures/errors/skips. The combined selection was refused before admission with zero tests, then corrected to the launcher's supported scope. Complete raw native/JVM XML, phone/control/daemon/relay traces, effective APK/binary and source identities, admission/cleanup receipts and verified manifests are retained privately at agents `logs/evidence/2462/integrated-macos-6bbc74832/`. Native/fixture copies match all 20 original files and the five JVM XML copies match their sources. Historical failures and remote publication limitations remain unchanged; no retrospective cause is claimed for unlogged historical post-summary values. Complete independent configured acceptance remains dispatcher-owned.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
