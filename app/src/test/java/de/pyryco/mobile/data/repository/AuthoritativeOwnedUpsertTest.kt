@@ -385,7 +385,7 @@ class AuthoritativeOwnedUpsertTest {
             assertEquals(210_001L, restored.appliedVersion)
             assertEquals(0L, restored.checkpoint)
             assertNull(restored.coverage)
-            phase("reopened")
+            phase("reopen_asserted")
 
             // Completion inherits coverage for the trimmed fact; metadata changes cannot repair it.
             val checkpoint =

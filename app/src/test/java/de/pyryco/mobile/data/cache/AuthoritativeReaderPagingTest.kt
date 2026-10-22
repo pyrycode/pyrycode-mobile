@@ -1031,6 +1031,12 @@ class AuthoritativeReaderPagingTest {
             var replacement: Job? = null
             var oldHydration: Job? = null
             val before = store.current("host", "c")
+            val baselinesField = CachingConversationRepository::class.java.getDeclaredField("persistedAuthoritative").also { it.isAccessible = true }
+            val baselines = baselinesField.get(repo) as Map<*, *>
+            fun savedBaseline(): Any? = baselines["c"]?.let { candidate ->
+                candidate.javaClass.getDeclaredField("authoritative").also { it.isAccessible = true }.get(candidate)
+            }
+            val baselineBefore = savedBaseline()
             try {
                 field.set(repo, worker)
                 synchronized(store) {
@@ -1066,6 +1072,7 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(before.items, after.items)
                 assertEquals(before.openingRows, after.openingRows)
                 assertEquals(before, after)
+                assertEquals(baselineBefore, savedBaseline())
                 assertEquals(200, requireNotNull(vm.state.value.authoritativeThread).rows.size)
                 field.set(repo, originalDispatcher)
                 val requests = fixture.requests.size
