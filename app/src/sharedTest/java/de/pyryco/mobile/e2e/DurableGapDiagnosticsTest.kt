@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,6 +32,18 @@ internal fun durableGapDiagnostic(
 
 @RunWith(AndroidJUnit4::class)
 class DurableGapDiagnosticsTest {
+    @Test
+    fun omittedAndExplicitRootParentsMatchWithoutErasingOwnedParents() {
+        assertTrue(durableParentMatches(null, 0L))
+        assertTrue(durableParentMatches(0L, null))
+        assertTrue(durableParentMatches(null, null))
+        assertTrue(durableParentMatches(0L, 0L))
+        assertTrue(durableParentMatches(23L, 23L))
+        assertFalse(durableParentMatches(null, 23L))
+        assertFalse(durableParentMatches(23L, null))
+        assertFalse(durableParentMatches(23L, 24L))
+    }
+
     @Test
     fun terminalMatchesCarryTheirExactCertificationBoundary() {
         assertEquals(
@@ -76,3 +89,8 @@ class DurableGapDiagnosticsTest {
         }
     }
 }
+
+internal fun durableParentMatches(
+    left: Long?,
+    right: Long?,
+): Boolean = (left ?: 0L) == (right ?: 0L)

@@ -315,7 +315,7 @@ internal class DurableGapProof(
                                     now.turn == old.turn &&
                                     now.message.role == old.message.role &&
                                     now.fullText == old.fullText &&
-                                    (now.fact?.parent ?: 0) == (old.fact?.parent ?: 0) &&
+                                    durableParentMatches(now.fact?.parent, old.fact?.parent) &&
                                     (
                                         old.message.role != Role.User ||
                                             (
@@ -343,7 +343,12 @@ internal class DurableGapProof(
                                 " turn_matches=${evidence.records.count { it.turn == old.turn }}" +
                                 " role_matches=${evidence.records.count { it.message.role == old.message.role }}" +
                                 " text_matches=${evidence.records.count { it.fullText == old.fullText }}" +
-                                " parent_matches=${evidence.records.count { (it.fact?.parent ?: 0) == (old.fact?.parent ?: 0) }}" +
+                                " parent_matches=${evidence.records.count {
+                                    durableParentMatches(
+                                        it.fact?.parent,
+                                        old.fact?.parent,
+                                    )
+                                }}" +
                                 " id_matches=${evidence.records.count { it.fact?.id == old.fact?.id }}",
                         )
                     }
