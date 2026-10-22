@@ -51,7 +51,10 @@ class NegotiatedLocalHistoryDecoratorTest {
             assertEquals(0, provider.cancellations)
         }
 
-    private fun tapped(route: NegotiatedThread, passive: Boolean): NegotiatedThread {
+    private fun tapped(
+        route: NegotiatedThread,
+        passive: Boolean,
+    ): NegotiatedThread {
         val repository =
             object : ConversationRepository by FakeConversationRepository() {
                 override val negotiatedThread = route
