@@ -64,6 +64,53 @@ class ThreadUpdateDecoderTest {
     }
 
     @Test
+    fun replacementDecodeDoesNotEnumerateUnrelatedRawFieldsWithoutClears() {
+        val fields = addition().getValue("item").jsonObject
+        var enumerations = 0
+        val raw = JsonObject(object : Map<String, JsonElement> by fields {
+            override val entries: Set<Map.Entry<String, JsonElement>>
+                get() {
+                    enumerations++
+                    return fields.entries
+                }
+        })
+        enumerations = 0
+        val item = ThreadItemDto.decodeReplacement(raw)
+        assertSame(raw, item.raw)
+        assertEquals(101L, item.id)
+        assertEquals(303L, item.rev)
+        assertEquals(202L, item.order)
+        assertEquals("session-c", item.session)
+        assertEquals(JsonPrimitive(true), item.raw["future_fact"])
+        assertEquals("A replacement without clears must not copy unrelated extension entries", 0, enumerations)
+    }
+
+    @Test
+    fun replacementClearFastPathPreservesRawPresenceAndRechecksChangedValues() {
+        val fields = addition().getValue("item").jsonObject.toMutableMap()
+        fields["future_null"] = JsonNull
+        val raw = JsonObject(fields)
+        assertEquals(202L, ThreadItemDto.decodeReplacement(raw).order)
+        for (key in listOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype")) fields[key] = JsonNull
+        val cleared = ThreadItemDto.decodeReplacement(raw)
+        assertSame(raw, cleared.raw)
+        assertNull(cleared.order)
+        assertNull(cleared.endedOrder)
+        assertNull(cleared.session)
+        assertNull(cleared.agent)
+        assertNull(cleared.noChild)
+        assertNull(cleared.turn)
+        assertNull(cleared.parent)
+        assertNull(cleared.subtype)
+        assertSame(JsonNull, cleared.raw["future_null"])
+        assertSame(JsonNull, cleared.raw["order"])
+        fields["order"] = JsonPrimitive("202")
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { ThreadItemDto.decodeReplacement(raw) }
+        fields["order"] = JsonPrimitive(203)
+        assertEquals(203L, ThreadItemDto.decodeReplacement(raw).order)
+    }
+
+    @Test
     fun ordinaryAdditionRetainsUnknownKindStatusAndJson() {
         val raw = addition()
         val value = complete(decoder.decode(envelope(added, raw)))
