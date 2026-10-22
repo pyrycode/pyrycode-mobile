@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TransportEvent
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.collect
@@ -194,29 +195,33 @@ class SuiteConnectionsTest {
                 peerTransport.connect()
                 val first = hub.transport(old) { error("Live transport started") }
                 val firstPump = hub.pump(first) { error("Live pump started") }
+                val received = CompletableDeferred<Envelope>()
+                val firstCollector = backgroundScope.launch { firstPump.inbound.collect { received.complete(it) } }
                 firstPump.start()
                 first.connect()
                 runCurrent()
                 val restarting =
                     async {
                         hub.beforePhoneRestart()
+                        assertTrue("the old phone consumer must survive its close fence", firstCollector.isActive)
                         first.close()
                     }
                 runCurrent()
                 assertFalse("restart released before its required catch-up; ${tape.progress()}", restarting.isCompleted)
-                val received = async { firstPump.inbound.first() }
                 assertTrue(firstPump.send(query.copy(id = 90)))
                 runCurrent()
                 assertFalse("restart released before queued reply delivery", restarting.isCompleted)
                 advanceTimeBy(200)
                 runCurrent()
                 restarting.await()
-                assertEquals(90L, received.await().inReplyTo)
+                assertEquals(reply.copy(inReplyTo = 90), received.await())
                 runCurrent()
 
                 // A second restart must select the replacement, without reusing the retired owner.
                 val replacement = hub.transport(next) { error("Live transport started") }
                 val pump = hub.pump(replacement) { error("Live pump started") }
+                val replacementReply = CompletableDeferred<Envelope>()
+                val replacementCollector = backgroundScope.launch { pump.inbound.collect { replacementReply.complete(it) } }
                 pump.start()
                 replacement.connect()
                 runCurrent()
@@ -227,6 +232,8 @@ class SuiteConnectionsTest {
                 advanceTimeBy(20)
                 runCurrent()
                 secondRestart.await()
+                assertEquals(reply.copy(inReplyTo = 91), replacementReply.await())
+                assertTrue("the replacement consumer must survive its close fence", replacementCollector.isActive)
                 replacement.close()
                 assertTrue(peerPump.send(frame(90, "list_conversations")))
                 peerTransport.close()
