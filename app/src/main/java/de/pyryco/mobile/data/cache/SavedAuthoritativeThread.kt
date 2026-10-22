@@ -52,18 +52,25 @@ data class SavedAuthoritativeThread(
     internal fun toSnapshot(): AuthoritativeThreadSnapshot = ownedSnapshot ?: decodeSnapshot()
 
     private fun decodeSnapshot(trace: Boolean = false): AuthoritativeThreadSnapshot {
-        val start = if (trace) System.nanoTime() else 0L
         require(epoch.isNotEmpty() && appliedVersion in 0..MAX_THREAD_NUMBER && checkpoint in 0..appliedVersion)
         require(incarnation.length <= 64)
         require(retirements.all { (id, revision) -> id in 1..MAX_THREAD_NUMBER && revision in id..appliedVersion })
         require(retirements.isEmpty() || (checkpoint == 0L && coverage == null))
-        items.forEach { require(validThreadJson(it)) }
-        val tree = if (trace) System.nanoTime() else 0L
+        var treeNs = 0L
+        var typedNs = 0L
         val decoded =
             items.map { raw ->
-                ThreadItemDto.decodeReplacement(raw).also { item ->
+                val start = if (trace) System.nanoTime() else 0L
+                require(validThreadJson(raw))
+                val tree = if (trace) System.nanoTime() else 0L
+                val decodedItem = ThreadItemDto.decodeReplacement(raw).also { item ->
                     require(item.id > 0 && item.rev >= item.id && item.rev <= appliedVersion)
                 }
+                if (trace) {
+                    treeNs += tree - start
+                    typedNs += System.nanoTime() - tree
+                }
+                decodedItem
             }
         val typed = if (trace) System.nanoTime() else 0L
         require(decoded.distinctBy { it.id }.size == decoded.size)
@@ -79,7 +86,7 @@ data class SavedAuthoritativeThread(
             retirements = retirements,
         )
         val complete = if (trace) System.nanoTime() else 0L
-        if (trace) RelayLog.d { "event=authoritative_validation_phases tree_ns=${tree - start} typed_ns=${typed - tree} rest_ns=${complete - typed}" }
+        if (trace) RelayLog.d { "event=authoritative_validation_phases tree_ns=$treeNs typed_ns=$typedNs rest_ns=${complete - typed}" }
         return snapshot
     }
 
