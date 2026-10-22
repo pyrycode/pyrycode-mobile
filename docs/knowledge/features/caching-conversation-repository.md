@@ -90,6 +90,9 @@ identities on another host. See [writer custody](caching-conversation-repository
 
 ### Older authoritative saved pages (#2334)
 
+Native acceptance follows the [approved authoritative mapping](authoritative-reader-paging.md#approved-native-acceptance-mapping-2447); legacy projection/span measurements remain historical.
+
+
 Reader movement and the existing explicit retry admit one local page of at most **200 additional
 display contributions**, plus active inputs and required parent/placement witnesses. Indexed
 local reads have their own observation-owned slot, so offline operation and held newest/catch-up
