@@ -781,7 +781,8 @@ class SavedThreadFirstDrawDeviceTest {
                 islands = 1 + orders.zipWithNext().count { (before, after) -> after != before + 1 }
                 assertEquals(if (fragmented) 18_000 else 1, islands)
                 assertEquals(0, legacyReads.get())
-                assertEquals(1, fullReads.get())
+                // Full-file fallback restores for observation and again before the live lease.
+                assertEquals(if (online) 2 else 1, fullReads.get())
                 assertEquals(if (online) 1 else 0, destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") })
                 assertTrue(destination.requests.none { it.type == "thread_page" && it.payload.jsonObject.containsKey("before_order") })
             }
