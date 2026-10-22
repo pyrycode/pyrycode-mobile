@@ -24,3 +24,7 @@ Record retirement only. [#2367 / PR #2378](https://github.com/pyrycode/pyrycode-
 Run the existing `de.pyryco.mobile.data.repository.AuthoritativeThreadCacheTest` class on Linux and retain its fresh XML counts in the PR. No new logic exists for a red/green regression. Run the required formatting, lint, assembly and final pre-verification checks. No device, scripted or live scenario changes.
 
 Pending dispatcher/verifier acceptance: retain this ticket's fresh Linux JVM-gate raw output/XML, exact candidate revision, executed/passed/failed/errors/skipped counts, and nonzero authoritative cache class execution. Historical #2367 acceptance and focused builder execution do not replace that full gate. Confirm the retired class has no executable cases. macOS is outside this ticket's verification scope.
+
+## Builder evidence — 2026-10-22
+
+Linux focused run at `f486601cf08de2a5834d9cc112ea57a7345578a1`: `python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.repository.AuthoritativeThreadCacheTest` executed/passed 23, failed/errors/skipped 0. Fresh raw report: `app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.data.repository.AuthoritativeThreadCacheTest.xml`, SHA-256 `e4c8c359c48d0034436885206ea1df89860f41c88115240f5030da26dbc19613`; retained scratch copy `/tmp/builder-2379/authoritative-cache.xml`. `lint assembleDebug spotlessApply` also passed through `scripts/gradle-gate.py`. This is focused builder evidence; full dispatcher acceptance above remains pending.
