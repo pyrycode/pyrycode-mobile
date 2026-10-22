@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -112,6 +113,18 @@ internal class DurableGapProof(
         val expected =
             (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
                 (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+        Log.i(
+            "DurableGapProof",
+            durableGapDiagnostic(
+                DurableGapCheck.Baseline,
+                true,
+                baseline.generation,
+                baseline.checkpoint,
+                baseline.completedVersion,
+                baseline.items.size,
+                baseline.items.size,
+            ),
+        )
         try {
             reconnect()
             rule.waitUntil(30_000) {
@@ -261,13 +274,26 @@ internal class DurableGapProof(
             assertEquals("no legacy content request", 0, AuthoritativeHistoryProbe.legacyRequests())
             val recovered = checkNotNull(reply.admitted(evidence, serverId))
             assertEquals("complete independently produced reply", reply.text, recovered.records.joinToString("") { it.fullText })
-            val terminal =
-                snapshot.items.single {
+            val terminalMatches =
+                snapshot.items.filter {
                     it.kind == "turn_end" &&
                         (it.parent ?: 0) == 0L &&
                         it.session == recovered.session &&
                         it.turn == recovered.turn
                 }
+            Log.i(
+                "DurableGapProof",
+                durableGapDiagnostic(
+                    DurableGapCheck.Terminal,
+                    snapshot.epoch == baseline.epoch,
+                    snapshot.generation,
+                    snapshot.checkpoint,
+                    snapshot.completedVersion,
+                    1,
+                    terminalMatches.size,
+                ),
+            )
+            val terminal = terminalMatches.single()
             assertTrue(
                 "completed root turn is certified",
                 !terminal.active && terminal.status == "done" && terminal.rev.toULong() <= version,
@@ -279,9 +305,9 @@ internal class DurableGapProof(
 
             val baselineRows = authoritativeThreadEvidence(serverId, conversationId, Any(), baseline).records
             val retained =
-                baselineRows.map { old ->
-                    val held =
-                        evidence.records.single { now ->
+                baselineRows.mapIndexed { index, old ->
+                    val matches =
+                        evidence.records.filter { now ->
                             if (recoveryEpoch == baseline.epoch) {
                                 now.fact?.id == checkNotNull(old.fact).id
                             } else {
@@ -289,7 +315,7 @@ internal class DurableGapProof(
                                     now.turn == old.turn &&
                                     now.message.role == old.message.role &&
                                     now.fullText == old.fullText &&
-                                    (now.fact?.parent ?: 0) == (old.fact?.parent ?: 0) &&
+                                    durableParentMatches(now.fact?.parent, old.fact?.parent) &&
                                     (
                                         old.message.role != Role.User ||
                                             (
@@ -300,12 +326,51 @@ internal class DurableGapProof(
                                     )
                             }
                         }
+                    if (matches.size != 1) {
+                        Log.i(
+                            "DurableGapProof",
+                            durableGapDiagnostic(
+                                DurableGapCheck.RetainedRow,
+                                recoveryEpoch == baseline.epoch,
+                                snapshot.generation,
+                                snapshot.checkpoint,
+                                snapshot.completedVersion,
+                                1,
+                                matches.size,
+                                index,
+                            ) +
+                                " session_matches=${evidence.records.count { it.session == old.session }}" +
+                                " turn_matches=${evidence.records.count { it.turn == old.turn }}" +
+                                " role_matches=${evidence.records.count { it.message.role == old.message.role }}" +
+                                " text_matches=${evidence.records.count { it.fullText == old.fullText }}" +
+                                " parent_matches=${evidence.records.count {
+                                    durableParentMatches(
+                                        it.fact?.parent,
+                                        old.fact?.parent,
+                                    )
+                                }}" +
+                                " id_matches=${evidence.records.count { it.fact?.id == old.fact?.id }}",
+                        )
+                    }
+                    val held = matches.single()
                     assertEquals("saved source session", old.session, held.session)
                     assertEquals("saved source turn", old.turn, held.turn)
                     assertEquals("saved source role", old.message.role, held.message.role)
                     assertEquals("saved source text", old.fullText, held.fullText)
                     held
                 }
+            Log.i(
+                "DurableGapProof",
+                durableGapDiagnostic(
+                    DurableGapCheck.RetainedRows,
+                    recoveryEpoch == baseline.epoch,
+                    snapshot.generation,
+                    snapshot.checkpoint,
+                    snapshot.completedVersion,
+                    baselineRows.size,
+                    retained.size,
+                ),
+            )
             val texts = evidence.records.map { it.fullText }
             assertEquals("chronological durable posts, each once", expected, texts.filter { it.startsWith(prefix) })
             val indices = recovered.records.map { record -> evidence.records.indexOfFirst { it.fact?.id == record.fact?.id } }
