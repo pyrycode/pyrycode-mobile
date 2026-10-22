@@ -64,3 +64,25 @@ Preserve the first assertion/replay mismatch and all later failures as evidence.
 ## Scope assessment
 
 One observable repair and its regression; forecast at most 650 written lines, no new production exports or consumer signature migration, three acceptance criteria. Reassess actual repair boundaries before implementation. The `NegotiatedAgentRestartProof` diff on remote `feature/2175` is the older introduction, already superseded by merged #2470. Remote #2360 changes final teardown in `SuiteConnections`, not the restart proof; avoid overlapping that work unless evidence demonstrates a dependency.
+
+## Revisions
+
+### 2026-10-22 — first-failure evidence remains missing
+
+No executable source changed. Four isolated named-method invocations and a selection containing the original report's preceding three recorded scenarios all passed on Linux: eight total executed/passed, zero failures/errors/skips. The named method executed five times. The three-method prefix was ping context usage, background-Agent following and peer queue consistency; the fresh selected report confirms that order before the named restart method. These results do not establish independence from the earlier non-recorded classes or original machine load.
+
+| Attempt | Source | Gate directory | Executed / passed / failed / skipped |
+| --- | --- | --- | --- |
+| Isolated 1 | `ecad147dd` | `ui-6s4z6c81` | 1 / 1 / 0 / 0 |
+| Isolated 2 | `ecad147dd`; plan-only commit during execution | `ui-ivgjan_y` | 1 / 1 / 0 / 0 |
+| Isolated 3 | `11483e34975d42653dcdd20d4daf2923f5cd7c5a` | `ui-zw7fj67s` | 1 / 1 / 0 / 0 |
+| Preceding recorded sequence | `11483e34975d42653dcdd20d4daf2923f5cd7c5a` | `ui-jv0ui84n` | 4 / 4 / 0 / 0 |
+| Isolated 4 | `11483e34975d42653dcdd20d4daf2923f5cd7c5a` | `ui-3ckjhxvw` | 1 / 1 / 0 / 0 |
+
+All five commands exited zero. Raw gate reports, native XML/protobufs and phone logs, revision receipts and verified SHA-256 manifests are retained privately under agents `logs/evidence/2476/builder-initial-diagnostics/`, in `baseline-1`, `baseline-2`, `baseline-3`, `preceding-sequence` and `baseline-5`. The first three contain 16 verified manifest entries each, the sequence 22, and the final isolated attempt 16. Every named method actually executed without skips. The unchanged first attempts observed saved checkpoint 81 restored exactly, actual connection replacement, same-epoch generation replacement and final placement success.
+
+The original #2467 failure at `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` remains failed, followed by its distinct successful rerun. The retrieved verifier bundle's gate output and retained failure copy contain only normalized XML with an empty failure element. They establish occurrence but cannot identify an assertion or replay boundary. Comparing source confirms the restart proof and `SuiteConnections` match this checkout, while that observed candidate also contains #2467's read-receipt prerequisite orchestration absent from current main. Do not equate the current focused passes with exact-source reproduction of that candidate. The older #2367 verifier bundle likewise lacks the first-failure details needed here. No evidence links the remaining occurrence to a particular previously merged placement repair or the open #2360 teardown repair.
+
+Recovery assessment `d1d37640cc5df8d75b97f904f6a33adbf7c74f476a02fdc36d1481f30740d503` is queued with **zero executed tests**. Its request references this ticket's retained refiner bundle `29f082c5a681b641a7de45dd607a57a41409916b3185c752ce41d0385ce2ac25`, digest `72a2aa1be0f9fbfe58718618a223618257175b9e37be581a52478a68b5c59737`. First recover the original first-failure phone log; if unavailable, assess only the exact named method at the observed `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` revision. No complete suite was requested or launched. The request is retained beside the private diagnostic evidence as `investigation-request.json`.
+
+The assessment becomes eligible only after this worker ends. Cause, controlled regression, repair and repaired-candidate acceptance remain pending. No speculative code change or recording replacement is justified by these diagnostic passes; no implementation PR is opened. Resume implementation from the first actual failing boundary supplied by recovery, updating the design and writing its causal regression before the repair.
