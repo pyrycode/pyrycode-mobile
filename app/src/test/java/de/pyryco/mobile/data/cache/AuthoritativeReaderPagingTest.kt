@@ -161,7 +161,12 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(0L, snapshot.checkpoint)
                 assertEquals(null, snapshot.coverage)
                 assertEquals(listOf("Saved exact 1"), state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
-                assertTrue(state.items.filterIsInstance<ThreadItem.MessageItem>().single().message.isStreaming)
+                assertTrue(
+                    state.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message.isStreaming,
+                )
                 assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
                 assertEquals(0, cache.authoritativeFullReads)
             }
