@@ -22,7 +22,10 @@ clears authoritative storage for that exact host, replaces its ledger rows with 
 marker, then removes the host's file directory. A committed retirement prevents leftover
 sources from re-importing after cleanup failure or restart. Same-id owners on other hosts
 remain readable, including case-distinct `Host`/`host` owners. A failed database retirement
-is reported as failure, not successful removal.
+is reported as failure, not successful removal. The [integrated preservation matrix](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+retains these isolation checks alongside authoritative item fences, independent metadata/read
+state and pending-send identity/acceptance checks. Storage retirement adds no process-death
+persistence for provisional sends and does not admit a forgotten host through a cache read.
 
 Schema 12 (#2386) drops only legacy content/evidence tables and their exclusive indexes.
 It preserves `file_imports`, including historical legacy completion/retirement records,

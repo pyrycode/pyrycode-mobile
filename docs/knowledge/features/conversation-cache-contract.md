@@ -40,7 +40,10 @@ or evidence tables. Explicit host/conversation removal retains scoped obsolete-f
 durable fences. See the [#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
 and [#2386 schema/reopen evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
 The remaining row/history APIs, models, owned mutations, paging/coverage wrappers and codecs
-were removed in #2387; there is no successful-empty legacy compatibility surface.
+were removed in #2387; there is no successful-empty legacy compatibility surface. The owner
+authorised complete retirement, superseding the daemon-built threads ADR's compatibility
+interval. Only metadata, supported read state and authoritative content remain supported storage contracts; provisional
+sends keep their independent in-memory identity and acceptance lifetime.
 Authoritative import keeps raw facts, identities, order, epoch, revisions, applied progress
 (including progress beyond the checkpoint), coverage and continuation.
 Local page exhaustion adds no certification and never supplies a daemon cursor.
@@ -206,8 +209,9 @@ Focused XML and raw preservation captures were at
 Accepted verifier bundle `1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`
 retains the verdict and gate logs; configured XML/counts above rely on the verifier's recorded
 inspection, not a documentation-stage rerun. Documentation inspected focused XML and phone
-output and ran no acceptance tests. #2364 owns the final integrated fold; #2447 owns
-saved-first-draw fixture restoration. Earlier accepted/failed evidence remains historical.
+output and ran no acceptance tests. The [integrated acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+records exact-source reuse and the parent cache/UI-skip limits. #2447 retains
+saved-first-draw fixture restoration; earlier accepted/failed evidence remains historical.
 
 ### Bounded authoritative display windows (#2333)
 

@@ -6,6 +6,10 @@ retain allocation, restore and projection evidence, including every earlier miss
 
 ## Bounded database and retained file acceptance (#2333)
 
+The database opening/offline/older-demand requirements remain current. The file-compatibility
+measurements below are historical. [Integrated storage acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+reuses native upgrade evidence; it supplies no replacement first-draw timing probes for #2447.
+
 `SavedThreadFirstDrawDeviceTest.databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen`
 adds a real on-disk 18000-display-row authoritative fixture through the actual production
 negotiated destination. Both offline and held-newest openings, including cold reopen, create
@@ -122,8 +126,9 @@ and [#2386 schema evidence](conversation-cache-testing.md#legacy-discard-upgrade
 slow-restore controls. Preserve cold opening and reopening, offline and held-newest modes,
 large displayed history, exact newest text and placement, reader-triggered older paging and
 zero-offline/one-connected request assertions through supported facts. Existing historical
-file results below do not prove those replacement fixtures executed. #2364 owns final
-integrated acceptance. The timing and negative-control requirements remain as follows.
+file results below do not prove those replacement fixtures executed. #2364 accepts storage
+retirement only; #2447 remains under `needs-human:manual-takeover` for #2334/#2437.
+The timing and negative-control requirements remain as follows.
 
 **Software-rendering bound (#2222).** 1,000 ms stays the product target. When the
 guest GL renderer string contains SwiftShader, the bound is **2,000 ms**. The SwANGLE
