@@ -92,3 +92,21 @@ The repaired controlled pair on `15be1fe05ebf87f63116d90e724164831ed15446` passe
 This is a distinct observable behaviour from final reply read confirmation. Its cause and inherited/regression classification remain unproved; do not extend this repair into attention projection or daemon metadata. Follow-up #2467 is open in Backlog with priority low and is linked as the blocker for the required paired acceptance. Keep every original assertion, deadline and teardown active, including the failing unread-row assertion. No retry or skip supplies acceptance. Before verifier PASS, resolve #2467 and supply a fresh full paired pass on the resulting candidate.
 
 Raw current failure and effective identities are retained at agents `logs/evidence/2462/repaired-followup-df4cc71fd/`; the prior repaired pass is at `repaired-15be1fe05/`. App, daemon and relay binaries are byte-identical across those two captures. Forced formatting, final debug assembly and `pre-verify.py --gradle` passed after the whitespace correction. The open PR preserves the coherent repair while this ticket waits on #2467.
+
+### 2026-10-23 — Validate the independently reviewed integration
+
+PR #2472 is merged into this branch at `8f9066f4d2db6b4ffdd17e5363c27aaf0012bd49`, including reviewed candidate `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`. Both #2344 and #2467 are closed. Preserve both repairs; this continuation adds no implementation. The retained branch already merged current main at `4e503995d745ba6721c4bd94e12785978e117ed4`.
+
+Integration inspection confirms that `pingReadMarkConfirmed` still requires the exact reply DTO, current strict owner, original host/conversation/epoch, admitted certification and daemon-confirmed marks. Coordinator and negotiated support are rechecked after sampling. `ThreadEvidenceOwner.matches` is unchanged. The original controlled reconnect, 90000 ms waits, unread/peer-read assertions and teardown remain active.
+
+The separate metadata repair joins the original correlated summary response with current completion certification in either order. `refreshUnavailableAuthoritativeReadFacts` consumes one connection/generation-owned trigger only when shown metadata is unavailable; certification never supplies shown/read values. Available zero and missing facts do not trigger a refresh. Retirement clears the ledger. `SuiteReadReceipts` retains intermediate captured snapshots and their same-owner query prerequisites; `RecordedSuiteTape` still requires every query and rejects unmatched/duplicate requests. Waiting/running attention precedence is unchanged.
+
+Validation: rerun `PingReadProofTest` (5), `ThreadEvidenceTest` (17), `NegotiatedThreadActivationTest` (23), `SuiteReadReceiptsTest` (17) and `RecordedSuiteTapeTest` (49), then the original managed `scripted ping` pair on macOS. Retain fresh counted XML, complete traces, effective input identities and cleanup receipts. Linux evidence from #2467 remains historical and does not supply this macOS acceptance. A residual failure would need separate diagnosis rather than weakening either repair.
+
+Before launching validation, the Mac manager reported only this admitted builder for #2462 and no retained pre-verification run; workflow revision 47 has no `approvalState` hold. Mobile admission is taking work, with no manager attention item. No foreign workflow operation is part of this continuation.
+
+Security re-review: PASS. The integrated summary query uses the existing encrypted transport and owned scope, adds no credential or storage surface and is bounded to one consumed follow-up. Strict connection/generation fencing, independent daemon read authority and content-free capped diagnostics remain intact. No new security-sensitive implementation is needed. The combined retained diff is 1420 written lines before this revision; forecast remains below 1600, with no further types, call-site migrations or acceptance criteria.
+
+## Documentation handoff
+
+Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
