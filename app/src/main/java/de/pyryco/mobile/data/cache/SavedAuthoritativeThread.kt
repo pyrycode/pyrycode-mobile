@@ -5,7 +5,11 @@ import de.pyryco.mobile.data.network.validThreadJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import java.util.Collections
 
 /** Full saved facts, never a negotiated capability or current transient progress. */
 @Serializable
@@ -18,9 +22,24 @@ data class SavedAuthoritativeThread(
     val incarnation: String = "",
     val retirements: Map<Long, Long> = emptyMap(),
 ) {
+    @Transient private var ownedSnapshot: AuthoritativeThreadSnapshot? = null
+
     override fun toString(): String = "SavedAuthoritativeThread(content=***)"
 
-    internal fun toSnapshot(): AuthoritativeThreadSnapshot {
+    // Only a deeply owned, read-only decode may reuse validation. Generated copy() starts without this memo.
+    internal fun ownedValidated(): SavedAuthoritativeThread {
+        val owned = copy(
+            items = Collections.unmodifiableList(items.map { frozenThreadJson(it) as JsonObject }),
+            retirements = Collections.unmodifiableMap(LinkedHashMap(retirements)),
+        )
+        val validated = owned.decodeSnapshot()
+        owned.ownedSnapshot = validated.copy(items = Collections.unmodifiableList(validated.items))
+        return owned
+    }
+
+    internal fun toSnapshot(): AuthoritativeThreadSnapshot = ownedSnapshot ?: decodeSnapshot()
+
+    private fun decodeSnapshot(): AuthoritativeThreadSnapshot {
         require(epoch.isNotEmpty() && appliedVersion in 0..MAX_THREAD_NUMBER && checkpoint in 0..appliedVersion)
         require(incarnation.length <= 64)
         require(retirements.all { (id, revision) -> id in 1..MAX_THREAD_NUMBER && revision in id..appliedVersion })
@@ -54,6 +73,46 @@ data class SavedAuthoritativeThread(
             checkpoint = if (trimmed) 0 else checkpoint,
             coverage = if (trimmed) null else coverage,
         )
+    }
+}
+
+/** Explicit stack preserves arbitrarily nested extension containers without adding recursive traversal. */
+private fun frozenThreadJson(root: JsonElement): JsonElement {
+    class Frame(val source: JsonElement) {
+        val entries = (source as? JsonObject)?.entries?.iterator()
+        val values = (source as? JsonArray)?.iterator()
+        val fields = if (entries != null) LinkedHashMap<String, JsonElement>() else null
+        val elements = if (values != null) ArrayList<JsonElement>() else null
+        var key: String? = null
+
+        fun next(): JsonElement? = if (entries != null) {
+            if (entries.hasNext()) entries.next().let { key = it.key; it.value } else null
+        } else {
+            if (values?.hasNext() == true) values.next() else null
+        }
+
+        fun accept(value: JsonElement) {
+            if (fields != null) fields[requireNotNull(key)] = value else requireNotNull(elements).add(value)
+        }
+
+        fun finish(): JsonElement = fields?.let { JsonObject(Collections.unmodifiableMap(it)) }
+            ?: JsonArray(Collections.unmodifiableList(requireNotNull(elements)))
+    }
+    if (root !is JsonObject && root !is JsonArray) return root
+    val stack = ArrayDeque<Frame>()
+    stack.add(Frame(root))
+    while (true) {
+        val frame = stack.last()
+        val next = frame.next()
+        if (next == null) {
+            val complete = stack.removeLast().finish()
+            if (stack.isEmpty()) return complete
+            stack.last().accept(complete)
+        } else if (next is JsonObject || next is JsonArray) {
+            stack.add(Frame(next))
+        } else {
+            frame.accept(next)
+        }
     }
 }
 

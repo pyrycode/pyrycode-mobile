@@ -100,6 +100,17 @@ class FileConversationCache(
 
     private var decodedThread: DecodedThread? = null
 
+    private class DecodedAuthoritative(
+        val document: File,
+        val serverId: String,
+        val conversationId: String,
+        val bytes: ByteArray,
+        val saved: SavedAuthoritativeThread,
+    )
+
+    // One owner-checked decode, guarded by mutex. Every read still compares the complete current disk bytes.
+    private var decodedAuthoritative: DecodedAuthoritative? = null
+
     override suspend fun readConversations(serverId: String): List<Conversation> =
         withContext(ioDispatcher) {
             mutex.withLock { readOrEmpty(serverId, "read") }
@@ -134,11 +145,23 @@ class FileConversationCache(
             mutex.withLock {
                 try {
                     val document = authoritativeDocumentFor(serverId, conversationId)
-                    if (!document.isFile) return@withLock null
-                    val saved = decodeAuthoritative(document.readText(), serverId, conversationId)
+                    val bytes = Files.readAllBytes(document.toPath())
+                    val held = decodedAuthoritative
+                    val saved = if (held?.document == document && held.serverId == serverId &&
+                        held.conversationId == conversationId && held.bytes.contentEquals(bytes)
+                    ) {
+                        held.saved
+                    } else {
+                        decodedAuthoritative = null
+                        decodeAuthoritative(bytes.toString(Charsets.UTF_8), serverId, conversationId).also {
+                            decodedAuthoritative = DecodedAuthoritative(document, serverId, conversationId, bytes, it)
+                        }
+                    }
                     RelayLog.d { "conversation_cache operation=read_authoritative status=ok" }
                     saved
                 } catch (error: Exception) {
+                    decodedAuthoritative = null
+                    if (error is NoSuchFileException) return@withLock null
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_authoritative status=failed code=$code" }
                     null
@@ -188,8 +211,7 @@ class FileConversationCache(
     ): SavedAuthoritativeThread {
         val record = MobileJson.decodeFromString<CachedAuthoritativeThread>(text)
         require(record.version == VERSION && record.serverId == serverId && record.conversationId == conversationId)
-        record.saved.toSnapshot()
-        return record.saved
+        return record.saved.ownedValidated()
     }
 
     override suspend fun writeAuthoritativeThread(
@@ -619,6 +641,7 @@ class FileConversationCache(
             mutex.withLock {
                 try {
                     decodedThread = null
+                    decodedAuthoritative = null
                     block()
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)
