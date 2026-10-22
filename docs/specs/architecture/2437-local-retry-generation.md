@@ -119,3 +119,21 @@ instrumented compilation passed. Raw XML, full logs and exact source are retaine
 Three retained formatting preparation failures executed no tests. The second reopen event
 is now `reopen_asserted`; fixture, assertions and allowance are unchanged. Final
 pre-verification and complete independent acceptance must bind the handoff candidate.
+
+
+## Current-main integration and native acceptance blocker
+
+Main `b6845bf5d` retired legacy runtime and file import in #2367/#2379/#2385 after the
+85-method receipt above. The integration preserves that removal and adapts only the
+existing authoritative CacheCandidate and ThreadWriter constructor calls while retaining
+the reader/store/baseline fence. Main's authoritative native fixtures are retained, along
+with the bounded paging/retry/reopen method and its real Retry callback. No retired runtime
+or unsigned-gap callback is restored.
+
+Main removed the full-file, delayed-projection and slow-control fixture methods. Their
+binding #2334 acceptance requirements remain open and belong to bounded manually held
+repair #2447, an explicit blocker of both #2437 and #2334. This merge is not a claim that
+three methods replace the required six, or that earlier green results accept current main.
+Retained native variants are in manual-reader-apply-20261022/main-b684-integration/.
+Current merged-source compilation, JVM evidence and final pre-verification remain required;
+complete independent/native acceptance and documentation cannot finish before #2447.

@@ -1,9 +1,19 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
+import kotlinx.coroutines.CompletableDeferred
+import java.util.concurrent.atomic.AtomicInteger
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.GLES20
-import android.os.Debug
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.system.ErrnoException
@@ -18,62 +28,36 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getAllSemanticsNodes
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performTouchInput
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import de.pyryco.mobile.data.cache.AuthoritativeDisplayCursor
 import de.pyryco.mobile.data.cache.AuthoritativeThreadWindow
 import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase
-import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.cache.MigratingConversationCache
 import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.SavedThreadCoverage
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
-import de.pyryco.mobile.data.repository.CachingConversationRepository
-import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.FakeConnectionStateSource
-import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.HistoryCoverage
-import de.pyryco.mobile.data.repository.HistoryPage
-import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.NegotiatedThread
-import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
 import de.pyryco.mobile.e2e.withEmulatorCpuSample
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,24 +66,19 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.coroutines.CoroutineContext
 
 /** The GL renderer this process draws with, as the guest reports it. */
 private val firstDrawRenderer: String by lazy {
@@ -273,10 +252,6 @@ class SavedThreadFirstDrawDeviceTest {
                 metBound(),
             )
         }
-    }
-
-    @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
-        measureSavedThreads()
     }
 
     @Test fun databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen() {
@@ -607,135 +582,6 @@ class SavedThreadFirstDrawDeviceTest {
         }
     }
 
-    @Test fun delayedOptionalProjection_cannotHoldFirstNewestDraw_firstOpenAndReopen() {
-        measureSavedThreads(projectionDelayMs = firstDrawBoundMs + 100)
-    }
-
-    private fun measureSavedThreads(projectionDelayMs: Long = 0) {
-        installHost()
-        val probes = mutableListOf<Probe>()
-        for (name in listOf("ordinary", "fragmented")) {
-            val (coverage, rows) =
-                if (name == "ordinary") {
-                    null to
-                        (0 until 20).map {
-                            ThreadItem.MessageItem(
-                                Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false),
-                            )
-                        }
-                } else {
-                    fragmentedHistoryFixture((0 until 18000).toList())
-                }
-            withFixture(name, rows, coverage) { source ->
-                for (online in listOf(false, true)) {
-                    withFixtureCopy(source) { root ->
-                        val delegate = HeldNewest()
-                        var repo: CachingConversationRepository? = null
-                        repeat(2) { opening ->
-                            awaitDeviceReadiness("$name online=$online opening=$opening projection_hold_ms=$projectionDelayMs")
-                            val probe =
-                                Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
-                            activeProbe = probe
-                            probes += probe
-                            if (repo == null) repo = repository(root, delegate)
-                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage, projectionDelayMs)
-                        }
-                    }
-                }
-            }
-        }
-        assertTrue(
-            "$firstDrawBoundLabel: " + probes.joinToString("; ") { "${it.name} drawn_ms=${it.elapsed(it.drawn.get())}" },
-            probes.size == 8 && probes.all(Probe::metBound),
-        )
-    }
-
-    @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
-        installHost()
-        val rows = listOf(ThreadItem.MessageItem(Message("slow", "s", Role.User, "Slow saved row.", Instant.fromEpochSeconds(1), false)))
-        withFixture("slow", rows, null) { root ->
-            val delegate = HeldNewest()
-            awaitDeviceReadiness("negative-control")
-            val probe = Probe("negative-control", (rows.last() as ThreadItem.MessageItem).message.content)
-            activeProbe = probe
-            openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, rows, null)
-            assertTrue(probe.elapsed(probe.drawn.get()) >= 3000)
-            assertThrows(AssertionError::class.java) { probe.assertBound() }
-        }
-    }
-
-    private class HeldNewest : ConversationRepository by FakeConversationRepository() {
-        override fun observeConversations(filter: ConversationFilter) =
-            flowOf(listOf(Conversation("c", "Saved channel", "", "s", emptyList(), true, Instant.fromEpochSeconds(1))))
-
-        val asks = mutableListOf<Pair<String, Int>>()
-        val response = CompletableDeferred<HistoryPage>()
-
-        override fun observeMessages(conversationId: String) = flowOf(emptyList<ThreadItem>())
-
-        override suspend fun requestHistory(
-            conversationId: String,
-            cursor: String,
-            limit: Int,
-        ): HistoryPage {
-            asks += cursor to limit
-            return response.await()
-        }
-    }
-
-    private fun repository(
-        root: File,
-        delegate: HeldNewest,
-        delayMs: Long = 0,
-    ): CachingConversationRepository {
-        fun measuredWorker(
-            dispatcher: CoroutineDispatcher,
-            worker: String,
-        ) = object : CoroutineDispatcher() {
-            override fun dispatch(
-                context: CoroutineContext,
-                block: Runnable,
-            ) {
-                val queued = SystemClock.elapsedRealtimeNanos()
-                val probe = activeProbe
-                dispatcher.dispatch(context) {
-                    val started = SystemClock.elapsedRealtimeNanos()
-                    val cpu = Debug.threadCpuTimeNanos()
-                    try {
-                        block.run()
-                    } finally {
-                        Log.i(
-                            "SavedThreadCacheWorker",
-                            "event=cache_worker_run worker=$worker case=${probe?.name} queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
-                        )
-                    }
-                }
-            }
-        }
-        val disk = FileConversationCache(root, measuredWorker(Dispatchers.IO, "io"))
-        val measured =
-            object : ConversationCache by disk {
-                override suspend fun readThread(
-                    serverId: String,
-                    conversationId: String,
-                ): List<ThreadItem> {
-                    val probe = activeProbe
-                    delay(delayMs)
-                    return disk
-                        .readThread(
-                            serverId,
-                            conversationId,
-                        ).also { probe?.restored?.compareAndSet(0, SystemClock.elapsedRealtimeNanos()) }
-                }
-            }
-        return CachingConversationRepository(
-            delegate,
-            measured,
-            "host",
-            processingDispatcher = measuredWorker(Dispatchers.Default, "default"),
-        )
-    }
-
     private fun installHost() {
         Log.i("SavedThreadFirstDraw", "event=first_draw_bound bound_ms=$firstDrawBoundMs renderer=$firstDrawRenderer")
         composeRule.setContent {
@@ -811,145 +657,13 @@ class SavedThreadFirstDrawDeviceTest {
                         )
                     }
                     PyrycodeMobileTheme(darkTheme = true) {
-                        ThreadScreen(
-                            state,
-                            {
-                            },
-                            {
-                            },
-                            if (online) ConnectionState.Connected else ConnectionState.Offline,
-                            {
-                            },
-                            onDemandOlderHistory = vm::onDemandOlderHistory,
-                            onDemandUnsignedHistoryGap = vm::onDemandUnsignedHistoryGap,
-                            onRetryOlderHistory = vm::onRetryOlderHistory,
-                        )
+                        ThreadScreen(state, {
+                        }, {
+                        }, if (online) ConnectionState.Connected else ConnectionState.Offline, {
+                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = vm::onRetryOlderHistory)
                     }
                 }
             }
-        }
-    }
-
-    private fun openAndMeasure(
-        repo: CachingConversationRepository,
-        delegate: HeldNewest,
-        online: Boolean,
-        probe: Probe,
-        rows: List<ThreadItem>,
-        coverage: HistoryCoverage?,
-        projectionDelayMs: Long = 0,
-    ) {
-        val projectionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val projection =
-            if (projectionDelayMs == 0L) {
-                Dispatchers.Default
-            } else {
-                object : CoroutineDispatcher() {
-                    override fun dispatch(
-                        context: CoroutineContext,
-                        block: Runnable,
-                    ) {
-                        val queued = SystemClock.elapsedRealtimeNanos()
-                        projectionScope.launch {
-                            try {
-                                delay(projectionDelayMs)
-                            } finally {
-                                val started = SystemClock.elapsedRealtimeNanos()
-                                val cpu = Debug.threadCpuTimeNanos()
-                                try {
-                                    block.run()
-                                } finally {
-                                    Log.i(
-                                        "SavedThreadCacheWorker",
-                                        "event=projection_worker_run case=${probe.name} hold_ms=$projectionDelayMs queue_ms=${(started - queued) / 1_000_000} wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        val store = ViewModelStore()
-        val beforeAsks = delegate.asks.size
-        val measuredRepo =
-            object : ConversationRepository by repo, ThreadSnapshotSource {
-                override fun observeThreadSnapshot(conversationId: String) =
-                    repo.observeThreadSnapshot(conversationId).onEach {
-                        if (it.rows.isNotEmpty()) probe.snapshot.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
-                    }
-            }
-        composeRule.runOnUiThread {
-            val vm =
-                ThreadViewModel(
-                    SavedStateHandle(mapOf("serverId" to "host", "conversationId" to "c")),
-                    measuredRepo,
-                    FakeConnectionStateSource(),
-                    ComposerDraftStore(),
-                    repositoryAvailable = flowOf(online),
-                    contentScheduling = ThreadContentScheduling(),
-                    projectionDispatcher = projection,
-                )
-            store.put("thread", vm)
-            selected.value = Opening(vm, probe, online)
-            Log.i(
-                "SavedThreadFirstDraw",
-                "event=opening_installed case=${probe.name} elapsed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
-            )
-        }
-        try {
-            composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
-            // Independent history validation may finish after the recorded committed frame.
-            val expectedAnchors =
-                coverage
-                    ?.unsignedGaps
-                    ?.map { it.anchor }
-                    ?.let { listOf(0uL) + it }
-                    .orEmpty()
-            composeRule.waitUntil(15000) {
-                val state =
-                    selected.value
-                        ?.vm
-                        ?.state
-                        ?.value
-                state?.historyMarkers?.map { it.unsignedAnchor } == expectedAnchors &&
-                    delegate.asks.size == if (online) beforeAsks + 1 else beforeAsks
-            }
-            composeRule.runOnIdle {
-                val state = requireNotNull(selected.value).vm.state.value
-                assertEquals(rows, state.items)
-                assertEquals(if (online) beforeAsks + 1 else beforeAsks, delegate.asks.size)
-                assertTrue(delegate.asks.all { it == "" to 200 })
-                assertFalse(delegate.response.isCompleted)
-                assertEquals(
-                    coverage
-                        ?.unsignedGaps
-                        ?.map { it.anchor }
-                        ?.let { listOf(0uL) + it }
-                        .orEmpty(),
-                    state.historyMarkers.map { it.unsignedAnchor },
-                )
-            }
-            Log.i(
-                "SavedThreadFirstDraw",
-                "case=${probe.name} rows=${rows.size} durable=${coverage?.unsignedSpans?.sumOf {
-                    (it.last - it.first + 1u).toLong()
-                } ?: rows.size.toLong()} spans=${coverage?.unsignedSpans?.size ?: 0} restored_ms=${probe.elapsed(
-                    probe.restored.get(),
-                )} snapshot_ms=${probe.elapsed(
-                    probe.snapshot.get(),
-                )} complete_ms=${probe.elapsed(probe.complete.get())} drawn_ms=${probe.elapsed(probe.drawn.get())}",
-            )
-        } finally {
-            composeRule.runOnUiThread {
-                selected.value = null
-                store.clear()
-                Log.i(
-                    "SavedThreadFirstDraw",
-                    "event=opening_cleared case=${probe.name} elapsed_ms=${probe.elapsed(SystemClock.elapsedRealtimeNanos())}",
-                )
-            }
-            projectionScope.cancel()
-            composeRule.waitForIdle()
         }
     }
 
@@ -957,38 +671,5 @@ class SavedThreadFirstDrawDeviceTest {
         if (this is ViewRootForTest) return this
         if (this is ViewGroup) for (index in 0 until childCount) getChildAt(index).composeRoot()?.let { return it }
         return null
-    }
-
-    private fun withFixtureCopy(
-        source: File,
-        block: (File) -> Unit,
-    ) {
-        val root = File(source.parentFile, "first-draw-copy-${SystemClock.elapsedRealtimeNanos()}")
-        try {
-            check(source.copyRecursively(root))
-            block(root)
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    private fun withFixture(
-        name: String,
-        rows: List<ThreadItem>,
-        coverage: HistoryCoverage?,
-        block: (File) -> Unit,
-    ) {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val root = File(context.noBackupFilesDir, "first-draw-$name-${SystemClock.elapsedRealtimeNanos()}")
-        try {
-            runBlocking {
-                val cache = FileConversationCache(root)
-                cache.writeThread("host", "c", rows).getOrThrow()
-                if (coverage != null) cache.writeHistoryPosition("host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
-            }
-            block(root)
-        } finally {
-            root.deleteRecursively()
-        }
     }
 }

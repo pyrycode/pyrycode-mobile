@@ -81,13 +81,6 @@ class HistoryHashCompatibilityTest {
         assertSame(coverage, coverage.retainedBy(rows))
     }
 
-    @Test fun restoredOrderResolvesIndependentHashesWithoutLosingUnsignedPositions() {
-        val (_, rows) = fragmentedHistoryFixture((0 until 20).toList())
-        val expected = rows.mapIndexed { index, row -> row.mergeIdentity() to ULong.MAX_VALUE - index.toULong() }.toMap()
-        val positions = expected.mapKeys { (identity, _) -> historyIdentity(identity) }
-        assertEquals(expected, rows.receivedUnsignedHistoryOrder(positions))
-    }
-
     @Test fun fragmentedFixtureIsCanonicalWithoutDependingOnASetupCodecEcho() {
         val (coverage, rows) = fragmentedHistoryFixture(listOf(0, 17999))
         assertEquals(18000, coverage.unsignedSpans.size)

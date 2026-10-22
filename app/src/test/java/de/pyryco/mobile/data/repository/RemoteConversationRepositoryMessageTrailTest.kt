@@ -29,8 +29,8 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * The message trail's hooks in the send path and the thread projection (#1564): each state a sent message
- * reaches is one line, keyed by its `message_id`, and nothing the operator typed reaches a line or the file.
+ * The supported send/request diagnostic hooks retain private fixed-shape lines. Obsolete raw content
+ * cannot certify queue, delivery or drop transitions, and message text never reaches a line or the file.
  */
 class RemoteConversationRepositoryMessageTrailTest {
     @get:Rule
@@ -131,7 +131,7 @@ class RemoteConversationRepositoryMessageTrailTest {
         }
 
     @Test
-    fun aQueuedSend_logsQueuedOnce_andDeliveredOnceOnTheDrain() =
+    fun obsoleteQueueAndMessageFramesCannotSettleAnOwnSendTrail() =
         runTest {
             val env = newEnv()
             val send = startSend(env, "two")
@@ -146,14 +146,14 @@ class RemoteConversationRepositoryMessageTrailTest {
 
             assertTrue(send().isSuccess)
             assertEquals(
-                listOf("state=sent conn=$TOKEN", "state=queued", "state=acknowledged", "state=delivered"),
+                listOf("state=sent conn=$TOKEN", "state=acknowledged"),
                 env.trailOf(id),
             )
             env.trail.dispose()
         }
 
     @Test
-    fun aSendDeliveredWithoutQueueing_logsDeliveredOnThePushedMessage() =
+    fun obsoleteMessageFrameCannotClaimOwnDelivery() =
         runTest {
             val env = newEnv()
             startSend(env, "hi")
@@ -163,14 +163,14 @@ class RemoteConversationRepositoryMessageTrailTest {
             runCurrent()
 
             assertEquals(
-                listOf("state=sent conn=$TOKEN", "state=acknowledged", "state=delivered"),
+                listOf("state=sent conn=$TOKEN", "state=acknowledged"),
                 env.trailOf(sent.messageId()),
             )
             env.trail.dispose()
         }
 
     @Test
-    fun aConfirmedDrop_logsDropped_andNoDelivery() =
+    fun aDropControlDoesNotTreatAnObsoleteQueueFrameAsConfirmation() =
         runTest {
             val env = newEnv()
             startSend(env, "two")
@@ -185,8 +185,21 @@ class RemoteConversationRepositoryMessageTrailTest {
             runCurrent()
 
             assertEquals(
-                listOf("state=sent conn=$TOKEN", "state=queued", "state=acknowledged", "state=dropped reason=user_dropped"),
+                listOf("state=sent conn=$TOKEN", "state=acknowledged"),
                 env.trailOf(id),
+            )
+            val drop = env.pump.sent.single { it.type == "dequeue_message" }
+            assertEquals(
+                CONV,
+                drop.payload.jsonObject
+                    .getValue("conversation_id")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(
+                "42",
+                drop.payload.jsonObject
+                    .getValue("queued_msg_id")
+                    .jsonPrimitive.content,
             )
             env.trail.dispose()
         }
@@ -229,7 +242,8 @@ class RemoteConversationRepositoryMessageTrailTest {
             runCurrent()
 
             assertTrue(requireNotNull(outcome).isSuccess)
-            assertEquals(4, env.logcat.size)
+            assertEquals(listOf("state=sent conn=$TOKEN", "state=acknowledged"), env.trailOf(sent.messageId()))
+            assertEquals(2, env.logcat.size)
             val fileText = env.file.readText()
             for (secret in listOf("ZEBRA-QUOKKA-7731", "secret plan", "PANGOLIN-REPORT", ATTACHMENT_ID)) {
                 assertFalse("logcat carries $secret", env.logcat.any { secret in it })

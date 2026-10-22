@@ -9,13 +9,19 @@ Since #2161, `appModule` binds `MigratingConversationCache` through
 `<noBackupFilesDir>/conversation-cache.db`, including its sidecars. Lists and read
 positions still use `FileConversationCache` under `<noBackupFilesDir>/conversations`;
 settings and attachment storage are unchanged. The paths below describe those metadata
-files and the version-1 thread sources retained for migration and downgrade compatibility.
+files and the retained version-1 thread files. Since #2385, only authoritative files are import
+sources. Legacy `threads/` files are ignored during opening, reading and import, including
+unknown-owner hashes; ownership is never inferred from filenames. Retained legacy entry points
+access Room only, leaving existing rows unchanged by opening/import. Explicit scoped removal
+still cleans up the corresponding files.
 
 Database version 3 adds `file_imports` through additive `AutoMigration(from = 2, to = 3)`;
 the complete upgrade chain is 1 → 2 → 3, with exported `1.json`, `2.json` and `3.json`
 schemas and no destructive fallback. The ledger's primary key is `(host, conversation,
 family)`, with static `outcome` values. Families are `legacy`, `authoritative` and `host`;
-a host-wide retirement uses family `host` and conversation `""`. Imported content/evidence
+a host-wide retirement uses family `host` and conversation `""`. Historical legacy ledger
+records and both thread families' retirement fences remain; legacy operations no longer read
+or create import completion records. Authoritative imported content/evidence
 and its completion marker commit in one transaction. Completed imports leave their source
 bytes intact until explicit conversation or host removal; the ledger prevents a leftover
 file from replacing a newer database save. See [import classification and write
@@ -242,7 +248,7 @@ page look like a new ordinary row after process death. Explicit metadata preserv
 without parsing aliases that could themselves be real daemon ids. Segment identity still comes
 from `CachedSegment`; when reconciliation converts legacy content to segments, ordinary-only
 metadata is cleared. See [Message identities](data-model.md#message) and
-[restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+[restore ownership](caching-conversation-repository.md).
 
 Assistant attribution (`Message.parentToolUseId`, #1826) is persisted as of #2221, which supersedes
 \#1826's "disk serialization is unchanged" / "attribution is not serialized" decision for this field.
@@ -262,7 +268,7 @@ retains reconciled rows across reconnect, so a later unattributed cache copy can
 parent. What #2221 changes is that the *next* write of an enriched row — including the collector's final
 flush on cancellation — persists the parent it learned, so a subsequent restore (including after a
 process restart) already carries it instead of relying solely on in-memory enrichment. See [parent
-precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md)
 for conflict handling. `AssistantParentCacheTest.diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt`
 and `LegacyRowCodecTest` verify the attributed round trip, the pre-#2221 unattributed restore, enrichment
 and reconnect/flush retention, and that a parentless row's encoded bytes and proof are unchanged.
@@ -307,7 +313,7 @@ Field order and unknown fields preserve this boundary. Metadata writers retain
 the full typed `CachedThread` decoder and independent fallback.
 
 A rows-only API is insufficient if its repository waits for optional coverage to
-seed order before publishing. See [rows-first merging](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
+seed order before publishing. See [rows-first merging](caching-conversation-repository.md)
 and [controlled first-draw evidence](thread-screen-testing-saved-first-draw-comparisons.md#allocation-margin-and-retained-evidence-2018).
 Canonical persisted bytes, SHA-256 proofs and the serializer/provider stay unchanged.
 
@@ -389,7 +395,7 @@ against the rows actually retained:
   stored records are serialized. A corrupt row document supplies no retained rows;
   a null clear of a never-written document remains a no-op. The wrapper must have written rows
   first: the file lock prevents torn read-modify-write, but does not by itself order two caller
-  operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
+  operations. Its [rows-before-state mutex](caching-conversation-repository.md)
   supplies that ordering and preserves the trim reset in the subsequent state write.
 
 Deferred observer scheduling (#1967) does not change this document format. The wrapper's
@@ -405,7 +411,7 @@ entry that completes during restoration. The wrapper captures the successful `co
 before reads and advances it only after a successful coverage row write; observer writes preserve
 it. Already retained coverage cannot make an unchanged failed restore erase rows. A coverage save
 completed during this collection can instead permit a newer intentional removal. See [the
-wrapper's saved-history rules](caching-conversation-repository.md#the-saved-history-position-1354)
+wrapper's saved-history rules](caching-conversation-repository.md)
 for candidate eligibility. Generations, revisions and baselines are destination-local metadata,
 not serialized fields.
 
@@ -429,7 +435,7 @@ policy exclusions cannot silently certify discarded cacheable content. Received 
 entries can still establish spans without storing their raw envelopes.
 
 `BackgroundTaskLifecycle` stays excluded before the row limit and serialization and adds no
-persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md).
 
 **Trim accounting must use serialization's exclusions.** `threadRowsWereTrimmed` compares the
 kept count with settled rows excluding `UnrecognizedMessage` and `BackgroundTaskLifecycle`.

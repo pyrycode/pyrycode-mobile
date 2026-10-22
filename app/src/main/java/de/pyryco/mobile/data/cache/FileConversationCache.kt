@@ -146,27 +146,6 @@ class FileConversationCache(
             }
         }
 
-    /**
-     * #2161: the legacy document classified for import, decoded exactly as [readThread] and [readHistoryPosition]
-     * read it: invalid optional history leaves the rows readable with no history.
-     */
-    internal suspend fun legacySource(
-        serverId: String,
-        conversationId: String,
-    ): SavedSource<LegacySource> =
-        source(threadDocumentFor(serverId, conversationId)) { bytes ->
-            val record = threadReadJson.decodeFromString<CachedThreadRows>(bytes.toString(Charsets.UTF_8))
-            val rows = validatedRows(CachedThread(record.version, record.rows))
-            val history =
-                try {
-                    decodedHistory(bytes, rows)
-                } catch (error: Exception) {
-                    failureCode(error) ?: throw error
-                    null
-                }
-            LegacySource(rows, history)
-        }
-
     /** #2161: the owner-checked authoritative envelope classified for import, validated as [readAuthoritativeThread] does. */
     internal suspend fun authoritativeSource(
         serverId: String,
@@ -441,7 +420,7 @@ class FileConversationCache(
         return DecodedThread(document, bytes, rows) { decodedHistory(bytes, rows) }.also { decodedThread = it }
     }
 
-    /** The one history reader shared by [readHistoryPosition] and [legacySource], so an import cannot drift from it. */
+    /** Validates the optional history served by [readHistoryPosition]. */
     private fun decodedHistory(
         bytes: ByteArray,
         rows: List<ThreadItem>,
@@ -720,14 +699,6 @@ internal sealed interface SavedSource<out T> {
     data class Unavailable(
         val code: String,
     ) : SavedSource<Nothing>
-}
-
-/** A legacy document's rows and the history [FileConversationCache.readHistoryPosition] would return beside them. */
-internal class LegacySource(
-    val rows: List<ThreadItem>,
-    val history: HistoryPosition?,
-) {
-    override fun toString(): String = "LegacySource(rows=${rows.size}, redacted)"
 }
 
 /** Only the envelope version, read first so another version is classified rather than misread as damage. */

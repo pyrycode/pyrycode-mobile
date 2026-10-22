@@ -1,24 +1,18 @@
 package de.pyryco.mobile.data.repository
 
-import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.model.ToolCallStatus
-import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -27,24 +21,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -291,370 +279,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #1, #5: one live `message` surfaces as the mapped most-recent Message.
     @Test
-    fun lastMessage_seedOne_surfacesMappedMessage() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
-            runCurrent()
-
-            val latest = emissions.last()!!
-            assertEquals("m1", latest.id)
-            assertEquals(Role.User, latest.role)
-            assertEquals("hello", latest.content)
-            assertEquals(Instant.parse("2026-05-31T10:00:00Z"), latest.timestamp)
-            // The `message` payload carries no session id; the preview never reads it (list-tier "").
-            assertEquals("", latest.sessionId)
-        }
-
-    // AC #3, #5: a later-ts message for the same conversation re-emits.
-    @Test
-    fun lastMessage_newerMessage_reEmits() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T11:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf(null, "m1", "m2"), emissions.map { it?.id })
-        }
-
-    // AC #1 (most-recent invariant): an earlier-ts arrival is ignored — strictly-greater replaces.
-    @Test
-    fun lastMessage_olderMessage_doesNotReplace() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "newer", "user", "x", "2026-05-31T11:00:00Z"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "older", "user", "y", "2026-05-31T10:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf(null, "newer"), emissions.map { it?.id })
-        }
-
-    // Per-conversation keying: each observer reflects only its own conversation's latest.
-    @Test
-    fun lastMessage_keyedPerConversation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val c1 = collectLastMessage(repo, "c1")
-            val c2 = collectLastMessage(repo, "c2")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "c1-msg", "user", "in c1", "2026-05-31T10:00:00Z"))
-            pump.push(messageEnvelope("c2", "c2-msg", "user", "in c2", "2026-05-31T11:00:00Z"))
-            runCurrent()
-
-            assertEquals("c1-msg", c1.last()!!.id)
-            assertEquals("c2-msg", c2.last()!!.id)
-        }
-
-    // AC #4: a collector subscribing after the message arrived receives the current value first.
-    @Test
-    fun lastMessage_lateSubscriber_receivesCurrentValue() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
-            runCurrent()
-
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            assertEquals("m1", emissions.single()!!.id)
-        }
-
-    // AC #4: concurrent collectors of one conversation both receive off the single inbound consumer.
-    @Test
-    fun lastMessage_multipleCollectors_eachReceive() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val a = collectLastMessage(repo, "c1")
-            val b = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
-            runCurrent()
-
-            assertEquals("m1", a.last()!!.id)
-            assertEquals("m1", b.last()!!.id)
-        }
-
-    // Error handling: an unmappable role is rejected at decode → dropped; the collector survives.
-    @Test
-    fun lastMessage_malformedPayload_isDroppedAndCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            // `system` is outside the mappable WireRole set → SerializationException → envelope dropped.
-            pump.push(messageEnvelope("c1", "bad", "system", "x", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            assertEquals(listOf<Message?>(null), emissions)
-
-            // A subsequent valid message proves the single inbound collector did not die.
-            pump.push(messageEnvelope("c1", "ok", "user", "y", "2026-05-31T11:00:00Z"))
-            runCurrent()
-            assertEquals("ok", emissions.last()!!.id)
-        }
-
-    // Error handling: a non-parseable envelope ts fails Instant.parse in toMessage → dropped.
-    @Test
-    fun lastMessage_badTimestamp_isDroppedAndCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectLastMessage(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "bad", "user", "x", "not-a-timestamp"))
-            runCurrent()
-            assertEquals(listOf<Message?>(null), emissions)
-
-            pump.push(messageEnvelope("c1", "ok", "user", "y", "2026-05-31T11:00:00Z"))
-            runCurrent()
-            assertEquals("ok", emissions.last()!!.id)
-        }
-
-    // ---- observeMessages (#313): backfill + live `message` stream → ordered thread -------------
-
-    // AC #2: subscribing issues a `backfill_since` request carrying the conversation id.
-    @Test
-    fun observeMessages_subscribe_issuesBackfillSinceRequestForConversation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            collectMessages(repo, "c1")
-            runCurrent()
-
-            val sent = pump.sent.single()
-            assertEquals("backfill_since", sent.type)
-            val payload = sent.payload.jsonObject
-            assertEquals("c1", payload.getValue("conversation_id").jsonPrimitive.content)
-            // The full-history request carries the epoch cursor and an advisory cap (server SSOT #272).
-            assertEquals("1970-01-01T00:00:00Z", payload.getValue("since_ts").jsonPrimitive.content)
-            assertTrue(
-                payload
-                    .getValue("max_messages")
-                    .jsonPrimitive.content
-                    .toInt() > 0,
-            )
-        }
-
-    // AC #1, #2: backfilled history fills ahead of the live stream; the thread is ordered chunk-then-live.
-    @Test
-    fun observeMessages_backfillThenLive_emitsOrderedThread() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(
-                messageChunkEnvelope(
-                    listOf(
-                        chunkRow("c1", "m1", "user", "first"),
-                        chunkRow("c1", "m2", "assistant", "second"),
-                    ),
-                ),
-            )
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m3", "user", "live", "2026-05-31T12:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "m2", "m3"), messageIds(emissions.last()))
-            // The live row maps to a finished MessageItem with content + ts from its own envelope.
-            val live = (emissions.last()[2] as ThreadItem.MessageItem).message
-            assertEquals("live", live.content)
-            assertEquals(Instant.parse("2026-05-31T12:00:00Z"), live.timestamp)
-        }
-
-    // AC #2: a message_id present in both the chunk and a later live `message` appears once,
-    // position fixed at first occurrence; the held row is kept as it is (#1351).
-    @Test
-    fun observeMessages_dedupesByMessageId_fixingFirstPosition() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(
-                messageChunkEnvelope(
-                    listOf(
-                        chunkRow("c1", "m1", "user", "first"),
-                        chunkRow("c1", "m2", "user", "from-backfill"),
-                    ),
-                ),
-            )
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "user", "from-live", "2026-05-31T12:00:00Z"))
-            runCurrent()
-
-            val thread = emissions.last()
-            assertEquals(listOf("m1", "m2"), messageIds(thread))
-            assertEquals("from-backfill", (thread[1] as ThreadItem.MessageItem).message.content)
-        }
-
-    // #1351: another device's user message draws live at the end, naming its files by stored reference.
-    @Test
-    fun observeMessages_liveUserMessage_appendsRowWithAttachmentReferences() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(
-                messageEnvelope(
-                    "c1",
-                    "peer-1",
-                    "user",
-                    "from desktop",
-                    "2026-05-31T11:00:00Z",
-                    attachmentIds = listOf(LIVE_ATTACHMENT_ID, "not-an-id", LIVE_ATTACHMENT_ID),
-                ),
-            )
-            runCurrent()
-
-            val thread = emissions.last()
-            assertEquals(listOf("m1", "peer-1"), messageIds(thread))
-            val peer = (thread.last() as ThreadItem.MessageItem).message
-            assertEquals(Role.User, peer.role)
-            assertEquals(listOf(MessageAttachment(LIVE_ATTACHMENT_ID)), peer.attachments)
-        }
-
-    // #1351: an assistant `message` (v1 / dispatch-leg only) draws no thread row.
-    @Test
-    fun observeMessages_liveAssistantMessage_addsNoRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T11:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1"), messageIds(emissions.last()))
-        }
-
-    // AC #3: a `message` (and chunk) for a different conversation does not re-emit this flow.
-    @Test
-    fun observeMessages_otherConversation_doesNotReEmit() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c2", "x1", "user", "elsewhere", "2026-05-31T10:00:00Z"))
-            pump.push(messageChunkEnvelope(listOf(chunkRow("c2", "x2", "user", "also-elsewhere"))))
-            runCurrent()
-
-            // Only the initial empty emission — c1's projection never changed.
-            assertEquals(listOf(emptyList<String>()), emissions.map { messageIds(it) })
-        }
-
-    // AC #1: order follows wire/arrival order, never a client-side timestamp sort. The second live
-    // message has an EARLIER ts than the first but still appends last.
-    @Test
-    fun observeMessages_preservesArrivalOrder_notTimestampSort() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "later-ts", "user", "a", "2026-05-31T11:00:00Z"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "earlier-ts", "user", "b", "2026-05-31T10:00:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("later-ts", "earlier-ts"), messageIds(emissions.last()))
-        }
-
-    // AC #4 (headline): a full round-trip against the v2 server double — backfilled history plus
-    // live `message` envelopes yields the expected ordered List<ThreadItem.MessageItem>.
-    @Test
-    fun observeMessages_roundTripAgainstServerDouble_yieldsExpectedThread() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(
-                messageChunkEnvelope(
-                    listOf(
-                        chunkRow("c1", "h1", "user", "what's the weather?"),
-                        chunkRow("c1", "h2", "assistant", "4C, light snow."),
-                    ),
-                ),
-            )
-            runCurrent()
-            pump.push(messageEnvelope("c1", "l1", "user", "thanks", "2026-05-31T12:00:00Z"))
-            runCurrent()
-
-            val thread = emissions.last()
-            assertEquals(listOf("h1", "h2", "l1"), messageIds(thread))
-            assertEquals(listOf(Role.User, Role.Assistant, Role.User), thread.map { (it as ThreadItem.MessageItem).message.role })
-            assertTrue(thread.all { it is ThreadItem.MessageItem })
-        }
-
-    // Error handling: a malformed `message_chunk` (one bad row) is dropped whole; the collector survives.
-    @Test
-    fun observeMessages_malformedChunk_isDroppedAndCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // `system` is outside the mappable WireRole set → whole-chunk decode throws → dropped.
-            pump.push(
-                messageChunkEnvelope(
-                    listOf(
-                        chunkRow("c1", "ok", "user", "fine"),
-                        chunkRow("c1", "bad", "system", "nope"),
-                    ),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(emptyList<String>()), emissions.map { messageIds(it) })
-
-            // A subsequent valid chunk proves the single inbound collector did not die.
-            pump.push(messageChunkEnvelope(listOf(chunkRow("c1", "later", "user", "y"))))
-            runCurrent()
-            assertEquals(listOf("later"), messageIds(emissions.last()))
-        }
-
-    // ---- sendMessage (#346): send_message request → ack/error correlation → confirmed-insert ----
-
-    // AC #5, #1: the sent envelope matches the send_message wire contract {conversation_id, message_id, text}.
-    @Test
     fun sendMessage_sendsRequestMatchingWireContract() =
         runTest {
             val pump = FakeSessionPump()
@@ -686,7 +310,10 @@ class RemoteConversationRepositoryTest {
     fun sendMessage_onAck_returnsUserMessageAndReEmitsBothStreams() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val repo =
+                RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+                    setOf("interactive", "thread")
+                }, authoritativeHostId = "host")
             val thread = collectMessages(repo, "c1")
             val last = collectLastMessage(repo, "c1")
             runCurrent()
@@ -713,7 +340,10 @@ class RemoteConversationRepositoryTest {
     fun sendMessage_onServerError_throwsRelayErrorAndKeepsTheEcho() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val repo =
+                RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+                    setOf("interactive", "thread")
+                }, authoritativeHostId = "host")
             val thread = collectMessages(repo, "c1")
             val last = collectLastMessage(repo, "c1")
             runCurrent()
@@ -742,7 +372,10 @@ class RemoteConversationRepositoryTest {
     fun sendMessage_onConversationNotFound_throwsIllegalArgument() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val repo =
+                RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+                    setOf("interactive", "thread")
+                }, authoritativeHostId = "host")
             val thread = collectMessages(repo, "c1")
             runCurrent()
 
@@ -770,7 +403,10 @@ class RemoteConversationRepositoryTest {
         runTest {
             val pump = FakeSessionPump()
             pump.sendResult = false
-            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val repo =
+                RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+                    setOf("interactive", "thread")
+                }, authoritativeHostId = "host")
             val thread = collectMessages(repo, "c1")
             val last = collectLastMessage(repo, "c1")
             runCurrent()
@@ -796,7 +432,10 @@ class RemoteConversationRepositoryTest {
     fun sendMessage_drawsTheEchoBeforeTheReply_andTheAckAddsNoSecondRow() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val repo =
+                RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = {
+                    setOf("interactive", "thread")
+                }, authoritativeHostId = "host")
             val thread = collectMessages(repo, "c1")
             val last = collectLastMessage(repo, "c1")
             runCurrent()
@@ -824,36 +463,6 @@ class RemoteConversationRepositoryTest {
 
     // #1355 AC #2: a message sent during a running turn is queued before its ack lands. The echo is already
     // the one row with that id, and a confirmed drop of the queued item still removes it.
-    @Test
-    fun sendMessage_queuedBeforeTheAck_holdsOneRow_andAConfirmedDropRemovesIt() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val send = startSend(repo, "c-1", "two")
-            runCurrent()
-            val sent = pump.sent.single { it.type == "send_message" }
-            val echoId =
-                sent.payload.jsonObject
-                    .getValue("message_id")
-                    .jsonPrimitive.content
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = echoId))))
-            runCurrent()
-            pump.push(ackEnvelope(sent.id))
-            runCurrent()
-            assertEquals(echoId, send().getOrThrow().id)
-            assertEquals(listOf(echoId), messageIds(thread.last()))
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            assertTrue(drop().isSuccess)
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), messageIds(thread.last()))
-        }
 
     // Correlation hygiene: an ack matching no pending request is a no-op; the collector survives and
     // a subsequent real send round-trips successfully.
@@ -2327,30 +1936,6 @@ class RemoteConversationRepositoryTest {
     // AC #4, trigger ③: this conversation's session transition issues a FRESH read, and the newer
     // reply replaces the older reading.
     @Test
-    fun observeSessionSettings_sessionTransition_issuesFreshReadAndReplacesReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-
-            val emissions = collectSessionSettings(repo, "c1")
-            runCurrent()
-            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", previousSessionId = "sess-a", newSessionId = "sess-b", reason = "clear"))
-            runCurrent()
-            val second = pump.sent.filter { it.type == "request_session_settings" }
-            assertEquals(2, second.size)
-            pump.push(sessionSettingsEnvelope(inReplyTo = second.last().id, raw = REPLACEMENT_SETTINGS))
-            runCurrent()
-
-            assertEquals("sess-b", requireNotNull(emissions.last()).sessionId)
-            assertEquals(EffectiveEffort.NotReported, requireNotNull(emissions.last()).effectiveEffort)
-        }
-
-    // AC #1/#4: a transition for ANOTHER conversation leaves this reading alone and sends no second
-    // frame — the per-conversation revision slice, not a global tick.
-    @Test
     fun observeSessionSettings_transitionForAnotherConversation_doesNotReRead() =
         runTest {
             val pump = FakeSessionPump()
@@ -2534,207 +2119,28 @@ class RemoteConversationRepositoryTest {
 
     // AC #1: the sent envelope matches the request_history wire contract — the conversation, the
     // cursor handed back verbatim and the limit, all three keys present under their snake_case names.
-    @Test
-    fun requestHistory_sendsConversationCursorAndLimit() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            startRequestHistory(repo, "c1", cursor = CURSOR, limit = 50)
-            runCurrent()
-
-            val sent = pump.sent.single { it.type == "request_history" }
-            assertEquals(
-                MobileJson.parseToJsonElement("""{"conversation_id":"c1","cursor":"$CURSOR","limit":50}"""),
-                sent.payload,
-            )
-
-            // Unblock the launched caller so backgroundScope completes cleanly.
-            pump.push(historyPageEnvelope(inReplyTo = sent.id, raw = EMPTY_TERMINAL_PAGE))
-            runCurrent()
-        }
 
     // AC #1/#2: the correlated reply resolves to a decoded page. This also proves the demux
     // registration — without the history_page arm in onInbound the deferred never completes and this
     // assertion hangs rather than failing (the delete/create-family hazard).
-    @Test
-    fun requestHistory_correlatedReply_resolvesToDecodedPage() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val page = startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.single { it.type == "request_history" }.id
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = sentId,
-                    raw =
-                        """
-                        {"entries":[
-                          {"id":412,"type":"assistant_delta","payload":{"text":"b"},"ts":"2026-09-05T10:58:12Z"},
-                          {"id":411,"type":"send_message","payload":{"text":"a"},"ts":"2026-09-05T10:57:03Z"}
-                        ],"cursor":"$CURSOR","at_start":false}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-
-            val decoded = page().getOrThrow()
-            assertEquals(listOf(412L, 411L), decoded.entries.map { it.id })
-            assertEquals(CURSOR, decoded.cursor)
-            assertFalse(decoded.atStart)
-        }
 
     // AC #4: `history.unavailable` — the one RETRYABLE member of the group — reaches the caller with
     // its code and retryable flag intact. mapError needed no new mapping for it; this pins that the
     // generic arm actually carries the distinction a walking caller needs.
-    @Test
-    fun requestHistory_unavailableReject_surfacesRetryableRelayError() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val page = startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.single { it.type == "request_history" }.id
-            pump.push(errorEnvelope(sentId, code = "history.unavailable", retryable = true))
-            runCurrent()
-
-            val error = page().exceptionOrNull()
-            assertTrue(error is RelayErrorException)
-            assertEquals("history.unavailable", (error as RelayErrorException).code)
-            assertTrue(error.retryable)
-        }
 
     // AC #4: the three permanent history.* codes reach the caller as non-retryable RelayErrorExceptions
     // carrying their own code — a caller can tell "stop asking" from "ask again".
-    @Test
-    fun requestHistory_permanentRejects_surfaceNonRetryableRelayErrors() =
-        runTest {
-            for (code in listOf("history.invalid_cursor", "history.invalid_page_size", "history.invalid_request")) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope)
-
-                val page = startRequestHistory(repo, "c1")
-                runCurrent()
-                val sentId = pump.sent.single { it.type == "request_history" }.id
-                pump.push(errorEnvelope(sentId, code = code, retryable = false))
-                runCurrent()
-
-                val error = page().exceptionOrNull()
-                assertTrue("$code should be a RelayErrorException", error is RelayErrorException)
-                assertEquals(code, (error as RelayErrorException).code)
-                assertFalse(error.retryable)
-            }
-        }
 
     // AC #4: `conversation.not_found` — the daemon's answer for an unknown conversation id, and the
     // one code that behaves differently — surfaces as the IllegalArgumentException the repository
     // contract pins, not as a generic RelayErrorException.
-    @Test
-    fun requestHistory_unknownConversation_surfacesIllegalArgument() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val page = startRequestHistory(repo, "nope")
-            runCurrent()
-            val sentId = pump.sent.single { it.type == "request_history" }.id
-            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
-            runCurrent()
-
-            assertTrue(page().exceptionOrNull() is IllegalArgumentException)
-        }
 
     // AC #4: a not-Open session fails fast with IllegalStateException — the send `check` throws before
     // anything is awaited, so the caller never hangs waiting for a reply that cannot come.
-    @Test
-    fun requestHistory_whenNotConnected_failsWithoutAwaiting() =
-        runTest {
-            val pump = FakeSessionPump()
-            pump.sendResult = false
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val page = startRequestHistory(repo, "c1")
-            runCurrent()
-
-            assertTrue(page().exceptionOrNull() is IllegalStateException)
-        }
 
     // AC #4, the load-bearing one: a malformed page fails ONLY the ask that drew it. The shared inbound
     // collector survives (a second request on the same repository still completes), and another
     // conversation's thread projection is untouched by the bad frame.
-    @Test
-    fun requestHistory_malformedPage_failsOnlyThatAskAndCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val otherThread = mutableListOf<List<ThreadItem>>()
-            backgroundScope.launch { repo.observeMessages("other").collect { otherThread += it } }
-            runCurrent()
-
-            val bad = startRequestHistory(repo, "c1")
-            runCurrent()
-            val badId = pump.sent.single { it.type == "request_history" }.id
-            // `at_start` missing entirely — the absence that must never read as "keep walking".
-            pump.push(historyPageEnvelope(inReplyTo = badId, raw = """{"entries":[],"cursor":""}""", id = 90L))
-            runCurrent()
-
-            assertTrue(bad().exceptionOrNull() is IllegalArgumentException)
-
-            // The collector is still alive: an unrelated conversation's live message still folds...
-            pump.push(messageEnvelope("other", "m1", "user", "still here", TS, id = 91L))
-            runCurrent()
-            assertEquals(listOf("still here"), otherThread.last().map { (it as ThreadItem.MessageItem).message.content })
-
-            // ...and a second history ask on the same repository still completes.
-            val good = startRequestHistory(repo, "c1")
-            runCurrent()
-            val goodId = pump.sent.last { it.type == "request_history" }.id
-            pump.push(historyPageEnvelope(inReplyTo = goodId, raw = EMPTY_TERMINAL_PAGE, id = 92L))
-            runCurrent()
-
-            assertTrue(good().getOrThrow().atStart)
-        }
-
-    @Test
-    fun requestHistory_invalidNumericIdentityDoesNotStopUpperRangeDelivery() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            for (token in listOf("0", "-1", "18446744073709551616", "1.5", "\"1\"")) {
-                val bad = startRequestHistory(repo, "c1")
-                runCurrent()
-                pump.push(
-                    historyPageEnvelope(
-                        inReplyTo = pump.sent.last { it.type == "request_history" }.id,
-                        raw = """{"entries":[{"id":$token,"type":"future","payload":{},"ts":"$TS"}],"cursor":"","at_start":true}""",
-                    ),
-                )
-                runCurrent()
-                assertTrue(bad().exceptionOrNull() is IllegalArgumentException)
-            }
-            val good = startRequestHistory(repo, "c1")
-            runCurrent()
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = pump.sent.last { it.type == "request_history" }.id,
-                    raw =
-                        """
-                        {"entries":[{"id":18446744073709551615,"type":"message",
-                        "payload":{"conversation_id":"c1","message_id":"upper","role":"user","text":"received"},
-                        "ts":"$TS"}],"cursor":"","at_start":true}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-            val entry = good().getOrThrow().entries.single()
-            assertEquals(ULong.MAX_VALUE, entry.unsignedId)
-            assertEquals(null, entry.id)
-            val rows = repo.observeMessages("c1").first().filterIsInstance<ThreadItem.MessageItem>()
-            assertEquals(listOf("upper"), rows.map { it.message.id })
-        }
 
     // ---- #645: requestHistory folds its page into the thread. The reduction and the merge are proven
     // ---- exhaustively and without a relay in HistoryPageReducerTest; this block owns the WIRING —
@@ -2742,241 +2148,26 @@ class RemoteConversationRepositoryTest {
 
     // A newer page reaches observeMessages in daemon order after the older live row,
     // and the page is still returned to the caller for its cursor / at_start.
-    @Test
-    fun requestHistory_foldsNewerPageAfterOlderLiveRowsAndStillReturnsIt() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-            pump.push(messageEnvelope("c1", "live-1", "user", "live", TS))
-            runCurrent()
-
-            val page = startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.last { it.type == "request_history" }.id
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = sentId,
-                    raw =
-                        """
-                        {"entries":[
-                          {"id":2,"type":"message","payload":{"conversation_id":"c1","message_id":"h2","role":"assistant","text":"b"},"ts":"2026-09-05T10:02:00Z"},
-                          {"id":1,"type":"message","payload":{"conversation_id":"c1","message_id":"h1","role":"user","text":"a"},"ts":"2026-09-05T10:01:00Z"}
-                        ],"cursor":"$CURSOR","at_start":false}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-
-            assertEquals(listOf("live-1", "h1", "h2"), messageIds(thread.last()))
-            assertEquals(CURSOR, page().getOrThrow().cursor)
-        }
 
     // Routing: the fold lands under the conversation the client ASKED about, never under an entry
     // payload's own conversation_id — a hostile page cannot write into a neighbouring thread.
-    @Test
-    fun requestHistory_foldsUnderTheAskedConversation_notThePayloadsOwn() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val asked = collectMessages(repo, "c1")
-            val other = collectMessages(repo, "elsewhere")
-            runCurrent()
-
-            startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.last { it.type == "request_history" }.id
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = sentId,
-                    raw =
-                        """
-                        {"entries":[
-                          {"id":1,"type":"message","payload":{"conversation_id":"elsewhere","message_id":"h1","role":"user","text":"a"},"ts":"$TS"}
-                        ],"cursor":"","at_start":true}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-
-            assertEquals(listOf("h1"), messageIds(asked.last()))
-            assertEquals(emptyList<ThreadItem>(), other.last())
-        }
 
     // AC #4: a page of stored STATE frames folds no row and — the point of the criterion — reaches no
     // live-state holder. A stored `stall` does not re-stall, a stored `api_retry` does not re-open the
     // retry indicator, a stored `compacting` does not restart it, and none of them reach the live-event
     // stream the thinking indicator and the modal overlay read.
-    @Test
-    fun requestHistory_pageOfStateFrames_leavesEveryLiveStateHolderUntouched() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c1")
-            val stall = collectStall(repo, "c1")
-            val queue = collectQueue(repo, "c1")
-            val events = collectLiveEvents(repo)
-            val modals = collectModalEvents(repo)
-            runCurrent()
-
-            startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.last { it.type == "request_history" }.id
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = sentId,
-                    raw =
-                        """
-                        {"entries":[
-                          {"id":5,"type":"modal_shown","payload":{"modal_id":"md","class":"permission","title":"t","prompt":"p","options":[],"default_option_id":""},"ts":"$TS"},
-                          {"id":4,"type":"compacting","payload":{"conversation_id":"c1","active":true},"ts":"$TS"},
-                          {"id":3,"type":"api_retry","payload":{"conversation_id":"c1","active":true,"attempt":{"current":1,"total":3}},"ts":"$TS"},
-                          {"id":2,"type":"queue_state","payload":{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","text":"q","ts":"$TS"}]},"ts":"$TS"},
-                          {"id":1,"type":"turn_state","payload":{"conversation_id":"c1","state":"thinking"},"ts":"$TS"}
-                        ],"cursor":"","at_start":true}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-
-            assertEquals(emptyList<ThreadItem>(), thread.last())
-            assertEquals(listOf(false), stall)
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(emptyList<ModalEvent>(), modals)
-        }
 
     // A failed ask mutates nothing: the fold is unreachable on every failure path, so a rejected walk
     // step leaves the thread exactly as the live lane left it.
-    @Test
-    fun requestHistory_rejectedAsk_foldsNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-            pump.push(messageEnvelope("c1", "live-1", "user", "live", TS))
-            runCurrent()
-
-            val outcome = startRequestHistory(repo, "c1")
-            runCurrent()
-            val sentId = pump.sent.last { it.type == "request_history" }.id
-            pump.push(errorEnvelope(inReplyTo = sentId, code = "history.unavailable", message = "busy", retryable = true, id = 93L))
-            runCurrent()
-
-            assertTrue(outcome().exceptionOrNull() is RelayErrorException)
-            assertEquals(listOf("live-1"), messageIds(thread.last()))
-        }
 
     // ---- #810: a tool call's input fields and parent identity reach the retained row on both lanes
 
     // AC #3: the same tool_use + tool_result pair, once live under c1 and once replayed through a
     // history_page under c2, retains the same ToolCall. Timestamps differ by lane by design (the live
     // clock vs the stored entry's ts), so the comparison is the ToolCall, not the whole Message.
-    @Test
-    fun toolCall_liveAndHistoryLanes_retainIdenticalRows() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val live = collectMessages(repo, "c1")
-            val replayed = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(
-                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c1"))),
-            )
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "tool_result",
-                    ts = TS,
-                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1")),
-                ),
-            )
-            runCurrent()
-
-            startRequestHistory(repo, "c2")
-            runCurrent()
-            val sentId = pump.sent.last { it.type == "request_history" }.id
-            val useEntry = TOOL_USE_810.replace("CONV", "c2")
-            val resultEntry = TOOL_RESULT_810.replace("CONV", "c2")
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = sentId,
-                    raw =
-                        """
-                        {"entries":[
-                          {"id":2,"type":"tool_result","payload":$resultEntry,"ts":"2026-09-05T10:02:00Z"},
-                          {"id":1,"type":"tool_use","payload":$useEntry,"ts":"2026-09-05T10:01:00Z"}
-                        ],"cursor":"","at_start":true}
-                        """.trimIndent(),
-                ),
-            )
-            runCurrent()
-
-            val liveCall = (live.last().single() as ThreadItem.MessageItem).message.toolCall
-            val replayedCall = (replayed.last().single() as ThreadItem.MessageItem).message.toolCall
-            assertEquals(
-                ToolCall(
-                    toolName = "Edit",
-                    input = "a.kt",
-                    output = "ok",
-                    status = ToolCallStatus.Done,
-                    inputFields = mapOf("file_path" to "../src/a.kt", "old_string" to "x\ny…"),
-                    parentToolUseId = "agent-1",
-                    resultDetail = "",
-                ),
-                liveCall,
-            )
-            assertEquals(liveCall, replayedCall)
-        }
 
     // AC #4: frames for c1 never alter c2's retained rows — even a tool_result for c1 whose
     // tool_use_id collides with a row c2 already holds.
-    @Test
-    fun toolCall_framesForOneConversation_neverAlterAnothersRows() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val first = collectMessages(repo, "c1")
-            val second = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(
-                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c2"))),
-            )
-            runCurrent()
-            val before = second.last()
-
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "tool_use",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"t9","tool_use_id":"tu-other","parent_tool_use_id":"agent-9",""" +
-                                """"name":"Bash","input_summary":"ls","input":{"command":"ls"}}""",
-                        ),
-                ),
-            )
-            pump.push(
-                Envelope(
-                    id = 3L,
-                    type = "tool_result",
-                    ts = TS,
-                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1").replace("\"ok\"", "\"boom\"")),
-                ),
-            )
-            runCurrent()
-
-            assertEquals(before, second.last())
-            assertEquals(ToolCallStatus.Running, (second.last().single() as ThreadItem.MessageItem).message.toolCall?.status)
-            val firstCall = (first.last().single() as ThreadItem.MessageItem).message.toolCall
-            assertEquals(mapOf("command" to "ls"), firstCall?.inputFields)
-            assertEquals("agent-9", firstCall?.parentToolUseId)
-        }
 
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
@@ -3258,20 +2449,15 @@ class RemoteConversationRepositoryTest {
     // AC #1: a successful delete removes chan from ALL THREE read projections — the list, the thread,
     // and the last-message preview. This is the delete-specific divergence from archive's in-place fold.
     @Test
-    fun delete_onSuccess_removesFromAllThreeStreams() =
+    fun delete_onSuccess_removesConversation() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope)
             val all = collectConversations(repo, ConversationFilter.All)
-            val messages = collectMessages(repo, "chan")
-            val lastMessage = collectLastMessage(repo, "chan")
             runCurrent()
             pump.push(conversationsEnvelope(MIXED_FIXTURE))
-            pump.push(messageEnvelope("chan", "m1", "user", "hi", ts = TS))
             runCurrent()
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
-            assertEquals(listOf("m1"), messageIds(messages.last()))
-            assertEquals("m1", lastMessage.last()?.id)
 
             val delete = startDelete(repo, "chan")
             runCurrent()
@@ -3281,8 +2467,6 @@ class RemoteConversationRepositoryTest {
             delete().getOrThrow()
 
             assertEquals(listOf("disc"), all.last().map { it.id })
-            assertEquals(emptyList<ThreadItem>(), messages.last())
-            assertNull(lastMessage.last())
         }
 
     // The ack field is `id`, NOT `conversation_id`: an ack whose only key is `conversation_id` has no
@@ -4071,547 +3255,6 @@ class RemoteConversationRepositoryTest {
             assertEquals(before, messages)
         }
 
-    @Test
-    fun sendQueuedNow_removedQueueThenInterveningMessages_usesDeliveredPushPosition() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            val other = collectMessages(repo, "c-other")
-            runCurrent()
-            val own = sendAndAck(repo, pump, "c-1", "marker request")
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-            runCurrent()
-            val before = thread.last()
-            repo.sendQueuedNow("c-1", 42L)
-            runCurrent()
-            assertEquals(before, thread.last())
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-            assertTrue(messageIds(thread.last()).isEmpty())
-            pump.push(toolUseEnvelope("c-1", "running", "intervening", "Bash", "held command"))
-            pump.push(toolResultEnvelope("c-1", "running", "intervening", isError = false, resultSummary = "done"))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            runCurrent()
-            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
-            assertEquals(emptyList<ThreadItem>(), other.last())
-        }
-
-    @Test
-    fun sendQueuedNow_reopenedCachedEcho_waitsForDeliveredPush() = cachedQueuedDelivery(localControl = true)
-
-    @Test
-    fun peerSendQueuedNow_reopenedCachedEcho_waitsForDeliveredPush() = cachedQueuedDelivery(localControl = false)
-
-    private fun cachedQueuedDelivery(localControl: Boolean) =
-        runTest {
-            val pump = FakeSessionPump()
-            val remote = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val connection = MutableStateFlow<ConversationRepository?>(remote)
-            val stable = StableConversationRepository(connection)
-            val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
-            val older = ThreadItem.MessageItem(Message("older", "s-old", Role.Assistant, "offline history", Instant.parse(TS), false))
-            assertTrue(cache.writeThread("host-a", "c-1", listOf(older)).isSuccess)
-            val repository = CachingConversationRepository(stable, cache, "host-a", processingDispatcher = UnconfinedTestDispatcher())
-            val first = mutableListOf<List<ThreadItem>>()
-            val initialReader = backgroundScope.launch { repository.observeMessages("c-1").collect { first += it } }
-            runCurrent()
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            runCurrent()
-            val own = sendAndAck(remote, pump, "c-1", "marker request")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-            pump.push(toolUseEnvelope("c-1", "running", "tool-1", "Bash", "held command"))
-            runCurrent()
-            assertEquals(listOf("older", "tool-1", own), messageIds(first.last()))
-            advanceTimeBy(100)
-            runCurrent()
-            assertTrue(messageIds(cache.readThread("host-a", "c-1")).contains(own))
-            initialReader.cancel()
-            runCurrent()
-
-            // Reopen on the same connection: the merge base now contains the parked own echo.
-            val reopened = mutableListOf<List<ThreadItem>>()
-            backgroundScope.launch { repository.observeMessages("c-1").collect { reopened += it } }
-            runCurrent()
-            assertEquals(listOf("older", "tool-1", own), messageIds(reopened.last()))
-            if (localControl) repository.sendQueuedNow("c-1", 42L)
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-            assertEquals(listOf("older", "tool-1"), messageIds(reopened.last()))
-            val afterRemoval = reopened.size
-            pump.push(toolResultEnvelope("c-1", "running", "tool-1", isError = false, resultSummary = "done"))
-            pump.push(toolUseEnvelope("c-1", "running", "tool-2", "Bash", "next command"))
-            runCurrent()
-            assertEquals(listOf("older", "tool-1", "tool-2"), messageIds(reopened.last()))
-            assertTrue(reopened.drop(afterRemoval).none { own in messageIds(it) })
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            runCurrent()
-            val delivered = listOf("older", "tool-1", "tool-2", own)
-            assertEquals(delivered, messageIds(reopened.last()))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            runCurrent()
-            assertEquals(delivered, messageIds(reopened.last()))
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(delivered.filter { it != "tool-2" }, messageIds(cache.readThread("host-a", "c-1")))
-
-            // A disconnect must keep legitimate history and the delivered echo, without transient tools.
-            connection.value = null
-            runCurrent()
-            assertEquals(listOf("older", "tool-1", own), messageIds(reopened.last()))
-        }
-
-    @Test
-    fun peerSendQueuedNow_ownEchoRemovedThenInterveningTool_usesDeliveredPushPosition() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            val other = collectMessages(repo, "c-other")
-            runCurrent()
-            val own = sendAndAck(repo, pump, "c-1", "marker request")
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-            assertTrue(messageIds(thread.last()).isEmpty())
-            pump.push(toolUseEnvelope("c-1", "running", "intervening", "Bash", "held command"))
-            pump.push(toolResultEnvelope("c-1", "running", "intervening", isError = false, resultSummary = "done"))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            runCurrent()
-            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
-            assertEquals(emptyList<ThreadItem>(), other.last())
-        }
-
-    @Test
-    fun peerSendQueuedNow_turnEndsBeforeRemoval_delayedPushFollowsInterveningEventsOnce() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            val other = collectMessages(repo, "c-other")
-            runCurrent()
-            val own = sendAndAck(repo, pump, "c-1", "marker request")
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-            runCurrent()
-            pump.push(turnEndEnvelope("c-1", "running", "end_turn"))
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-            assertEquals(listOf(own), messageIds(thread.last()))
-            pump.push(toolUseEnvelope("c-1", "next", "intervening", "Bash", "held command"))
-            pump.push(toolResultEnvelope("c-1", "next", "intervening", isError = false, resultSummary = "done"))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = true))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            runCurrent()
-            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = true))
-            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
-            runCurrent()
-            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
-            assertEquals(emptyList<ThreadItem>(), other.last())
-        }
-
-    @Test
-    fun queuedDelivery_delayedDrainPastWholeReply_preservesEveryEmission() = runTest { assertDelayedEntrySnapshots(removeFirst = false) }
-
-    @Test
-    fun queuedDelivery_removalBeforePush_preservesEachAnsweringTurnOpening() = runTest { assertDelayedEntrySnapshots(removeFirst = true) }
-
-    private fun TestScope.assertDelayedEntrySnapshots(removeFirst: Boolean) {
-        val pump = FakeSessionPump()
-        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-        val thread = collectMessages(repo, "c-1")
-        val other = collectMessages(repo, "c-other")
-        runCurrent()
-        pump.push(turnStateEnvelope("c-1", "responding"))
-        runCurrent()
-        assertEquals(emptyList<ThreadItem>(), thread.last())
-        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
-        runCurrent()
-        val b = sendAndAck(repo, pump, "c-1", "B")
-        val c = sendAndAck(repo, pump, "c-1", "C")
-        val originals = thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) }
-        val entries = listOf(QueuedFixture(41L, "B", TS, b), QueuedFixture(42L, "C", TS, c))
-
-        fun expect(vararg expected: String) {
-            runCurrent()
-            assertEquals(expected.toList(), messageIds(thread.last()))
-            assertEquals(originals, thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) })
-            for (rows in thread) {
-                val queued = messageIds(rows).filter { it in setOf(b, c) }
-                if (queued.size == 2) assertEquals(listOf(b, c), queued)
-                assertTrue(messageIds(rows).none { it.startsWith("turn-2#") || it.startsWith("turn-3#") })
-            }
-        }
-        pump.push(queueStateEnvelope("c-1", entries))
-        expect("turn-1", b, c)
-        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held tool"))
-        expect("turn-1", "tool-1", b, c)
-        pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", false, "done"))
-        expect("turn-1", "tool-1", b, c)
-        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
-        expect("turn-1", "tool-1", "turn-1#1", b, c)
-        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-        expect("turn-1", "tool-1", "turn-1#1", b, c)
-        if (removeFirst) {
-            pump.push(queueStateEnvelope("c-1", entries.drop(1)))
-            expect("turn-1", "tool-1", "turn-1#1", b, c)
-        }
-        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
-        expect("turn-1", "tool-1", "turn-1#1", b, c)
-        pump.push(turnStateEnvelope("c-1", "responding"))
-        expect("turn-1", "tool-1", "turn-1#1", b, c)
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "B0"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        pump.push(queueStateEnvelope("c-other", emptyList()))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        pump.push(queueStateEnvelope("c-1", entries))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, "B1"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        pump.push(turnEndEnvelope("c-1", "turn-2", "end_turn"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        if (removeFirst) {
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        }
-        pump.push(deliveredEntryEnvelope("c-1", c, 42L))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 0, "C0"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 1, "C1"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(queueStateEnvelope("c-1", entries.drop(1))) // B drain delayed into C reply.
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(deliveredEntryEnvelope("c-1", c, 42L))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(queueStateEnvelope("c-1", emptyList()))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(queueStateEnvelope("c-1", entries))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 2, "C2"))
-        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
-        assertEquals(originals, thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) })
-        assertEquals("B0B1", (thread.last()[4] as ThreadItem.MessageItem).message.content)
-        assertEquals("C0C1C2", (thread.last()[6] as ThreadItem.MessageItem).message.content)
-        assertEquals(
-            listOf(0, 1, 2),
-            (thread.last()[6] as ThreadItem.MessageItem)
-                .message.segment
-                ?.deltas
-                ?.map { it.seq },
-        )
-        assertEquals(emptyList<ThreadItem>(), other.last())
-    }
-
-    @Test
-    fun queuedDelivery_historyBeforePush_preservesAnsweringReplyAndHeldMetadata() =
-        runTest {
-            assertHistoryDeliveryOverlap(historyFirst = true)
-        }
-
-    @Test
-    fun queuedDelivery_historyAfterPush_preservesAnsweringReplyAndHeldMetadata() =
-        runTest {
-            assertHistoryDeliveryOverlap(historyFirst = false)
-        }
-
-    @Test
-    fun queuedDelivery_historyBeforeLiveEnd_preservesDeliveredPositionAndReply() =
-        runTest {
-            assertHistoryDeliveryOverlap(historyFirst = true, reserveFirst = false)
-        }
-
-    private fun TestScope.assertHistoryDeliveryOverlap(
-        historyFirst: Boolean,
-        reserveFirst: Boolean = true,
-    ) {
-        val pump = FakeSessionPump()
-        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-        val thread = collectMessages(repo, "c-1")
-        runCurrent()
-        pump.push(turnStateEnvelope("c-1", "responding"))
-        runCurrent()
-        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
-        runCurrent()
-        var sent: Message? = null
-        backgroundScope.launch {
-            sent =
-                repo.sendMessage("c-1", "original", attachments = listOf(MessageAttachment(LIVE_ATTACHMENT_ID, "photo.jpg", "image/jpeg")))
-        }
-        runCurrent()
-        pump.push(ackEnvelope(pump.sent.last { it.type == "send_message" }.id))
-        runCurrent()
-        val held = requireNotNull(sent)
-        val own = held.id
-        pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "original", TS, own))))
-        runCurrent()
-        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "tool"))
-        runCurrent()
-        if (reserveFirst) {
-            pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-            runCurrent()
-        }
-
-        fun expectReply(content: String) {
-            runCurrent()
-            assertEquals(listOf("turn-1", "tool-1", own, "turn-2"), messageIds(thread.last()))
-            assertEquals(ThreadItem.MessageItem(held), thread.last()[2])
-            val reply = (thread.last()[3] as ThreadItem.MessageItem).message
-            assertEquals(content, reply.content)
-            assertEquals(if (content == "Reply") listOf(0) else listOf(0, 1), reply.segment?.deltas?.map { it.seq })
-        }
-
-        fun mergePage() {
-            val request = startRequestHistory(repo, "c-1")
-            runCurrent()
-            pump.push(
-                historyPageEnvelope(
-                    inReplyTo = pump.sent.last { it.type == "request_history" }.id,
-                    raw = """{"entries":[
-                    {"id":11,"type":"assistant_delta","payload":{"conversation_id":"c-1","turn_id":"turn-2","seq":0,"text":"Reply"},"ts":"$TS"},
-                    {"id":10,"type":"message","payload":{"conversation_id":"foreign","message_id":"$own","role":"user","text":"history copy","queued_msg_id":42,"attachment_ids":["$LIVE_ATTACHMENT_ID"]},"ts":"$TS"},
-                    {"id":9,"type":"tool_use","payload":{"conversation_id":"c-1","turn_id":"turn-1","tool_use_id":"tool-1","name":"Bash","input_summary":"tool"},"ts":"$TS"}
-                ],"cursor":"","at_start":true}""",
-                ),
-            )
-            runCurrent()
-            assertTrue(request().isSuccess)
-            expectReply("Reply")
-        }
-        if (historyFirst) mergePage()
-        pump.push(deliveredEntryEnvelope("c-1", own, 42L))
-        runCurrent()
-        if (historyFirst) expectReply("Reply") else assertEquals(listOf("turn-1", "tool-1", own), messageIds(thread.last()))
-        mergePage()
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply"))
-        expectReply("Reply")
-        pump.push(deliveredEntryEnvelope("c-1", own, 42L))
-        expectReply("Reply")
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, " done"))
-        expectReply("Reply done")
-        pump.push(queueStateEnvelope("c-1", emptyList()))
-        expectReply("Reply done")
-        pump.push(queueStateEnvelope("c-other", listOf(QueuedFixture(42L, "peer", TS, own))))
-        expectReply("Reply done")
-        pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "stale", TS, own))))
-        expectReply("Reply done")
-    }
-
-    @Test
-    fun queuedDelivery_malformedEntryIdentityDropsOnlyThatFrame_withoutSettlingOwnEcho() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-            pump.push(turnStateEnvelope("c-1", "responding"))
-            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Before"))
-            runCurrent()
-            val own = sendAndAck(repo, pump, "c-1", "own")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "own", TS, own))))
-            pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "tool"))
-            runCurrent()
-            val before = thread.last()
-            for (raw in listOf("true", "1.5", "{}", "[]", "\"bad\"", "9223372036854775808")) {
-                val valid = messageEnvelope("c-1", own, "user", "bad copy", TS)
-                pump.push(
-                    valid.copy(payload = JsonObject(valid.payload.jsonObject + ("queued_msg_id" to MobileJson.parseToJsonElement(raw)))),
-                )
-                runCurrent()
-                assertEquals(before, thread.last())
-            }
-            pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-            pump.push(deliveredEntryEnvelope("c-1", own, 42L))
-            pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply"))
-            runCurrent()
-            assertEquals(listOf("turn-1", "tool-1", own, "turn-2"), messageIds(thread.last()))
-        }
-
-    @Test
-    fun queuedDelivery_distinctPeerEntriesSharingMessageId_keepLaterOwnEchoBehindBothReplies() =
-        runTest { assertEntryIdentityWithDuplicateRows(reuseOwnId = false) }
-
-    @Test
-    fun queuedDelivery_entryReusingDeliveredOwnId_keepsLaterOwnEchoBehindItsReply() =
-        runTest { assertEntryIdentityWithDuplicateRows(reuseOwnId = true) }
-
-    private fun TestScope.assertEntryIdentityWithDuplicateRows(reuseOwnId: Boolean) {
-        val pump = FakeSessionPump()
-        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-        val thread = collectMessages(repo, "c-1")
-        runCurrent()
-        pump.push(turnStateEnvelope("c-1", "responding"))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
-        runCurrent()
-        val shared = if (reuseOwnId) sendAndAck(repo, pump, "c-1", "first own") else "peer"
-        val own = sendAndAck(repo, pump, "c-1", "later own")
-        val entries = listOf(QueuedFixture(41L, "a", TS, shared), QueuedFixture(42L, "b", TS, shared), QueuedFixture(43L, "c", TS, own))
-        pump.push(queueStateEnvelope("c-1", entries))
-        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-        pump.push(deliveredEntryEnvelope("c-1", shared, 41L))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply A"))
-        pump.push(queueStateEnvelope("c-1", entries.drop(1)))
-        pump.push(turnEndEnvelope("c-1", "turn-2", "end_turn"))
-        pump.push(deliveredEntryEnvelope("c-1", shared, 42L))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 0, "Reply B"))
-        pump.push(turnEndEnvelope("c-1", "turn-3", "end_turn"))
-        pump.push(deliveredEntryEnvelope("c-1", own, 43L))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-4", 0, "Reply C"))
-        pump.push(deliveredEntryEnvelope("c-1", shared, 41L))
-        pump.push(queueStateEnvelope("c-1", entries))
-        runCurrent()
-        assertEquals(listOf("turn-1", shared, "turn-2", "turn-3", own, "turn-4"), messageIds(thread.last()))
-        assertEquals(1, messageIds(thread.last()).count { it == shared })
-    }
-
-    private fun deliveredEntryEnvelope(
-        conversationId: String,
-        messageId: String,
-        entryId: Long,
-    ): Envelope {
-        val envelope = messageEnvelope(conversationId, messageId, "user", "daemon copy", TS)
-        return envelope.copy(payload = JsonObject(envelope.payload.jsonObject + ("queued_msg_id" to JsonPrimitive(entryId))))
-    }
-
-    @Test
-    fun parkedOwnEcho_confirmationDuringNextOpenTurn_preservesItsSlotAndReply() =
-        runTest {
-            for (drainFirst in listOf(false, true)) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-                val thread = collectMessages(repo, "c-1")
-                val other = collectMessages(repo, "c-other")
-                runCurrent()
-                pump.push(turnStateEnvelope("c-1", "thinking"))
-                pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Waiting"))
-                runCurrent()
-                val own = sendAndAck(repo, pump, "c-1", "marker request")
-                val original = thread.last().filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == own }
-                pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-                pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held command"))
-                pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", isError = false, resultSummary = "done"))
-                pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
-                pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-                pump.push(turnStateEnvelope("c-1", "responding"))
-                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Hello, "))
-                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, "streamed "))
-                runCurrent()
-                assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "turn-2", own), messageIds(thread.last()))
-
-                val drain = queueStateEnvelope("c-1", emptyList())
-                val pushed = messageEnvelope("c-1", own, "user", "daemon copy", TS)
-                pump.push(if (drainFirst) drain else pushed)
-                runCurrent()
-                val expected = listOf("turn-1", "tool-1", "turn-1#1", own, "turn-2")
-                assertEquals(expected, messageIds(thread.last()))
-                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 2, "world"))
-                runCurrent()
-                val delivered = thread.last()
-                assertEquals(expected, messageIds(delivered))
-                assertEquals(original, delivered[3])
-                val reply = (delivered.last() as ThreadItem.MessageItem).message
-                assertEquals("Hello, streamed world", reply.content)
-                assertEquals(listOf(0, 1, 2), reply.segment?.deltas?.map { it.seq })
-                pump.push(if (drainFirst) pushed else drain)
-                pump.push(pushed)
-                runCurrent()
-                assertEquals(delivered, thread.last())
-                assertEquals(emptyList<ThreadItem>(), other.last())
-            }
-        }
-
-    @Test
-    fun ordinaryDrain_delayedConfirmationPreservesReplyWhileSendNowUsesPushPosition() =
-        runTest {
-            for (sentNow in listOf(false, true)) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-                val thread = collectMessages(repo, "c-1")
-                runCurrent()
-                val own = sendAndAck(repo, pump, "c-1", "marker request")
-                pump.push(turnStateEnvelope("c-1", "thinking"))
-                pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-                runCurrent()
-                pump.push(turnEndEnvelope("c-1", "running", "end_turn"))
-                pump.push(queueStateEnvelope("c-1", emptyList()))
-                pump.push(assistantDeltaEnvelope("c-1", "next", 0, "Reply"))
-                pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = sentNow))
-                pump.push(assistantDeltaEnvelope("c-1", "next", 1, " continues"))
-                pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = sentNow))
-                runCurrent()
-                assertEquals(
-                    if (sentNow) listOf("next", own, "next#1") else listOf(own, "next"),
-                    messageIds(thread.last()),
-                )
-                if (!sentNow) {
-                    assertEquals("Reply continues", (thread.last().last() as ThreadItem.MessageItem).message.content)
-                }
-            }
-        }
-
-    @Test
-    fun sendQueuedNow_failedSendWithdrawsDeliveryIntent() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-            val own = sendAndAck(repo, pump, "c-1", "marker request")
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
-            runCurrent()
-            val before = thread.last()
-            pump.sendResult = false
-            assertTrue(runCatching { repo.sendQueuedNow("c-1", 42L) }.isFailure)
-            runCurrent()
-            assertEquals(before, thread.last())
-            pump.push(turnStateEnvelope("c-1", "idle"))
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-            assertEquals(listOf(own), messageIds(thread.last()))
-        }
-
-    @Test
-    fun sendQueuedNow_targetsConversationAndReturnsWithoutReplyOrMutation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-            val messages = collectMessages(repo, "c-1")
-            val queue = collectQueue(repo, "c-1")
-            runCurrent()
-            val beforeMessages = messages.toList()
-            val beforeQueue = queue.toList()
-            repo.sendQueuedNow("c-1", Long.MAX_VALUE)
-            runCurrent()
-            assertEquals(
-                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":9223372036854775807}"""),
-                pump.sent
-                    .single {
-                        it.type ==
-                            "send_queued_now"
-                    }.payload,
-            )
-            assertEquals(beforeMessages, messages)
-            assertEquals(beforeQueue, queue)
-            pump.sendResult = false
-            assertTrue(runCatching { repo.sendQueuedNow("c-1", 42L) }.exceptionOrNull() is IllegalStateException)
-            runCurrent()
-            assertEquals(beforeMessages, messages)
-            assertEquals(beforeQueue, queue)
-        }
-
     // ---- dropQueuedMessage (#466, #859): a fire-and-forget dequeue_message, settled by queue_state ----
     // The daemon never replies to dequeue_message (protocol-mobile.md § Queue (v2)), so no test here
     // pushes an ack or error for it: the only confirmation is a later queue_state lacking the item.
@@ -4619,370 +3262,15 @@ class RemoteConversationRepositoryTest {
     // #466 AC #1, #5: the sent dequeue_message payload matches the two-key wire contract
     // {conversation_id, queued_msg_id}; queued_msg_id is a JSON NUMBER (the uint64), not a quoted
     // string, and no extra keys are present. #859 AC #1: the call returns once the frame is sent.
-    @Test
-    fun dropQueuedMessage_sendsDequeueMessageAndReturnsWithoutReply() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            assertEquals(
-                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":42}"""),
-                sent.payload,
-            )
-            assertTrue(drop().isSuccess)
-        }
 
     // #720 width guard: a queued_msg_id near Long.MAX_VALUE encodes as a bare JSON number (a uint64),
     // never a quoted string — the round-trip is Long → number with no precision loss.
-    @Test
-    fun dropQueuedMessage_largeQueuedMsgId_encodesAsBareNumber() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val drop = startDropQueuedMessage(repo, "c-1", 9223372036854775807L)
-            runCurrent()
-
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            assertEquals(
-                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":9223372036854775807}"""),
-                sent.payload,
-            )
-            assertTrue(drop().isSuccess)
-        }
 
     // #466 AC #2: the send writes NO local projection — the backlog is owned by observeQueue (#460)
     // and updated only by a later queue_state, never by this send.
-    @Test
-    fun dropQueuedMessage_withoutSnapshot_mutatesNoProjection() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val queue = collectQueue(repo, "c-1")
-            val messages = collectMessages(repo, "c-1")
-            val lastMessage = collectLastMessage(repo, "c-1")
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-            assertEquals(listOf(emptyList<ThreadItem>()), messages)
-            assertEquals(listOf<Message?>(null), lastMessage)
-        }
 
     // #859 AC #2: a not-Open session (pump.send returns false) fails fast with IllegalStateException,
     // and because the drop was never sent, a later snapshot without the item removes nothing.
-    @Test
-    fun dropQueuedMessage_whenNotConnected_throwsAndLeavesEchoInPlace() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            pump.sendResult = false
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertTrue(drop().exceptionOrNull() is IllegalStateException)
-            assertEquals(listOf(queued), messageIds(thread.last()))
-        }
-
-    // ---- #781 / #859: a confirmed drop also removes the undelivered echo this device minted --------
-
-    // #859 AC #1: the drop settles when a queue_state for the conversation arrives without the dropped
-    // queued_msg_id — and not before. It removes the entry's own echo and NOTHING else: every other
-    // thread row keeps its place, in order.
-    @Test
-    fun dropQueuedMessage_settlesOnQueueStateWithoutItem_removesOwnEchoOnly() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val first = sendAndAck(repo, pump, "c-1", "one")
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            val third = sendAndAck(repo, pump, "c-1", "three")
-            // "two" waits behind the running turn (#1636): only then does it park below later rows.
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            assertTrue(drop().isSuccess)
-            // #1558: the queued echo reads below the rows after it until it leaves the backlog.
-            assertEquals(listOf(first, third, queued), messageIds(thread.last()))
-
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertEquals(listOf(first, third), messageIds(thread.last()))
-        }
-
-    // #1558 AC 1, 2: the queue_state arm reads this device's queued echo below a row that arrived after it,
-    // and the drain settles it there before the pushed copy lands, which leaves it in place.
-    @Test
-    fun queueState_ownQueuedEcho_readsBelowLaterRowsAndSettlesThereOnDrain() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(messageEnvelope("c-1", "peer-1", "user", "from desktop", TS))
-            pump.push(turnStateEnvelope("c-1", "thinking"))
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-            assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
-
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            pump.push(messageEnvelope("c-1", queued, "user", "two", TS))
-            runCurrent()
-
-            assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
-        }
-
-    @Test
-    fun queueState_heldReplyWithInfoBanner_keepsItsAnchor() =
-        runTest {
-            for (bannerBeforeQueue in listOf(false, true)) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-                val thread = collectMessages(repo, "c-1")
-                runCurrent()
-                pump.push(turnStateEnvelope("c-1", "responding"))
-                runCurrent()
-                pump.push(assistantDeltaEnvelope("c-1", "held", 0, "Hello, "))
-                runCurrent()
-                pump.push(assistantDeltaEnvelope("c-1", "held", 1, "streamed "))
-                runCurrent()
-                val held = (thread.last().single() as ThreadItem.MessageItem).message
-                assertEquals("Hello, streamed ", held.content)
-                assertTrue(held.isStreaming)
-                val queued = sendAndAck(repo, pump, "c-1", "follow-up")
-                val snapshot = queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "follow-up", TS, messageId = queued)))
-                if (bannerBeforeQueue) pump.push(bannerEnvelope("c-1", "info"))
-                pump.push(snapshot)
-                if (!bannerBeforeQueue) pump.push(bannerEnvelope("c-1", "info"))
-                runCurrent()
-                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
-                assertTrue((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
-                pump.push(snapshot)
-                runCurrent()
-                pump.push(assistantDeltaEnvelope("c-1", "held", 2, "world"))
-                runCurrent()
-                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
-                val extended = (thread.last().first() as ThreadItem.MessageItem).message
-                assertEquals("Hello, streamed world", extended.content)
-                assertTrue(extended.isStreaming)
-                pump.push(assistantDeltaEnvelope("c-1", "held", 2, "world"))
-                runCurrent()
-                assertEquals(extended, (thread.last().first() as ThreadItem.MessageItem).message)
-                pump.push(turnEndEnvelope("c-1", "held", "end_turn"))
-                runCurrent()
-                assertEquals(listOf(held.id, queued), thread.last().filterIsInstance<ThreadItem.MessageItem>().map { it.message.id })
-                assertFalse((thread.last().first() as ThreadItem.MessageItem).message.isStreaming)
-            }
-        }
-
-    // #1636: with no turn_state open, the queued echo waits behind nothing, so it keeps its tap-time slot above
-    // the reply that streams before the delivery confirmation, and the reply stays one segment.
-    @Test
-    fun queueState_ownEchoQueuedWhileIdle_staysAboveItsReplyThroughALateDrain() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "hello")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "hello", TS, messageId = queued))))
-            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Hello, "))
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "world"))
-            runCurrent()
-
-            assertEquals(listOf(queued, "turn-1"), messageIds(thread.last()))
-        }
-
-    // #859 AC #1: a snapshot that still carries the dropped id (the backlog changed for another reason,
-    // e.g. an enqueue landed before the dequeue) does not settle the drop; the next one without it does.
-    @Test
-    fun dropQueuedMessage_snapshotStillCarryingItem_keepsEchoUntilItLeaves() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            val later = sendAndAck(repo, pump, "c-1", "three")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(
-                queueStateEnvelope(
-                    "c-1",
-                    listOf(QueuedFixture(42L, "two", TS, messageId = queued), QueuedFixture(43L, "three", TS, messageId = later)),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(queued, later), messageIds(thread.last()))
-
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(43L, "three", TS, messageId = later))))
-            runCurrent()
-            assertEquals(listOf(later), messageIds(thread.last()))
-        }
-
-    // #859 AC #2: an item that leaves the snapshot without a drop request from this device keeps its
-    // echo — a drain shrinks the backlog exactly as a drop does, so removal is keyed on the dropped id.
-    @Test
-    fun dropQueuedMessage_drainedItemWithoutDropRequest_keepsItsEcho() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val drained = sendAndAck(repo, pump, "c-1", "one")
-            val dropped = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(
-                queueStateEnvelope(
-                    "c-1",
-                    listOf(QueuedFixture(41L, "one", TS, messageId = drained), QueuedFixture(42L, "two", TS, messageId = dropped)),
-                ),
-            )
-            runCurrent()
-
-            startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            // One snapshot carries both the head's drain and the drop.
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertEquals(listOf(drained), messageIds(thread.last()))
-        }
-
-    // #859 AC #1: a queue_state for ANOTHER conversation settles nothing here.
-    @Test
-    fun dropQueuedMessage_queueStateForOtherConversation_settlesNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-2", emptyList()))
-            runCurrent()
-
-            assertEquals(listOf(queued), messageIds(thread.last()))
-        }
-
-    // #781 AC #4: an item carrying `""` correlates with NOTHING. The drop still goes — the row must leave
-    // the backlog even against a daemon that mints no id — and no echo is guessed at.
-    @Test
-    fun dropQueuedMessage_emptyMessageId_removesNoThreadRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = ""))))
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            assertEquals(1, pump.sent.count { it.type == "dequeue_message" })
-            assertEquals(listOf(queued), messageIds(thread.last()))
-        }
-
-    // #781 AC #4 and the multi-device rule (protocol-mobile.md § Queue (v2)): `queue_state` fans out to
-    // EVERY interactive connection, so items routinely carry ids this device never minted. Such an item
-    // is another device's real queued message: it correlates with nothing here even when a thread row
-    // carries that very id and the texts are identical. Text is never used to match.
-    @Test
-    fun dropQueuedMessage_foreignMessageId_removesNoThreadRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            // A row this device did NOT mint, carrying the id the queued item will carry.
-            pump.push(messageEnvelope("c-1", messageId = "foreign-1", role = "user", text = "two", ts = TS))
-            val own = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = "foreign-1"))))
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            assertEquals(listOf("foreign-1", own), messageIds(thread.last()))
-        }
-
-    // The drained-between-render-and-tap race: the id is no longer in this connection's snapshot, so
-    // nothing correlates. The send still goes (the daemon silently ignores it) and no row moves, even
-    // when the item's own echo later drains out of a following snapshot.
-    @Test
-    fun dropQueuedMessage_queuedIdAbsentFromSnapshot_removesNoThreadRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 7L)
-            runCurrent()
-            pump.push(queueStateEnvelope("c-1", emptyList()))
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            assertEquals(1, pump.sent.count { it.type == "dequeue_message" })
-            assertEquals(listOf(queued), messageIds(thread.last()))
-        }
-
-    // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
-
-    // AC #2 + happy path: the sent envelope matches the request_snapshot wire contract
-    // {conversation_id}, and the correlated screen_snapshot reply's text is returned VERBATIM (a
-    // whitespace-laden, multi-line value proves the consumer never trims or sanitizes it).
     @Test
     fun requestScreenSnapshot_sendsRequestSnapshotAndReturnsTextVerbatim() =
         runTest {
@@ -5133,114 +3421,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #1: assistant_delta decodes all four fields, including the seq == 0 boundary.
     @Test
-    fun liveEvents_assistantDelta_decodesAllFieldsIncludingSeqZero() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
-            runCurrent()
-
-            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 0, "hel")), events)
-        }
-
-    @Test
-    fun assistantParent_reachesObservableRowsAndEvents_withoutLoggingIt() =
-        runTest {
-            val logs = mutableListOf<String>()
-            RelayLog.sink = { _, _, message -> logs += message }
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-            val parent = "private-agent-parent-1826"
-            val envelope = assistantDeltaEnvelope("c1", "child", 0, "reply")
-            pump.push(
-                envelope.copy(
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"child","seq":0,"text":"reply","parent_tool_use_id":"$parent"}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "child", 0, "reply", parent)), events)
-            val row =
-                repo
-                    .observeMessages("c1")
-                    .first()
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .single()
-                    .message
-            assertEquals(parent, row.parentToolUseId)
-            assertEquals("child", row.id)
-            assertTrue(logs.none { parent in it })
-            assertTrue(repo.observeMessages("other").first().isEmpty())
-        }
-
-    // AC #1: tool_use decodes every field.
-    @Test
-    fun liveEvents_toolUse_decodesAllFields() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
-            runCurrent()
-
-            assertEquals(listOf(LiveSessionEvent.ToolUse("c1", "t1", "tu1", "Bash", "ls -la")), events)
-        }
-
-    // AC #1: tool_result decodes both is_error boundaries.
-    @Test
-    fun liveEvents_toolResult_decodesIsErrorBothValues() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = true, resultSummary = "boom"))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    LiveSessionEvent.ToolResult("c1", "t1", "tu1", false, "ok"),
-                    LiveSessionEvent.ToolResult("c1", "t1", "tu2", true, "boom"),
-                ),
-                events,
-            )
-        }
-
-    // AC #1: turn_end passes a non-mapped stop_reason string through verbatim (no enum).
-    @Test
-    fun liveEvents_turnEnd_passesStopReasonVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            pump.push(turnEndEnvelope("c1", "t2", "some_future_reason"))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    LiveSessionEvent.TurnEnd("c1", "t1", "end_turn"),
-                    LiveSessionEvent.TurnEnd("c1", "t2", "some_future_reason"),
-                ),
-                events,
-            )
-        }
-
-    // AC #2: without `interactive` negotiated, a well-formed structured envelope is ignored.
-    @Test
     fun liveEvents_capabilityGateClosed_blocksEmission() =
         runTest {
             val pump = FakeSessionPump()
@@ -5310,66 +3490,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #4: a malformed envelope (missing required field) is dropped; the next envelope still surfaces.
     @Test
-    fun liveEvents_malformedEnvelope_droppedNextSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            // `tool_use` missing the required `tool_use_id` → SerializationException → envelope dropped.
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "tool_use",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "ok"))
-            runCurrent()
-            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 1, "ok")), events)
-        }
-
-    // AC #1: a full five-envelope turn surfaces all five typed events in push order.
-    @Test
-    fun liveEvents_fullTurnSequence_surfacesAllFiveInOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking"))
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "done"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(
-                listOf("turn_state", "tool_use", "tool_result", "assistant_delta", "turn_end"),
-                events.map {
-                    when (it) {
-                        is LiveSessionEvent.TurnState -> "turn_state"
-                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
-                        is LiveSessionEvent.ToolUse -> "tool_use"
-                        is LiveSessionEvent.ToolResult -> "tool_result"
-                        is LiveSessionEvent.TurnEnd -> "turn_end"
-                        is LiveSessionEvent.ReplayGap -> "replay_gap"
-                    }
-                },
-            )
-        }
-
-    // AC #1: hot fan-out — two collectors of the one flow both receive the event.
-    @Test
     fun liveEvents_multipleCollectors_eachReceive() =
         runTest {
             val pump = FakeSessionPump()
@@ -5428,10 +3548,6 @@ class RemoteConversationRepositoryTest {
             assertClearsStall(turnStateEnvelope("c1", "responding"))
             assertClearsStall(turnStateEnvelope("c1", "idle"))
             assertClearsStall(turnStateEnvelope("c1", "thinking"))
-            assertClearsStall(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "x"))
-            assertClearsStall(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            assertClearsStall(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
-            assertClearsStall(turnEndEnvelope("c1", "t1", "end_turn"))
         }
 
     // AC #3: a malformed `stall` payload is dropped without tearing down the inbound consumer — a later
@@ -5577,303 +3693,34 @@ class RemoteConversationRepositoryTest {
 
     // AC #1, #5: a `queue_state` snapshot decodes into an ordered list (id, text, timestamp) in wire
     // order; `id` is the Long from `queued_msg_id` and `timestamp` is `Instant.parse(ts)`.
-    @Test
-    fun queue_orderedDecode_preservesWireOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-
-            pump.push(
-                queueStateEnvelope(
-                    "c1",
-                    listOf(
-                        QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"),
-                        QueuedFixture(2L, "b", "2026-05-31T00:00:02Z"),
-                    ),
-                ),
-            )
-            runCurrent()
-            assertEquals(
-                listOf(
-                    emptyList(),
-                    listOf(
-                        QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z")),
-                        QueuedMessage(2L, "b", Instant.parse("2026-05-31T00:00:02Z")),
-                    ),
-                ),
-                queue,
-            )
-        }
 
     // #781 AC #1: the client-minted `message_id` (pyrycode#2092) reaches QueuedMessage VERBATIM — a
     // mixed-case, space-padded value proves no trim, no case fold and no re-encode on the way through.
-    @Test
-    fun queue_messageId_carriedVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            val raw = "  AbC-123_Xy  "
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = raw))))
-            runCurrent()
-
-            assertEquals(listOf(raw), queue.last().map { it.messageId })
-        }
 
     // #781 AC #1: `""` is a LEGAL wire value (the client sent no id; the daemon mints none), so the
     // snapshot decodes and the backlog surfaces — it is an absent *correlation*, not a malformed item.
-    @Test
-    fun queue_emptyMessageId_decodesAndSurfacesBacklog() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = ""))))
-            runCurrent()
-
-            assertEquals(
-                listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"), messageId = "")),
-                queue.last(),
-            )
-        }
 
     // #781: `message_id` is strict-required like every sibling field (the wire sets no omitempty), so an
     // item that OMITS it is a malformed item and drops the whole snapshot — the prior value stands. This
     // pins the posture: an absent field is a decode failure, an empty one is a legal value (above).
-    @Test
-    fun queue_missingMessageId_dropsSnapshot() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = "m1"))))
-            runCurrent()
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":2,"text":"b","ts":"$TS"}]}""",
-                        ),
-                ),
-            )
-            runCurrent()
-
-            assertEquals(listOf(1L), queue.last().map { it.id })
-        }
 
     // The #720 trap: `queued_msg_id` is a wire uint64 number decoded as a Long. A numeric id decodes;
     // a string-typed id is a wrong-typed field → SerializationException → the whole snapshot is dropped.
-    @Test
-    fun queue_queuedMsgId_decodedAsNumberNotString() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":7,"message_id":"m-fixture","text":"x","ts":"$TS"}]}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(7L, queue.last().single().id)
-
-            // A string-typed queued_msg_id is wrong-typed → snapshot dropped, the prior value stands.
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":"7","message_id":"m-fixture","text":"x","ts":"$TS"}]}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(7L, queue.last().single().id)
-        }
 
     // AC #2: empty until the first snapshot; an empty backlog (`[]`, `null`, or a missing `queued`
     // key) stays empty — no spurious non-empty emission (distinctUntilChanged suppresses the equal).
-    @Test
-    fun queue_emptyUntilFirstState_toleratesEmptyArrayNullAndMissing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-
-            // queued: [] → empty backlog, no new emission.
-            pump.push(queueStateEnvelope("c1", emptyList()))
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-
-            // queued: null → also empty backlog.
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1","queued":null}"""),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-
-            // missing queued key → also empty backlog (the DTO's nullable default).
-            pump.push(
-                Envelope(
-                    id = 3L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1"}"""),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-        }
 
     // AC #2: each snapshot is the authoritative backlog — it fully replaces the prior list (not append)
     // and re-emits.
-    @Test
-    fun queue_eachSnapshot_fullyReplaces() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
-            runCurrent()
-            assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), queue.last())
-
-            pump.push(
-                queueStateEnvelope(
-                    "c1",
-                    listOf(
-                        QueuedFixture(2L, "b", "2026-05-31T00:00:02Z"),
-                        QueuedFixture(3L, "c", "2026-05-31T00:00:03Z"),
-                    ),
-                ),
-            )
-            runCurrent()
-            assertEquals(
-                listOf(
-                    QueuedMessage(2L, "b", Instant.parse("2026-05-31T00:00:02Z")),
-                    QueuedMessage(3L, "c", Instant.parse("2026-05-31T00:00:03Z")),
-                ),
-                queue.last(),
-            )
-        }
 
     // AC #3: a snapshot for one conversation does not re-emit another conversation's queue flow.
-    @Test
-    fun queue_perConversationIsolation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectQueue(repo, "c1")
-            val c2 = collectQueue(repo, "c2")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
-            runCurrent()
-            assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), c1.last())
-            assertEquals(listOf(emptyList<QueuedMessage>()), c2)
-        }
 
     // AC #4: a malformed `queue_state` (missing conversation_id, a bad item, or an unparseable ts) is
     // dropped without tearing down the single inbound consumer — a later valid snapshot still surfaces.
-    @Test
-    fun queue_malformed_droppedCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            // Missing conversation_id → SerializationException → dropped.
-            pump.push(Envelope(id = 1L, type = "queue_state", ts = TS, payload = MobileJson.parseToJsonElement("""{"queued":[]}""")))
-            // A queued item missing `text` → SerializationException → whole snapshot dropped.
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","ts":"$TS"}]}""",
-                        ),
-                ),
-            )
-            // An unparseable `ts` → IllegalArgumentException (Instant.parse) → whole snapshot dropped.
-            pump.push(
-                Envelope(
-                    id = 3L,
-                    type = "queue_state",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","text":"x","ts":"not-a-timestamp"}]}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(9L, "ok", "2026-05-31T00:00:09Z"))))
-            runCurrent()
-            assertEquals(listOf(QueuedMessage(9L, "ok", Instant.parse("2026-05-31T00:00:09Z"))), queue.last())
-        }
 
     // Fail-closed: without `interactive` negotiated, a well-formed `queue_state` never surfaces.
-    @Test
-    fun queue_capabilityGateClosed_blocksDecode() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-        }
 
     // Fail-closed: a negotiated set with another token but NOT `interactive` still blocks.
-    @Test
-    fun queue_capabilityGateOtherTokenOnly_blocksDecode() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
-            val queue = collectQueue(repo, "c1")
-            runCurrent()
-
-            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
-            runCurrent()
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-        }
 
     // ---- #593: decode `api_retry` into an observable per-conversation retry state ----------------
 
@@ -6154,29 +4001,6 @@ class RemoteConversationRepositoryTest {
         }
 
     // #1358: the same arm folds the thread's divider, behind the same `interactive` gate.
-    @Test
-    fun compacting_fallingEdge_drawsTheThreadDividerOnlyWhenInteractive() =
-        runTest {
-            for (interactive in listOf(true, false)) {
-                val pump = FakeSessionPump()
-                val repo =
-                    RemoteConversationRepository(
-                        pump,
-                        backgroundScope,
-                        negotiatedCapabilities = { if (interactive) setOf("interactive") else emptySet() },
-                    )
-                val thread = collectMessages(repo, "c1")
-                runCurrent()
-
-                pump.push(compactingEnvelope("c1", active = true, id = 1L))
-                pump.push(compactingEnvelope("c1", active = false, id = 2L))
-                runCurrent()
-
-                val expected =
-                    if (interactive) listOf(ThreadItem.CompactionBoundary(null, null, false, Instant.parse(TS))) else emptyList()
-                assertEquals(expected, thread.last())
-            }
-        }
 
     // A re-fired rising edge for an already-compacting conversation is an idempotent Set add — no
     // re-emit. Unlike `api_retry` there is no counter to climb, so nothing distinguishes the repeat.
@@ -6488,28 +4312,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #2: that conversation's `session_transition` clears the reading — the daemon emits `restarting`
     // before it respawns claude, so no rising edge can follow the transition — and no other conversation's.
-    @Test
-    fun resetting_sessionTransitionClearsOnlyItsConversation() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectResetting(repo, "c1")
-            val c2 = collectResetting(repo, "c2")
-            runCurrent()
-
-            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 1L))
-            pump.push(resettingEnvelope("c2", active = true, phase = "wrapping_up", handoff = "pending", id = 2L))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 3L))
-            runCurrent()
-
-            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written), null), c1)
-            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)), c2)
-        }
-
-    // AC #3: a `resetting` frame neither raises nor clears a stall — on c1 an existing stall survives both
-    // edges, and on c2 no stall appears. Clearing here would hand a daemon a lever to suppress the stall
-    // indicator; raising one would draw a stall where the daemon is doing its own reset work.
     @Test
     fun resetting_neitherRaisesNorClearsAStall() =
         runTest {
@@ -6993,27 +4795,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #3: the reading has no falling edge of its own, so the conversation's TURN END clears it.
     @Test
-    fun thinkingProgress_turnEndClearsTheReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val readings = collectThinkingProgress(repo, "c1")
-            runCurrent()
-
-            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 167, estimatedTokensDelta = 31, id = 1L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(167, 31)), readings)
-
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn", id = 2L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(167, 31), null), readings)
-            assertNull("a finished turn must not leave a reading standing", readings.last())
-        }
-
-    // AC #3: the clear is scoped to the conversation the clearing frame names — one conversation's turn
-    // ending must not wipe another's live reading. This is the case a clear hoisted out of the
-    // per-conversation routing would fail.
-    @Test
     fun thinkingProgress_turnEndForAnotherConversation_leavesThisReadingStanding() =
         runTest {
             val pump = FakeSessionPump()
@@ -7030,27 +4811,6 @@ class RemoteConversationRepositoryTest {
 
     // AC #3: a SESSION TRANSITION clears the reading too — the second of the two clears, since the
     // think the reading described belongs to the session that just ended.
-    @Test
-    fun thinkingProgress_sessionTransitionClearsTheReading() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val readings = collectThinkingProgress(repo, "c1")
-            runCurrent()
-
-            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 91, estimatedTokensDelta = 8, id = 1L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(91, 8)), readings)
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 2L))
-            runCurrent()
-            assertEquals(listOf(null, ThinkingProgress(91, 8), null), readings)
-        }
-
-    // The reading survives an ordinary live event that is not a turn end — an `assistant_delta` must
-    // leave it standing. This is the test that fails if the turn-end clear is hoisted beside the
-    // live-session arm's pre-`when` stall clear, where it would fire on EVERY live event: that
-    // placement still passes the turn-end case above, so this is the one that catches it.
     @Test
     fun thinkingProgress_nonTurnEndLiveEvent_leavesTheReadingStanding() =
         runTest {
@@ -7355,8 +5115,8 @@ class RemoteConversationRepositoryTest {
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = mutableListOf<List<ThreadItem>>()
-            backgroundScope.launch { repo.observeMessages("c1").collect { thread += it } }
+            val thread = mutableListOf<AuthoritativeThreadSnapshot>()
+            backgroundScope.launch { repo.observeAuthoritativeThread("c1").collect { thread += it } }
             val stalls = collectStall(repo, "c1")
             runCurrent()
 
@@ -7368,7 +5128,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals("a menu is not forward progress — the stall stands", listOf(false, true), stalls)
-            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals("no thread row folded", listOf(AuthoritativeThreadSnapshot()), thread)
         }
 
     // A value-identical re-snapshot does not re-emit, so a consumer's state does not churn on every
@@ -7692,1936 +5452,241 @@ class RemoteConversationRepositoryTest {
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
-    @Test
-    fun toolCall_toolUse_producesRunningRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(
-                ToolCall(toolName = "Bash", input = "ls -la", output = "", status = ToolCallStatus.Running),
-                toolCallOf(emissions.last(), "tu1"),
-            )
-        }
 
     // AC #2: the matching tool_result updates that same row in place → Done with output attached,
     // tool name + input unchanged, still exactly one row at the same position.
-    @Test
-    fun toolCall_toolResult_updatesRowInPlaceToDone() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
-            runCurrent()
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(
-                ToolCall(toolName = "Bash", input = "ls -la", output = "files", status = ToolCallStatus.Done, resultDetail = ""),
-                toolCallOf(emissions.last(), "tu1"),
-            )
-        }
 
     // AC #2: a tool_result with is_error=true marks the row Failed and attaches the result summary.
-    @Test
-    fun toolCall_toolResultIsError_marksRowFailed() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "boom"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "exit 1"))
-            runCurrent()
-
-            assertEquals(
-                ToolCall(toolName = "Bash", input = "boom", output = "exit 1", status = ToolCallStatus.Failed, resultDetail = ""),
-                toolCallOf(emissions.last(), "tu1"),
-            )
-        }
 
     // AC #2: correlation is by tool_use_id, not position — a result completes only its own row.
-    @Test
-    fun toolCall_correlatesById_notPosition() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "first"))
-            pump.push(toolUseEnvelope("c1", "t1", "tu2", "Read", "second"))
-            runCurrent()
-            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = false, resultSummary = "done2"))
-            runCurrent()
-
-            assertEquals(listOf("tu1", "tu2"), messageIds(emissions.last()))
-            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
-            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu2")?.status)
-            assertEquals("done2", toolCallOf(emissions.last(), "tu2")?.output)
-        }
 
     // AC #3: a tool_result with no matching tool_use is tolerated — no row appears, no crash.
-    @Test
-    fun toolCall_resultWithNoMatchingUse_producesNoRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolResultEnvelope("c1", "t1", "tuX", isError = false, resultSummary = "orphan"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), messageIds(emissions.last()))
-        }
 
     // AC #3: out-of-order (result before its use) — the early result is dropped, the use still opens
     // exactly one running row.
-    @Test
-    fun toolCall_resultBeforeUse_dropsResultKeepsSingleRunningRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "early"))
-            runCurrent()
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
-            assertEquals("", toolCallOf(emissions.last(), "tu1")?.output)
-        }
 
     // AC #3: a duplicate tool_use creates no second row and does not reset a completed row to Running.
-    @Test
-    fun toolCall_duplicateToolUse_keepsSingleRowAndStatus() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-            // A repeat tool_use for the same id arrives after completion — must not reopen the row.
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu1")?.status)
-            assertEquals("files", toolCallOf(emissions.last(), "tu1")?.output)
-        }
 
     // AC #3: a duplicate tool_result is idempotent — one row, status stable.
-    @Test
-    fun toolCall_duplicateToolResult_isIdempotent() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(
-                ToolCall(toolName = "Bash", input = "ls", output = "files", status = ToolCallStatus.Done, resultDetail = ""),
-                toolCallOf(emissions.last(), "tu1"),
-            )
-        }
 
     // AC #4: tool rows interleave chronologically with messages in observeMessages (arrival order).
-    @Test
-    fun toolCall_interleavesChronologicallyWithMessages() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "run it", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "user", "done", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "tu1", "m2"), messageIds(emissions.last()))
-            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu1")?.status)
-        }
 
     // AC #2 (fail-closed): without `interactive` negotiated, tool events fold nothing — no row.
-    @Test
-    fun toolCall_capabilityGateClosed_producesNoRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), messageIds(emissions.last()))
-        }
 
     // #811: a tool_denied marks its row denied, distinct from the failed state an is_error result gives.
-    @Test
-    fun toolDenied_thenErrorResult_retainsDeniedNotFailed() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "rm x"))
-            pump.push(toolUseEnvelope("c1", "t1", "tu2", "Bash", "ls"))
-            pump.push(toolDeniedEnvelope("c1", "tu1", message = "Permission denied", reasonType = "rule", truncated = """["message"]"""))
-            runCurrent()
-            assertEquals(ToolCallStatus.Denied, toolCallOf(emissions.last(), "tu1")?.status)
-
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "refused"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = true, resultSummary = "exit 1"))
-            runCurrent()
-
-            val denied = toolCallOf(emissions.last(), "tu1")
-            assertEquals(ToolCallStatus.Denied, denied?.status)
-            assertEquals("refused", denied?.output)
-            assertEquals(
-                ToolDenial("Bash", "rule", "", "Permission denied", truncatedFields = listOf("message"), droppedFields = null),
-                denied?.denial,
-            )
-            assertEquals(ToolCallStatus.Failed, toolCallOf(emissions.last(), "tu2")?.status)
-            assertEquals(null, toolCallOf(emissions.last(), "tu2")?.denial)
-            assertEquals(listOf("tu1", "tu2"), messageIds(emissions.last()))
-        }
 
     // #811: result-line recovery reports a denial after the result shipped — the row still ends denied.
-    @Test
-    fun toolDenied_afterResult_marksRowDenied() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "rm x"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "refused"))
-            runCurrent()
-            pump.push(toolDeniedEnvelope("c1", "tu1"))
-            runCurrent()
-
-            assertEquals(ToolCallStatus.Denied, toolCallOf(emissions.last(), "tu1")?.status)
-            assertEquals("refused", toolCallOf(emissions.last(), "tu1")?.output)
-        }
 
     // #811: a denial naming no known row adds none, and one conversation's denial never touches another's
     // row even when the tool_use_id is the same.
-    @Test
-    fun toolDenied_unknownRowOrOtherConversation_changesNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-            pump.push(toolDeniedEnvelope("c2", "tu1"))
-            pump.push(toolDeniedEnvelope("c1", "tuX"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
-            assertEquals(null, toolCallOf(emissions.last(), "tu1")?.denial)
-        }
 
     // #811: a malformed tool_denied drops that one envelope; the stream stays alive for the next frame.
-    @Test
-    fun toolDenied_malformed_droppedCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            // dropped_fields as a string, not an array or null → SerializationException → envelope dropped.
-            pump.push(toolDeniedEnvelope("c1", "tu1", dropped = "\"tool_name\""))
-            runCurrent()
-            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
-
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "exit 1"))
-            runCurrent()
-            assertEquals(ToolCallStatus.Failed, toolCallOf(emissions.last(), "tu1")?.status)
-        }
 
     // #811 (fail-closed): without `interactive` negotiated, a tool_denied is never decoded.
-    @Test
-    fun toolDenied_capabilityGateClosed_ignored() =
-        runTest {
-            val pump = FakeSessionPump()
-            var capabilities = setOf("interactive")
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-            capabilities = emptySet()
-            pump.push(toolDeniedEnvelope("c1", "tu1"))
-            runCurrent()
-
-            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
-        }
 
     // AC #5: a malformed tool_use folds nothing and does not tear down the collector — a later valid
     // tool_use still surfaces its row.
-    @Test
-    fun toolCall_malformedToolUse_droppedCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // tool_use missing the required tool_use_id → SerializationException → envelope dropped.
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "tool_use",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
-                        ),
-                ),
-            )
-            runCurrent()
-            assertEquals(emptyList<String>(), messageIds(emissions.last()))
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            runCurrent()
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-        }
 
     // ---- #337: fold assistant_delta into a live streaming assistant row -------------------------
 
     // AC #1: a single assistant_delta opens a streaming Role.Assistant row keyed by turn_id, carrying
     // the delta text verbatim.
-    @Test
-    fun assistantDelta_singleDelta_opensStreamingAssistantRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
-            runCurrent()
-
-            assertEquals(listOf("t1"), messageIds(emissions.last()))
-            val row = assistantRowOf(emissions.last(), "t1")!!
-            assertEquals(Role.Assistant, row.role)
-            assertEquals("hel", row.content)
-            assertTrue(row.isStreaming)
-        }
 
     // AC #1: successive deltas for the same turn concatenate in arrival order into the one row —
     // position + id fixed, still streaming (the wire delivers a turn's deltas in seq order).
-    @Test
-    fun assistantDelta_multipleDeltas_concatenateInArrivalOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "lo "))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 2, text = "world"))
-            runCurrent()
-
-            assertEquals(listOf("t1"), messageIds(emissions.last()))
-            val row = assistantRowOf(emissions.last(), "t1")!!
-            assertEquals("hello world", row.content)
-            assertTrue(row.isStreaming)
-        }
 
     // AC #2: turn_end finalizes the row in place — content unchanged, isStreaming flipped to false,
     // still one row at the same position (turn_end carries no final text of its own).
-    @Test
-    fun assistantDelta_turnEnd_finalizesRowToNonStreaming() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "pi"))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "ng"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(listOf("t1"), messageIds(emissions.last()))
-            val row = assistantRowOf(emissions.last(), "t1")!!
-            assertEquals("ping", row.content)
-            assertFalse(row.isStreaming)
-        }
 
     // AC #2: turn_end for a turn with no assistant text (a tool-only turn) is a no-op — it adds no
     // synthetic assistant row and does not crash; the tool row is the only row.
-    @Test
-    fun turnEnd_withNoAssistantDelta_isNoOp() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(listOf("tu1"), messageIds(emissions.last()))
-            assertNull(assistantRowOf(emissions.last(), "t1"))
-        }
 
     // AC #3 (fail-closed): without `interactive` negotiated, assistant_delta folds nothing — no row.
-    @Test
-    fun assistantDelta_capabilityGateClosed_producesNoRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hello"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), messageIds(emissions.last()))
-        }
 
     // AC #4: assistant text interleaves chronologically with user messages and tool rows by arrival
     // order — the full structured-turn shape the e2e prototype renders end to end.
-    @Test
-    fun assistantDelta_interleavesWithMessagesAndTools_inArrivalOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "reply with exactly: ping", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
-            runCurrent()
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "ping"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
-            val assistant = assistantRowOf(emissions.last(), "t1")!!
-            assertEquals("ping", assistant.content)
-            assertFalse(assistant.isStreaming)
-        }
 
     // #981: the #687 Read turn's order, with the permission prompt shown and answered between the
     // tool_use and its tool_result. The fold keeps the finalized reply, so a thread that shows no reply
     // after this sequence is the screen's failure, not the repository's.
-    @Test
-    fun assistantDelta_afterAnsweredPermissionPrompt_foldsFinalizedReply() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "Read the token file", "2026-09-24T05:27:00Z"))
-            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Read", "token.txt"))
-            pump.push(
-                modalShownEnvelope(
-                    """
-                    {"modal_id":"p1","class":"permission","title":"Allow Read?","prompt":"Read token.txt",
-                     "options":[{"id":"allow","label":"Allow"},{"id":"deny","label":"Deny"}],
-                     "default_option_id":"deny","conversation_id":"c1"}
-                    """.trimIndent(),
-                ),
-            )
-            pump.push(modalDismissedEnvelope("p1", outcome = "allowed", source = "remote"))
-            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "1 line"))
-            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "TOKEN-981"))
-            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
-            val assistant = assistantRowOf(emissions.last(), "t1")!!
-            assertEquals("TOKEN-981", assistant.content)
-            assertFalse(assistant.isStreaming)
-        }
 
     // ---- #336: fold session_transition into the thread as ThreadItem.SessionBoundary ------------
 
     // AC #1: a session_transition folds a SessionBoundary between message runs, in arrival order,
     // without disturbing message ordering.
-    @Test
-    fun sessionTransition_foldsBoundaryBetweenMessagesInArrivalOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "boundary:Clear", "m2"), threadShape(emissions.last()))
-        }
 
     // AC #1: a boundary routes strictly by its payload conversation_id — a session_transition for "c2"
     // never appears in "c1"'s thread, and surfaces only in "c2"'s.
-    @Test
-    fun sessionTransition_routesByConversationId_neverCrossRoutes() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c2", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(c1.last()))
-            assertEquals(listOf("boundary:Clear"), threadShape(c2.last()))
-        }
 
     // AC #2 (fail-closed): without `interactive` negotiated, a well-formed session_transition folds nothing.
-    @Test
-    fun sessionTransition_capabilityGateClosed_foldsNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-        }
 
     // AC #2 (fail-closed): a non-`interactive` capability set also folds nothing.
-    @Test
-    fun sessionTransition_capabilityGateUnrelated_foldsNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-        }
 
     // AC #3: each reason maps to its BoundaryReason.
-    @Test
-    fun sessionTransition_reasonMapsToBoundaryReason() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "idle_evict"))
-            pump.push(sessionTransitionEnvelope("c1", "s3", "s4", "workspace_change", workspaceCwd = "/w"))
-            runCurrent()
-
-            assertEquals(
-                listOf(BoundaryReason.Clear, BoundaryReason.IdleEvict, BoundaryReason.WorkspaceChange),
-                boundariesOf(emissions.last()).map { it.reason },
-            )
-        }
 
     // AC #3: an unrecognized reason drops the one envelope (no boundary) without killing the collector —
     // a later valid session_transition still folds.
-    @Test
-    fun sessionTransition_unknownReason_droppedCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "bogus"))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "clear"))
-            runCurrent()
-            assertEquals(listOf("boundary:Clear"), threadShape(emissions.last()))
-        }
 
     // AC #4: the workspaceCwd-non-null-iff-WorkspaceChange invariant holds, and on idle_evict the evicted
     // id is carried verbatim in both previous and new.
-    @Test
-    fun sessionTransition_workspaceCwdInvariantAndEvictionIdsVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            pump.push(sessionTransitionEnvelope("c1", "ev", "ev", "idle_evict"))
-            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "workspace_change", workspaceCwd = "/x"))
-            runCurrent()
-
-            val boundaries = boundariesOf(emissions.last())
-            assertNull(boundaries[0].workspaceCwd)
-            assertNull(boundaries[1].workspaceCwd)
-            assertEquals("/x", boundaries[2].workspaceCwd)
-            assertEquals("ev", boundaries[1].previousSessionId)
-            assertEquals("ev", boundaries[1].newSessionId)
-        }
 
     // #775 AC #1: a session evicted, woken and evicted again keeps its id, so an honest daemon sends `A->A`
     // twice with different occurred_at. Both are real delimiters and both land, in arrival order.
-    @Test
-    fun sessionTransition_repeatedEvictionOfOneSession_foldsOneBoundaryPerInstant() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "user", "wake up", "2026-06-23T12:30:00Z"))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T13:00:00Z", id = 2L))
-            runCurrent()
-
-            assertEquals(listOf("boundary:IdleEvict", "m1", "boundary:IdleEvict"), threadShape(emissions.last()))
-            assertEquals(
-                listOf(Instant.parse("2026-06-23T12:00:00Z"), Instant.parse("2026-06-23T13:00:00Z")),
-                boundariesOf(emissions.last()).map { it.occurredAt },
-            )
-        }
 
     // #775 AC #2: a frame repeating a held boundary's pair AND occurred_at is the same boundary, and adds no
     // second row — whatever arrived in between keeps its place.
-    @Test
-    fun sessionTransition_repeatOfAHeldBoundary_addsNoSecondRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "user", "hi", "2026-06-23T12:30:00Z"))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 2L))
-            runCurrent()
-
-            assertEquals(listOf("boundary:Clear", "m1"), threadShape(emissions.last()))
-        }
 
     // AC #4: occurred_at parses to the SessionBoundary.occurredAt Instant.
-    @Test
-    fun sessionTransition_occurredAtParsesToInstant() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:34:56Z"))
-            runCurrent()
-
-            assertEquals(Instant.parse("2026-06-23T12:34:56Z"), boundariesOf(emissions.last()).single().occurredAt)
-        }
 
     // AC #5: a malformed payload (missing required field) and an unparseable occurred_at are each dropped
     // without crashing the lone collector — a later valid envelope still folds.
-    @Test
-    fun sessionTransition_malformedDropped_collectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Missing the required new_session_id → SerializationException → dropped.
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "session_transition",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","previous_session_id":"s1","reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
-                        ),
-                ),
-            )
-            // Unparseable occurred_at → Instant.parse throws → dropped.
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "not-a-timestamp"))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "clear"))
-            runCurrent()
-            assertEquals(listOf("boundary:Clear"), threadShape(emissions.last()))
-        }
 
     // AC #5: round-trip against the v2 server message set — backfill chunk, then live messages
     // interleaved with session_transitions across two conversations, yields the expected ordered
     // List<ThreadItem> with boundaries folded into the matching conversation only.
-    @Test
-    fun sessionTransition_roundTripAgainstV2MessageSet() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(messageChunkEnvelope(listOf(chunkRow("c1", "h1", "user", "history"))))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "user", "hi", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-            pump.push(sessionTransitionEnvelope("c2", "x1", "x2", "idle_evict"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "user", "again", "2026-05-31T10:02:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("h1", "m1", "boundary:Clear", "m2"), threadShape(c1.last()))
-            assertEquals(listOf("boundary:IdleEvict"), threadShape(c2.last()))
-        }
 
     // ---- #578: fold new_session_id into the projection Conversation.currentSessionId -------------
 
     // #578 AC #1/#4: a session_transition on the relay path folds new_session_id into the projection
     // Conversation's currentSessionId, and observeConversations surfaces the updated id (the conversation
     // stays present and unduplicated).
-    @Test
-    fun sessionTransition_foldsNewSessionIdIntoConversationCurrentSessionId() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectConversations(repo, ConversationFilter.All)
-            runCurrent()
-
-            pump.push(
-                conversationsEnvelope(
-                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
-                ),
-            )
-            runCurrent()
-            // Pre-fold: the wire summary omits session identity, so currentSessionId defaults to "".
-            assertEquals("", emissions.last().single().currentSessionId)
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(listOf("c1"), emissions.last().map { it.id })
-            assertEquals("s2", emissions.last().single { it.id == "c1" }.currentSessionId)
-        }
 
     // #578 AC #2: a session_transition for a conversation_id absent from the projection is a no-op — no
     // phantom entry, no currentSessionId change, and (conflation) no fresh emission.
-    @Test
-    fun sessionTransition_absentConversation_isNoOp() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectConversations(repo, ConversationFilter.All)
-            runCurrent()
-
-            pump.push(
-                conversationsEnvelope(
-                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
-                ),
-            )
-            runCurrent()
-            val emissionCountBefore = emissions.size
-
-            // c2 is not in the projection.
-            pump.push(sessionTransitionEnvelope("c2", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(listOf("c1"), emissions.last().map { it.id })
-            assertEquals("", emissions.last().single().currentSessionId)
-            // Element-equal list ⇒ StateFlow conflation suppresses re-emission.
-            assertEquals(emissionCountBefore, emissions.size)
-        }
 
     // #578 AC #3 (fail-closed): without `interactive` negotiated, a well-formed session_transition leaves
     // currentSessionId unchanged — same gate as the #336 boundary fold.
-    @Test
-    fun sessionTransition_capabilityGateClosed_leavesCurrentSessionIdUnchanged() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val emissions = collectConversations(repo, ConversationFilter.All)
-            runCurrent()
-
-            pump.push(
-                conversationsEnvelope(
-                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
-                ),
-            )
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals("", emissions.last().single().currentSessionId)
-        }
 
     // #578: a transition arriving before any conversations snapshot (null projection) emits nothing and
     // does not crash — pins the current?.map null-safety.
-    @Test
-    fun sessionTransition_nullProjection_emitsNothingAndDoesNotCrash() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectConversations(repo, ConversationFilter.All)
-            runCurrent()
-
-            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
-            runCurrent()
-
-            assertEquals(emptyList<List<Conversation>>(), emissions)
-        }
 
     // ---- #609: fold unrecognized_message into the thread as ThreadItem.UnrecognizedMessage -------
 
     // AC #1: a well-formed frame folds one row carrying all four wire fields verbatim, plus a stamped
     // arrival instant (the wire carries no timestamp) and a client-owned id.
-    @Test
-    fun unrecognizedMessage_foldsRowCarryingWireFieldsVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            val before = Clock.System.now()
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble","x":1}"""))
-            runCurrent()
-            val after = Clock.System.now()
-
-            val row = unrecognizedRowsOf(emissions.last()).single()
-            assertEquals(UnrecognizedSite.LineType, row.site)
-            assertEquals("wobble", row.messageType)
-            assertEquals("""{"type":"wobble","x":1}""", row.raw)
-            assertFalse(row.truncated)
-            assertTrue("occurredAt is stamped from the wall clock", row.occurredAt >= before && row.occurredAt <= after)
-            assertTrue("id is non-empty", row.id.isNotEmpty())
-        }
 
     // AC #1: the row interleaves by arrival order with the live `message` rows in the same thread.
-    @Test
-    fun unrecognizedMessage_interleavesWithMessagesInArrivalOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            runCurrent()
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", "{}"))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "unrecognized:LineType", "m2"), threadShape(emissions.last()))
-        }
 
     // AC #1: each of the six closed-set site values maps to its UnrecognizedSite constant (#1109 added
     // the two Codex sites).
-    @Test
-    fun unrecognizedMessage_eachSiteMapsToItsConstant() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
-            pump.push(unrecognizedMessageEnvelope("c1", "assistant_block", "b", "{}", id = 2L))
-            pump.push(unrecognizedMessageEnvelope("c1", "user_block", "c", "{}", id = 3L))
-            pump.push(unrecognizedMessageEnvelope("c1", "undecodable", "", "{}", id = 4L))
-            pump.push(unrecognizedMessageEnvelope("c1", "codex_method", "error", "{}", id = 5L))
-            pump.push(unrecognizedMessageEnvelope("c1", "codex_item", "webSearch", "{}", id = 6L))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    UnrecognizedSite.LineType,
-                    UnrecognizedSite.AssistantBlock,
-                    UnrecognizedSite.UserBlock,
-                    UnrecognizedSite.Undecodable,
-                    UnrecognizedSite.CodexMethod,
-                    UnrecognizedSite.CodexItem,
-                ),
-                unrecognizedRowsOf(emissions.last()).map { it.site },
-            )
-        }
 
     // AC #1: `truncated` round-trips both ways — `false` is a value, not an absence, so it must never be
     // read through truthiness nor defaulted.
-    @Test
-    fun unrecognizedMessage_truncatedRoundTripsBothWays() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "cut...", truncated = true))
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "whole", truncated = false, id = 2L))
-            runCurrent()
-
-            assertEquals(listOf(true, false), unrecognizedRowsOf(emissions.last()).map { it.truncated })
-        }
 
     // AC #1: an empty message_type (the `undecodable` site — nothing decoded, so no type was read) folds a
     // row carrying "" rather than being dropped as malformed.
-    @Test
-    fun unrecognizedMessage_emptyMessageTypeOnUndecodableSite_folds() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "undecodable", "", "not json at all"))
-            runCurrent()
-
-            val row = unrecognizedRowsOf(emissions.last()).single()
-            assertEquals(UnrecognizedSite.Undecodable, row.site)
-            assertEquals("", row.messageType)
-            assertEquals("not json at all", row.raw)
-        }
 
     // AC #1: repeats are never coalesced — two byte-identical frames yield two rows with distinct ids, so
     // the thread's LazyColumn can key them apart. How often the frame fires is the signal; merging hides it.
-    @Test
-    fun unrecognizedMessage_backToBackRepeats_produceTwoRowsWithDistinctIds() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble"}"""))
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble"}""", id = 2L))
-            runCurrent()
-
-            val rows = unrecognizedRowsOf(emissions.last())
-            assertEquals(listOf("unrecognized:LineType", "unrecognized:LineType"), threadShape(emissions.last()))
-            assertEquals(2, rows.size)
-            assertNotEquals("repeats must be keyable apart", rows[0].id, rows[1].id)
-        }
 
     // AC #4: a site outside the closed set drops that one frame without killing the collector — a later
     // well-formed frame on the same conversation still folds.
-    @Test
-    fun unrecognizedMessage_unknownSite_droppedCollectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "wormhole", "a", "{}"))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "{}", id = 2L))
-            runCurrent()
-            assertEquals(listOf("unrecognized:LineType"), threadShape(emissions.last()))
-        }
 
     // AC #4: a malformed payload drops that one frame and the lone collector survives. Both probes use a
     // genuinely wrong shape (a missing required field; an object where a String belongs) — a *quoted*
     // primitive is a known false green, since kotlinx's tree decoder accepts it even at isLenient = false.
-    @Test
-    fun unrecognizedMessage_malformedDropped_collectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Missing the required `truncated` → SerializationException → dropped.
-            pump.push(unrecognizedProbe(1L, """{"conversation_id":"c1","site":"line_type","message_type":"a","raw":"{}"}"""))
-            // An object where `raw` declares a String → wrong-typed → dropped.
-            pump.push(
-                unrecognizedProbe(
-                    2L,
-                    """{"conversation_id":"c1","site":"line_type","message_type":"a","raw":{"n":1},"truncated":false}""",
-                ),
-            )
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "{}", id = 3L))
-            runCurrent()
-            assertEquals(listOf("unrecognized:LineType"), threadShape(emissions.last()))
-        }
 
     // AC #2 (fail-closed): without `interactive` negotiated, a well-formed frame folds nothing.
-    @Test
-    fun unrecognizedMessage_capabilityGateClosed_foldsNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-        }
 
     // AC #2 (fail-closed): a negotiated set with another token but NOT `interactive` also folds nothing.
-    @Test
-    fun unrecognizedMessage_capabilityGateUnrelated_foldsNothing() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-        }
 
     // AC #1: the row routes strictly by its payload conversation_id — a frame naming "c2" never appears in
     // "c1"'s thread, and surfaces only in "c2"'s.
-    @Test
-    fun unrecognizedMessage_routesByConversationId_neverCrossRoutes() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(unrecognizedMessageEnvelope("c2", "line_type", "a", "{}"))
-            runCurrent()
-
-            assertEquals(emptyList<String>(), threadShape(c1.last()))
-            assertEquals(listOf("unrecognized:LineType"), threadShape(c2.last()))
-        }
 
     // AC #3: the frame opens/closes/alters no turn, surfaces on no live-event stream, and clears neither a
     // stall nor any other conversation status — while its own row still lands.
-    @Test
-    fun unrecognizedMessage_inertTowardNeighbours_keepsStallAndEmitsNoLiveEvent() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            val stalls = collectStall(repo, "c1")
-            val apiRetry = collectApiRetry(repo, "c1")
-            val compacting = collectCompacting(repo, "c1")
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(stallEnvelope("c1"))
-            runCurrent()
-            assertEquals(listOf(false, true), stalls)
-
-            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}", id = 2L))
-            runCurrent()
-
-            assertEquals("an unparseable message is not turn forward progress — the stall stands", listOf(false, true), stalls)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
-            assertEquals(listOf(false), compacting)
-            assertEquals(listOf("unrecognized:LineType"), threadShape(thread.last()))
-        }
 
     // ---- #873: fold banner into the thread as ThreadItem.Banner ---------------------------------
 
     // AC #1: one row, text verbatim (sanitizing is the renderer's), identity from the envelope ts.
-    @Test
-    fun banner_foldsRowCarryingTextVerbatimStampedWithEnvelopeTs() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(bannerEnvelope("c1", "warning", text = "Blocked\u001b[31m by hook", truncated = true))
-            runCurrent()
-
-            val row = bannerRowsOf(emissions.last()).single()
-            assertEquals(BannerLevel.Warning, row.level)
-            assertEquals("Blocked\u001b[31m by hook", row.text)
-            assertTrue(row.truncated)
-            assertEquals(Instant.parse(TS), row.occurredAt)
-        }
 
     // AC #1: warning reads as a warning; info as Info (#1359); every other level, including empty and
     // unknown, as a notice.
-    @Test
-    fun banner_everyLevelButWarningAndInfo_mapsToNotice() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            listOf("warning", "info", "notice", "suggestion", "", "brand-new").forEachIndexed { i, level ->
-                pump.push(bannerEnvelope("c1", level, ts = "2026-05-31T00:00:0${i}Z", id = i + 1L))
-            }
-            runCurrent()
-
-            assertEquals(
-                listOf(BannerLevel.Warning, BannerLevel.Info) + List(4) { BannerLevel.Notice },
-                bannerRowsOf(emissions.last()).map { it.level },
-            )
-        }
 
     // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
-    @Test
-    fun banner_interleavesInArrivalOrderAndNeverCrossRoutes() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            pump.push(bannerEnvelope("c1", "warning", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "banner:Warning", "m2"), threadShape(c1.last()))
-            assertEquals(emptyList<String>(), threadShape(c2.last()))
-        }
 
     // AC #2: (type, ts) is the join key, so a repeat of one ts is one row and a new ts is another.
-    @Test
-    fun banner_repeatOfOneTimestamp_foldsOnce_distinctTimestampsFoldTwice() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(bannerEnvelope("c1", "warning", ts = TS))
-            pump.push(bannerEnvelope("c1", "warning", ts = TS, id = 2L))
-            pump.push(bannerEnvelope("c1", "warning", ts = "2026-05-31T00:00:01Z", id = 3L))
-            runCurrent()
-
-            assertEquals(listOf("banner:Warning", "banner:Warning"), threadShape(emissions.last()))
-        }
 
     // AC #3: stops_turn is a report — no live event, the stall stands, no status indicator moves.
-    @Test
-    fun banner_stopsTurn_changesNoTurnOrStatusState() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            val stalls = collectStall(repo, "c1")
-            val apiRetry = collectApiRetry(repo, "c1")
-            val compacting = collectCompacting(repo, "c1")
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(stallEnvelope("c1"))
-            runCurrent()
-            pump.push(bannerEnvelope("c1", "warning", stopsTurn = true, id = 2L))
-            runCurrent()
-
-            assertEquals(listOf(false, true), stalls)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
-            assertEquals(listOf(false), compacting)
-            assertEquals(listOf("banner:Warning"), threadShape(thread.last()))
-        }
 
     // AC #3: a malformed payload or ts drops that one frame; the lone collector survives.
-    @Test
-    fun banner_malformedDropped_collectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Missing the required stops_turn.
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "banner",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement("""{"conversation_id":"c1","level":"warning","text":"x","truncated":false}"""),
-                ),
-            )
-            // An object where text declares a String.
-            pump.push(
-                Envelope(
-                    id = 2L,
-                    type = "banner",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","level":"warning","text":{"n":1},"truncated":false,"stops_turn":false}""",
-                        ),
-                ),
-            )
-            // A ts that is no instant.
-            pump.push(bannerEnvelope("c1", "warning", ts = "yesterday", id = 3L))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(bannerEnvelope("c1", "notice", id = 4L))
-            runCurrent()
-            assertEquals(listOf("banner:Notice"), threadShape(emissions.last()))
-        }
 
     // AC #3 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
-    @Test
-    fun banner_capabilityGateClosedOrUnrelated_foldsNothing() =
-        runTest {
-            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
-                val emissions = collectMessages(repo, "c1")
-                runCurrent()
-
-                pump.push(bannerEnvelope("c1", "warning"))
-                runCurrent()
-
-                assertEquals(emptyList<String>(), threadShape(emissions.last()))
-            }
-        }
 
     // ---- #875: fold model_refusal_fallback / model_refusal_no_fallback into the thread -----------
 
     // AC #1: each frame adds one row carrying claude's values verbatim, identity from the envelope ts.
-    @Test
-    fun modelRefusal_bothFramesFoldOneRowEachCarryingValuesVerbatim() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(refusalEnvelope("c1", fallbackModel = "claude-sonnet-5", banner = "Retried\u001b[31m on sonnet"))
-            pump.push(refusalEnvelope("c1", fallbackModel = null, originalModel = "", banner = "", ts = "2026-05-31T00:00:01Z", id = 2L))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "Retried\u001b[31m on sonnet", false, Instant.parse(TS)),
-                    ThreadItem.ModelRefusal("", null, "", false, Instant.parse("2026-05-31T00:00:01Z")),
-                ),
-                refusalRowsOf(emissions.last()),
-            )
-        }
 
     // AC #2: a banner the daemon cut is marked; a null report or one naming other fields is not.
-    @Test
-    fun modelRefusal_bannerNamedInTruncatedFields_isMarkedCut() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", truncatedFields = """["original_model","banner"]"""))
-            pump.push(refusalEnvelope("c1", fallbackModel = null, truncatedFields = """["banner"]""", ts = "2026-05-31T00:00:01Z", id = 2L))
-            pump.push(
-                refusalEnvelope(
-                    "c1",
-                    fallbackModel = "b",
-                    truncatedFields = """["original_model"]""",
-                    ts = "2026-05-31T00:00:02Z",
-                    id = 3L,
-                ),
-            )
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", truncatedFields = "null", ts = "2026-05-31T00:00:03Z", id = 4L))
-            runCurrent()
-
-            assertEquals(listOf(true, true, false, false), refusalRowsOf(emissions.last()).map { it.bannerTruncated })
-        }
 
     // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
-    @Test
-    fun modelRefusal_interleavesInArrivalOrderAndNeverCrossRoutes() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "refusal:fallback", "m2"), threadShape(c1.last()))
-            assertEquals(emptyList<String>(), threadShape(c2.last()))
-        }
 
     // AC #3: (type, ts) is the join key — a repeat is one row, a new ts or the sibling type is another.
-    @Test
-    fun modelRefusal_repeatOfOneTypeAndTimestamp_foldsOnce() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = TS))
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = TS, id = 2L))
-            pump.push(refusalEnvelope("c1", fallbackModel = null, ts = TS, id = 3L))
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = "2026-05-31T00:00:01Z", id = 4L))
-            runCurrent()
-
-            assertEquals(
-                listOf("refusal:fallback", "refusal:no-fallback", "refusal:fallback"),
-                threadShape(emissions.last()),
-            )
-        }
 
     // AC #4: a refusal is a report — no live event, the stall stands, the model menu and rows are untouched.
-    @Test
-    fun modelRefusal_changesNoTurnStatusModelOrExistingRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            val stalls = collectStall(repo, "c1")
-            val apiRetry = collectApiRetry(repo, "c1")
-            val compacting = collectCompacting(repo, "c1")
-            val modelMenu = collectModelMenu(repo, "c1")
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "partial answer", "2026-05-31T10:00:00Z"))
-            pump.push(stallEnvelope("c1"))
-            runCurrent()
-            val before = thread.last()
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", id = 2L))
-            pump.push(refusalEnvelope("c1", fallbackModel = null, ts = "2026-05-31T00:00:01Z", id = 3L))
-            runCurrent()
-
-            assertEquals(listOf(false, true), stalls)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
-            assertEquals(listOf(false), compacting)
-            assertEquals(listOf<ModelMenu?>(null), modelMenu)
-            assertEquals(before, thread.last().take(before.size))
-            assertEquals(listOf("m1", "refusal:fallback", "refusal:no-fallback"), threadShape(thread.last()))
-        }
 
     // AC #4: a malformed payload or ts drops that one frame; the lone collector survives.
-    @Test
-    fun modelRefusal_malformedDropped_collectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Missing the required fallback_model.
-            pump.push(
-                refusalProbe(
-                    1L,
-                    "model_refusal_fallback",
-                    """{"conversation_id":"c1","original_model":"a","scope":"session","refusal_category":"x","banner":"",""" +
-                        """"truncated_fields":null,"dropped_fields":null}""",
-                ),
-            )
-            // An object where banner declares a String.
-            pump.push(
-                refusalProbe(
-                    2L,
-                    "model_refusal_no_fallback",
-                    """{"conversation_id":"c1","original_model":"a","refusal_category":"x","banner":{"n":1},""" +
-                        """"truncated_fields":null,"dropped_fields":null}""",
-                ),
-            )
-            // A string where truncated_fields declares an array.
-            pump.push(
-                refusalProbe(
-                    3L,
-                    "model_refusal_no_fallback",
-                    """{"conversation_id":"c1","original_model":"a","refusal_category":"x","banner":"",""" +
-                        """"truncated_fields":"banner","dropped_fields":null}""",
-                ),
-            )
-            // A ts that is no instant.
-            pump.push(refusalEnvelope("c1", fallbackModel = "b", ts = "yesterday", id = 4L))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(refusalEnvelope("c1", fallbackModel = null, id = 5L))
-            runCurrent()
-            assertEquals(listOf("refusal:no-fallback"), threadShape(emissions.last()))
-        }
 
     // AC #4 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
-    @Test
-    fun modelRefusal_capabilityGateClosedOrUnrelated_foldsNothing() =
-        runTest {
-            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
-                val emissions = collectMessages(repo, "c1")
-                runCurrent()
-
-                pump.push(refusalEnvelope("c1", fallbackModel = "b"))
-                pump.push(refusalEnvelope("c1", fallbackModel = null, id = 2L))
-                runCurrent()
-
-                assertEquals(emptyList<String>(), threadShape(emissions.last()))
-            }
-        }
 
     // ---- #874: fold compaction_boundary into the thread as ThreadItem.CompactionBoundary ---------
 
     // AC #1: one row carrying claude's counts and the manual trigger, identity from the envelope ts.
-    @Test
-    fun compactionBoundary_foldsRowStampedWithEnvelopeTs() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(compactionEnvelope("c1"))
-            runCurrent()
-
-            assertEquals(
-                listOf(ThreadItem.CompactionBoundary(24000L, 3000L, manual = true, occurredAt = Instant.parse(TS))),
-                compactionRowsOf(emissions.last()),
-            )
-        }
 
     // AC #1: a null, missing or invalid count claims no size; only the exact `manual` token reads as manual.
-    @Test
-    fun compactionBoundary_nullMissingOrInvalidCount_claimsNoSize_onlyManualIsManual() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(compactionEnvelope("c1", trigger = "auto", post = "null", ts = "2026-05-31T00:00:01Z", id = 1L))
-            pump.push(compactionProbe(2L, """{"conversation_id":"c1","trigger":""}""", ts = "2026-05-31T00:00:02Z"))
-            pump.push(compactionEnvelope("c1", trigger = "Manual", pre = "-5", ts = "2026-05-31T00:00:03Z", id = 3L))
-            pump.push(compactionEnvelope("c1", pre = "9007199254740992", post = "0", ts = "2026-05-31T00:00:04Z", id = 4L))
-            runCurrent()
-
-            assertEquals(
-                listOf(
-                    "compaction:24000->null:false",
-                    "compaction:null->null:false",
-                    "compaction:null->3000:false",
-                    "compaction:null->0:true",
-                ),
-                threadShape(emissions.last()),
-            )
-        }
 
     // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
-    @Test
-    fun compactionBoundary_interleavesInArrivalOrderAndNeverCrossRoutes() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val c1 = collectMessages(repo, "c1")
-            val c2 = collectMessages(repo, "c2")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
-            pump.push(compactionEnvelope("c1", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
-            runCurrent()
-
-            assertEquals(listOf("m1", "compaction:24000->3000:true", "m2"), threadShape(c1.last()))
-            assertEquals(emptyList<String>(), threadShape(c2.last()))
-        }
 
     // AC #2: (type, ts) is the join key, so a repeat of one ts is one row and a new ts is another.
-    @Test
-    fun compactionBoundary_repeatOfOneTimestamp_foldsOnce_distinctTimestampsFoldTwice() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(compactionEnvelope("c1", ts = TS))
-            pump.push(compactionEnvelope("c1", ts = TS, id = 2L))
-            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:01Z", id = 3L))
-            runCurrent()
-
-            assertEquals(2, compactionRowsOf(emissions.last()).size)
-        }
 
     // AC #3: no live event, no stall cleared, no compacting indicator moved — with or without a prior edge.
-    @Test
-    fun compactionBoundary_changesNoTurnOrStatusState() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            val stalls = collectStall(repo, "c1")
-            val apiRetry = collectApiRetry(repo, "c1")
-            val compacting = collectCompacting(repo, "c1")
-            val thread = collectMessages(repo, "c1")
-            runCurrent()
-
-            // No compacting edge before it.
-            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:01Z", id = 1L))
-            runCurrent()
-            pump.push(compactingEnvelope("c1", active = true, id = 2L))
-            pump.push(stallEnvelope("c1"))
-            runCurrent()
-            // One arriving while compacting is still active leaves it active.
-            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:02Z", id = 3L))
-            runCurrent()
-
-            assertEquals(listOf(false, true), stalls)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
-            assertEquals(listOf(false, true), compacting)
-            assertEquals(2, compactionRowsOf(thread.last()).size)
-        }
 
     // AC #3: a malformed payload or ts drops that one frame; the lone collector survives.
-    @Test
-    fun compactionBoundary_malformedDropped_collectorSurvives() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Missing the required trigger.
-            pump.push(compactionProbe(1L, """{"conversation_id":"c1","pre_tokens":1,"post_tokens":1}"""))
-            // A count that is no integer.
-            pump.push(compactionEnvelope("c1", pre = "1.5", id = 2L))
-            // A count that is a string.
-            pump.push(compactionEnvelope("c1", post = "\"many\"", id = 3L))
-            // An object where conversation_id declares a String.
-            pump.push(compactionProbe(4L, """{"conversation_id":{"n":1},"trigger":"manual","pre_tokens":1,"post_tokens":1}"""))
-            // A ts that is no instant.
-            pump.push(compactionEnvelope("c1", ts = "yesterday", id = 5L))
-            runCurrent()
-            assertEquals(emptyList<String>(), threadShape(emissions.last()))
-
-            pump.push(compactionEnvelope("c1", id = 6L))
-            runCurrent()
-            assertEquals(listOf("compaction:24000->3000:true"), threadShape(emissions.last()))
-        }
 
     // AC #3 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
-    @Test
-    fun compactionBoundary_capabilityGateClosedOrUnrelated_foldsNothing() =
-        runTest {
-            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
-                val pump = FakeSessionPump()
-                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
-                val emissions = collectMessages(repo, "c1")
-                runCurrent()
-
-                pump.push(compactionEnvelope("c1"))
-                runCurrent()
-
-                assertEquals(emptyList<String>(), threadShape(emissions.last()))
-            }
-        }
 
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
     // out-of-order (smaller) event_id leaves it unchanged.
-    @Test
-    fun replayCursor_advancesOnInteractiveFrames_ignoresOutOfOrder() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            RemoteConversationRepository(
-                pump,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
-            runCurrent()
-            assertEquals(10L, cursor.latest)
-
-            pump.push(turnStateEnvelope("c1", "responding", eventId = 20))
-            runCurrent()
-            assertEquals(20L, cursor.latest)
-
-            pump.push(turnStateEnvelope("c1", "idle", eventId = 15))
-            runCurrent()
-            assertEquals(20L, cursor.latest)
-        }
 
     // AC #3: a non-interactive frame (no event_id) leaves the cursor unchanged.
-    @Test
-    fun replayCursor_nonInteractiveFrame_leavesCursorUnchanged() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            RemoteConversationRepository(
-                pump,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 7))
-            runCurrent()
-            assertEquals(7L, cursor.latest)
-
-            // A `conversations` snapshot carries no event_id → the cursor must not move.
-            pump.push(conversationsEnvelope(MIXED_FIXTURE))
-            runCurrent()
-            assertEquals(7L, cursor.latest)
-        }
 
     // AC #4 / defence-in-depth: without `interactive` negotiated, an injected event_id never advances
     // a cursor the phone will never advertise.
-    @Test
-    fun replayCursor_gateClosed_doesNotRecord() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            RemoteConversationRepository(
-                pump,
-                backgroundScope,
-                negotiatedCapabilities = { emptySet() },
-                replayCursor = cursor,
-            )
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 99))
-            runCurrent()
-            assertNull(cursor.latest)
-        }
 
     // Envelope-level recording is independent of payload decode: a frame with a valid event_id but a
     // malformed structured payload (dropped by decodeLiveSessionEvent) still advances the cursor.
-    @Test
-    fun replayCursor_advancesEvenWhenPayloadMalformed() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            val repo =
-                RemoteConversationRepository(
-                    pump,
-                    backgroundScope,
-                    negotiatedCapabilities = { setOf("interactive") },
-                    replayCursor = cursor,
-                )
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            // `tool_use` missing the required tool_use_id → the payload decode drops the event …
-            pump.push(
-                Envelope(
-                    id = 1L,
-                    type = "tool_use",
-                    ts = TS,
-                    payload =
-                        MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
-                        ),
-                    eventId = 33,
-                ),
-            )
-            runCurrent()
-
-            // … but the envelope-level event_id still advanced the cursor.
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-            assertEquals(33L, cursor.latest)
-        }
 
     // AC #4: the cursor survives a reconnect — a fresh per-connection repo sharing one cursor (as the
     // coordinator hands it over) reads the high-water mark recorded by the previous connection's repo.
-    @Test
-    fun replayCursor_survivesReconnect_viaSharedCursor() =
-        runTest {
-            val cursor = ReplayCursor()
-
-            val pump1 = FakeSessionPump()
-            RemoteConversationRepository(
-                pump1,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-            pump1.push(turnStateEnvelope("c1", "thinking", eventId = 12))
-            runCurrent()
-            assertEquals(12L, cursor.latest)
-
-            // Reconnect: a brand-new repo over a fresh pump, handed the same cursor.
-            val pump2 = FakeSessionPump()
-            RemoteConversationRepository(
-                pump2,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-            // Readable before the new connection observes anything (the hello-build moment, #413).
-            assertEquals(12L, cursor.latest)
-
-            pump2.push(turnStateEnvelope("c1", "responding", eventId = 13))
-            runCurrent()
-            assertEquals(13L, cursor.latest)
-        }
 
     // ---- #417: the `resync` marker — reset the replay cursor + surface the gap -------------------
 
     // AC #1: a `resync` resets the cursor, so the next hello-build omits last_event_id. Asserting
     // `cursor.latest == null` is the proxy for "next hello omits it" — #416's MobileWireCodecTest
     // proves omit-on-null on the wire (MobileJson has explicitNulls = false).
-    @Test
-    fun resync_resetsCursor_soNextHelloOmitsLastEventId() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            RemoteConversationRepository(
-                pump,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-
-            // Pre-advance the cursor via an interactive frame — the position a reconnect would advertise.
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
-            runCurrent()
-            assertEquals(10L, cursor.latest)
-
-            pump.push(resyncEnvelope("c1"))
-            runCurrent()
-            assertNull("resync clears the cursor → next hello omits last_event_id", cursor.latest)
-        }
 
     // AC #2: a `resync` surfaces the gap as a ReplayGap on the existing liveSessionEvents stream.
-    @Test
-    fun resync_surfacesReplayGapOnLiveEvents() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(resyncEnvelope("c1"))
-            runCurrent()
-            assertEquals(listOf(LiveSessionEvent.ReplayGap("c1")), events)
-        }
 
     // AC #2 (fail-closed): without `interactive` negotiated, a well-formed `resync` neither resets the
     // cursor (never advanced under the closed gate anyway) nor surfaces a gap.
-    @Test
-    fun resync_capabilityGateClosed_noResetNoSurface() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            val repo =
-                RemoteConversationRepository(
-                    pump,
-                    backgroundScope,
-                    negotiatedCapabilities = { emptySet() },
-                    replayCursor = cursor,
-                )
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(resyncEnvelope("c1"))
-            runCurrent()
-            assertNull(cursor.latest)
-            assertEquals(emptyList<LiveSessionEvent>(), events)
-        }
 
     // Malformed/absent conversation_id still resets the cursor (the safety action is unconditional on the
     // type match — the cursor is process-global), but surfaces no ReplayGap (it needs an id to route).
     // A later valid event still processes, proving the single inbound collector survived.
-    @Test
-    fun resync_malformedConversationId_stillResetsButNoSurface() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            val repo =
-                RemoteConversationRepository(
-                    pump,
-                    backgroundScope,
-                    negotiatedCapabilities = { setOf("interactive") },
-                    replayCursor = cursor,
-                )
-            val events = collectLiveEvents(repo)
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
-            runCurrent()
-            assertEquals(10L, cursor.latest)
-
-            // Missing conversation_id, and a wrong-typed (number) one → no id decodes → no ReplayGap …
-            pump.push(Envelope(id = 1L, type = "resync", ts = TS, payload = MobileJson.parseToJsonElement("""{}""")))
-            pump.push(Envelope(id = 2L, type = "resync", ts = TS, payload = MobileJson.parseToJsonElement("""{"conversation_id":123}""")))
-            runCurrent()
-            assertNull("the cursor reset happens regardless of payload shape", cursor.latest)
-            assertTrue("a malformed conversation_id surfaces no gap", events.none { it is LiveSessionEvent.ReplayGap })
-
-            // … and the collector survived: a later valid resync still surfaces the gap.
-            pump.push(resyncEnvelope("c1"))
-            runCurrent()
-            assertEquals(listOf(LiveSessionEvent.ReplayGap("c1")), events.filterIsInstance<LiveSessionEvent.ReplayGap>())
-        }
 
     // Robustness: after a resync clears the cursor, a later interactive frame re-advances it — those are
     // events the phone now genuinely holds and would legitimately advertise on the next reconnect.
-    @Test
-    fun resync_thenInteractiveFrame_readvancesCursor() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            RemoteConversationRepository(
-                pump,
-                backgroundScope,
-                negotiatedCapabilities = { setOf("interactive") },
-                replayCursor = cursor,
-            )
-            runCurrent()
-
-            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
-            runCurrent()
-            assertEquals(10L, cursor.latest)
-
-            pump.push(resyncEnvelope("c1"))
-            runCurrent()
-            assertNull(cursor.latest)
-
-            pump.push(turnStateEnvelope("c1", "responding", eventId = 30))
-            runCurrent()
-            assertEquals(30L, cursor.latest)
-        }
 
     // ---- #416 AC#3: ring-replayed events compose with the live stream on the single inbound path --
 
     // After a reconnect advertised the cursor, the daemon replays the missed tail (event_id > cursor)
     // ahead of the live stream, all on the same single inbound path. Distinct message_ids → one row
     // each, in arrival order; the cursor advances monotonically through replay-then-live.
-    @Test
-    fun replayedThenLiveMessages_areAppliedOnceAndAdvanceCursor() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            cursor.record(100) // a prior connection's high-water mark — the value the reconnect advertised
-            val repo =
-                RemoteConversationRepository(
-                    pump,
-                    backgroundScope,
-                    negotiatedCapabilities = { setOf("interactive") },
-                    replayCursor = cursor,
-                )
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            // Replayed-from-ring tail (event_id > advertised cursor), then the live stream that follows.
-            pump.push(messageEnvelope("c1", "m101", "user", "replayed-1", TS, eventId = 101))
-            pump.push(messageEnvelope("c1", "m102", "user", "replayed-2", TS, eventId = 102))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m103", "user", "live", "2026-05-31T12:00:00Z", eventId = 103))
-            runCurrent()
-
-            assertEquals(listOf("m101", "m102", "m103"), messageIds(emissions.last()))
-            assertEquals(103L, cursor.latest)
-        }
 
     // Defensive overlap: a replayed row whose message_id the live stream also carries stays one row,
     // kept as first drawn (#1351) — never a duplicate row (AC#3).
-    @Test
-    fun replayedMessageOverlappingLive_keepsHeldRowNoDuplicateRow() =
-        runTest {
-            val pump = FakeSessionPump()
-            val cursor = ReplayCursor()
-            cursor.record(100)
-            val repo =
-                RemoteConversationRepository(
-                    pump,
-                    backgroundScope,
-                    negotiatedCapabilities = { setOf("interactive") },
-                    replayCursor = cursor,
-                )
-            val emissions = collectMessages(repo, "c1")
-            runCurrent()
-
-            pump.push(messageEnvelope("c1", "m1", "user", "from-replay", TS, eventId = 101))
-            runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "user", "from-live", "2026-05-31T12:00:00Z", eventId = 102))
-            runCurrent()
-
-            val thread = emissions.last()
-            assertEquals(listOf("m1"), messageIds(thread))
-            assertEquals("from-replay", (thread[0] as ThreadItem.MessageItem).message.content)
-            assertEquals(102L, cursor.latest)
-        }
 
     // ---- #437: decode modal_shown / modal_dismissed into the modalEvents stream -----------------
 
@@ -10413,24 +6478,6 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
-     * Send [text], ack it, and return the `message_id` the repository minted (#781) — the id now on the
-     * confirmed-inserted echo in the thread, and the one a `queue_state` item would carry back if the
-     * daemon parked this message. Drains the cascade, so the caller can assert immediately afterwards.
-     */
-    private fun TestScope.sendAndAck(
-        repo: RemoteConversationRepository,
-        pump: FakeSessionPump,
-        conversationId: String,
-        text: String,
-    ): String {
-        val send = startSend(repo, conversationId, text)
-        runCurrent()
-        pump.push(ackEnvelope(pump.sent.last { it.type == "send_message" }.id))
-        runCurrent()
-        return send().getOrThrow().id
-    }
-
-    /**
      * Launch [RemoteConversationRepository.createDiscussion] on [backgroundScope] (it suspends
      * awaiting the conversation_created/error reply) and return a getter for its eventual [Result].
      * Read the result only after the correlated reply has been pushed and [runCurrent] has drained
@@ -10532,22 +6579,6 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
-     * Launch [RemoteConversationRepository.requestHistory] on [backgroundScope] (it suspends awaiting
-     * the history_page/error reply) and return a getter for its eventual [Result]. As [startArchive]:
-     * read the result only after the correlated reply has been pushed and [runCurrent] has drained.
-     */
-    private fun TestScope.startRequestHistory(
-        repo: RemoteConversationRepository,
-        conversationId: String,
-        cursor: String = "",
-        limit: Int = 0,
-    ): () -> Result<HistoryPage> {
-        var outcome: Result<HistoryPage>? = null
-        backgroundScope.launch { outcome = runCatching { repo.requestHistory(conversationId, cursor, limit) } }
-        return { requireNotNull(outcome) { "requestHistory has not completed" } }
-    }
-
-    /**
      * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
      * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -10644,21 +6675,6 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Unit>? = null
         backgroundScope.launch { outcome = runCatching { repo.cancelModal(modalId) } }
         return { requireNotNull(outcome) { "cancelModal has not completed" } }
-    }
-
-    /**
-     * Launch [RemoteConversationRepository.dropQueuedMessage] on [backgroundScope] and return a getter
-     * for its eventual [Result], mirroring [startCancelModal]. The daemon never replies to the dequeue
-     * (#859), so the call completes once the frame is sent; the getter throws if it is still suspended.
-     */
-    private fun TestScope.startDropQueuedMessage(
-        repo: RemoteConversationRepository,
-        conversationId: String,
-        queuedMessageId: Long,
-    ): () -> Result<Unit> {
-        var outcome: Result<Unit>? = null
-        backgroundScope.launch { outcome = runCatching { repo.dropQueuedMessage(conversationId, queuedMessageId) } }
-        return { requireNotNull(outcome) { "dropQueuedMessage has not completed" } }
     }
 
     private fun Envelope.withWorkspaceLabel(label: String?): Envelope =
@@ -10853,75 +6869,15 @@ class RemoteConversationRepositoryTest {
         conversationId: String,
     ): MutableList<List<ThreadItem>> {
         val emissions = mutableListOf<List<ThreadItem>>()
-        backgroundScope.launch { repo.observeMessages(conversationId).collect { emissions += it } }
+        backgroundScope.launch {
+            repo.observeAuthoritativeThread(conversationId).collect { snapshot ->
+                emissions += snapshot.pendingSends.map { ThreadItem.MessageItem(it.message) }
+            }
+        }
         return emissions
     }
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
-
-    /**
-     * Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary →
-     * "boundary:<reason>", an unrecognized row → "unrecognized:<site>" (the row type shipped in #608;
-     * #609 wired the decode arm that folds it).
-     */
-    private fun threadShape(thread: List<ThreadItem>): List<String> =
-        thread.map {
-            when (it) {
-                is ThreadItem.MessageItem -> it.message.id
-                is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
-                is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
-                is ThreadItem.Banner -> "banner:${it.level}"
-                is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
-                is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
-                is ThreadItem.BackgroundTaskLifecycle -> "task:${it.taskId}"
-                is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
-            }
-        }
-
-    /** Every [ThreadItem.SessionBoundary] in [thread], in order (#336). */
-    private fun boundariesOf(thread: List<ThreadItem>): List<ThreadItem.SessionBoundary> =
-        thread.filterIsInstance<ThreadItem.SessionBoundary>()
-
-    /** The [ToolCall] of the [Role.Tool] thread row with [id] in [thread], or null if absent (#387). */
-    private fun toolCallOf(
-        thread: List<ThreadItem>,
-        id: String,
-    ): ToolCall? =
-        thread
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .firstOrNull { it.message.id == id && it.message.role == Role.Tool }
-            ?.message
-            ?.toolCall
-
-    /** The [Role.Assistant] thread row with [id] (the turn id) in [thread], or null if absent (#337). */
-    private fun assistantRowOf(
-        thread: List<ThreadItem>,
-        id: String,
-    ): Message? =
-        thread
-            .filterIsInstance<ThreadItem.MessageItem>()
-            .firstOrNull { it.message.id == id && it.message.role == Role.Assistant }
-            ?.message
-
-    /** One `message_chunk` row JSON object (same shape as a `message` payload). */
-    private fun chunkRow(
-        conversationId: String,
-        messageId: String,
-        role: String,
-        text: String,
-    ): String = """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}"""
-
-    private fun messageChunkEnvelope(
-        rows: List<String>,
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "message_chunk",
-            ts = ts,
-            payload = MobileJson.parseToJsonElement("""{"messages":[${rows.joinToString(",")}]}"""),
-        )
 
     private fun messageEnvelope(
         conversationId: String,
@@ -10967,49 +6923,6 @@ class RemoteConversationRepositoryTest {
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
         )
-
-    private fun TestScope.collectQueue(
-        repo: RemoteConversationRepository,
-        conversationId: String,
-    ): MutableList<List<QueuedMessage>> {
-        val emissions = mutableListOf<List<QueuedMessage>>()
-        backgroundScope.launch { repo.observeQueue(conversationId).collect { emissions += it } }
-        return emissions
-    }
-
-    /**
-     * One `queued` array element. [messageId] is the client-minted `message_id` pyrycode#2092 relays
-     * verbatim (#781) — defaulted to the legal `""` ("this item correlates with no echo") so a fixture
-     * says nothing about correlation unless the case under test is about it.
-     */
-    private data class QueuedFixture(
-        val queuedMsgId: Long,
-        val text: String,
-        val ts: String,
-        val messageId: String = "",
-    )
-
-    /**
-     * A `queue_state` snapshot envelope `{conversation_id, queued:[{queued_msg_id, message_id, text, ts}]}`
-     * (#460, #781). `queued_msg_id` is emitted as a JSON **number** (the wire uint64) and `message_id` as
-     * a string; both are strict-required on the wire. An empty [items] emits `"queued":[]`.
-     */
-    private fun queueStateEnvelope(
-        conversationId: String,
-        items: List<QueuedFixture>,
-        id: Long = 1L,
-    ): Envelope {
-        val queued =
-            items.joinToString(",") {
-                """{"queued_msg_id":${it.queuedMsgId},"message_id":"${it.messageId}","text":"${it.text}","ts":"${it.ts}"}"""
-            }
-        return Envelope(
-            id = id,
-            type = "queue_state",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","queued":[$queued]}"""),
-        )
-    }
 
     private fun TestScope.collectApiRetry(
         repo: RemoteConversationRepository,
@@ -11302,148 +7215,6 @@ class RemoteConversationRepositoryTest {
         )
     }
 
-    /**
-     * An `unrecognized_message` envelope `{conversation_id, site, message_type, raw, truncated}` (#609).
-     * All five fields are always present on the wire (no `omitempty`), so the helper always emits all
-     * five — including an empty [messageType] (the `undecodable` shape) and `truncated: false`. Built
-     * through [buildJsonObject] rather than string interpolation because [raw] is arbitrary JSON text
-     * whose own quotes and braces must survive into the payload intact.
-     */
-    private fun unrecognizedMessageEnvelope(
-        conversationId: String,
-        site: String,
-        messageType: String,
-        raw: String,
-        truncated: Boolean = false,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "unrecognized_message",
-            ts = TS,
-            payload =
-                buildJsonObject {
-                    put("conversation_id", conversationId)
-                    put("site", site)
-                    put("message_type", messageType)
-                    put("raw", raw)
-                    put("truncated", truncated)
-                },
-        )
-
-    /** A raw `unrecognized_message` envelope carrying [payload] verbatim — for the malformed-payload probes. */
-    private fun unrecognizedProbe(
-        id: Long,
-        payload: String,
-    ): Envelope = Envelope(id = id, type = "unrecognized_message", ts = TS, payload = MobileJson.parseToJsonElement(payload))
-
-    /** A `banner` envelope (#873); [ts] is the envelope timestamp the row takes as its identity. */
-    private fun bannerEnvelope(
-        conversationId: String,
-        level: String,
-        text: String = "Blocked by hook",
-        truncated: Boolean = false,
-        stopsTurn: Boolean = false,
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "banner",
-            ts = ts,
-            payload =
-                buildJsonObject {
-                    put("conversation_id", conversationId)
-                    put("level", level)
-                    put("text", text)
-                    put("truncated", truncated)
-                    put("stops_turn", stopsTurn)
-                },
-        )
-
-    /**
-     * A `compaction_boundary` envelope (#874). [pre] and [post] are raw JSON literals so a test can send
-     * `null`, a negative or a non-integer; the default is the observed manual shape.
-     */
-    private fun compactionEnvelope(
-        conversationId: String,
-        trigger: String = "manual",
-        pre: String = "24000",
-        post: String = "3000",
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope =
-        compactionProbe(
-            id = id,
-            ts = ts,
-            payload = """{"conversation_id":"$conversationId","trigger":"$trigger","pre_tokens":$pre,"post_tokens":$post}""",
-        )
-
-    /** A raw `compaction_boundary` envelope carrying [payload] verbatim (#874). */
-    private fun compactionProbe(
-        id: Long,
-        payload: String,
-        ts: String = TS,
-    ): Envelope = Envelope(id = id, type = "compaction_boundary", ts = ts, payload = MobileJson.parseToJsonElement(payload))
-
-    /** Every [ThreadItem.CompactionBoundary] in [thread], in order (#874). */
-    private fun compactionRowsOf(thread: List<ThreadItem>): List<ThreadItem.CompactionBoundary> =
-        thread.filterIsInstance<ThreadItem.CompactionBoundary>()
-
-    /**
-     * A model refusal envelope (#875): `model_refusal_fallback` when [fallbackModel] is non-null, else
-     * `model_refusal_no_fallback`, each carrying exactly its own wire fields. [truncatedFields] is a raw JSON
-     * literal so a test can send `null` or an array.
-     */
-    private fun refusalEnvelope(
-        conversationId: String,
-        fallbackModel: String?,
-        originalModel: String = "claude-opus-5-5",
-        banner: String = "Claude declined this request.",
-        truncatedFields: String = "null",
-        ts: String = TS,
-        id: Long = 1L,
-    ): Envelope {
-        val common =
-            """"conversation_id":"$conversationId","original_model":"$originalModel","refusal_category":"cyber",""" +
-                """"banner":${JsonPrimitive(banner)},"truncated_fields":$truncatedFields,"dropped_fields":null"""
-        return if (fallbackModel != null) {
-            refusalProbe(id, "model_refusal_fallback", """{$common,"fallback_model":"$fallbackModel","scope":"session"}""", ts)
-        } else {
-            refusalProbe(id, "model_refusal_no_fallback", "{$common}", ts)
-        }
-    }
-
-    /** A raw model refusal envelope of [type] carrying [payload] verbatim (#875). */
-    private fun refusalProbe(
-        id: Long,
-        type: String,
-        payload: String,
-        ts: String = TS,
-    ): Envelope = Envelope(id = id, type = type, ts = ts, payload = MobileJson.parseToJsonElement(payload))
-
-    /** Every [ThreadItem.ModelRefusal] in [thread], in order (#875). */
-    private fun refusalRowsOf(thread: List<ThreadItem>): List<ThreadItem.ModelRefusal> = thread.filterIsInstance<ThreadItem.ModelRefusal>()
-
-    /** Every [ThreadItem.Banner] in [thread], in order (#873). */
-    private fun bannerRowsOf(thread: List<ThreadItem>): List<ThreadItem.Banner> = thread.filterIsInstance<ThreadItem.Banner>()
-
-    /** Every [ThreadItem.UnrecognizedMessage] in [thread], in order (#609). */
-    private fun unrecognizedRowsOf(thread: List<ThreadItem>): List<ThreadItem.UnrecognizedMessage> =
-        thread.filterIsInstance<ThreadItem.UnrecognizedMessage>()
-
-    /** A `resync` control marker `{conversation_id}` (#417) — no event_id; daemon's aged-out-of-ring signal. */
-    private fun resyncEnvelope(
-        conversationId: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "resync",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
-        )
-
     /** Stall `"c1"`, assert it flipped on, push [forwardEvent], assert it cleared. Fresh repo per call. */
     private fun TestScope.assertClearsStall(forwardEvent: Envelope) {
         val pump = FakeSessionPump()
@@ -11534,62 +7305,6 @@ class RemoteConversationRepositoryTest {
                 ),
         )
 
-    private fun toolUseEnvelope(
-        conversationId: String,
-        turnId: String,
-        toolUseId: String,
-        name: String,
-        inputSummary: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "tool_use",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","name":"$name","input_summary":"$inputSummary"}""",
-                ),
-        )
-
-    private fun toolResultEnvelope(
-        conversationId: String,
-        turnId: String,
-        toolUseId: String,
-        isError: Boolean,
-        resultSummary: String,
-        id: Long = 1L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "tool_result",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
-                ),
-        )
-
-    private fun toolDeniedEnvelope(
-        conversationId: String,
-        toolUseId: String,
-        message: String = "denied",
-        reasonType: String = "",
-        truncated: String = "null",
-        dropped: String = "null",
-    ): Envelope =
-        Envelope(
-            id = 1L,
-            type = "tool_denied",
-            ts = TS,
-            payload =
-                MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","turn_id":"t1","tool_use_id":"$toolUseId","tool_name":"Bash",""" +
-                        """"decision_reason_type":"$reasonType","decision_reason":"","message":"$message",""" +
-                        """"truncated_fields":$truncated,"dropped_fields":$dropped}""",
-                ),
-        )
-
     private fun turnEndEnvelope(
         conversationId: String,
         turnId: String,
@@ -11631,20 +7346,6 @@ class RemoteConversationRepositoryTest {
             type = "workspace_updated",
             ts = TS,
             payload = MobileJson.parseToJsonElement(rawPayload),
-            inReplyTo = inReplyTo,
-        )
-
-    /** A correlated `history_page` reply carrying [raw] verbatim, so a test can push a malformed one. */
-    private fun historyPageEnvelope(
-        inReplyTo: Long,
-        raw: String,
-        id: Long = 98L,
-    ): Envelope =
-        Envelope(
-            id = id,
-            type = "history_page",
-            ts = TS,
-            payload = MobileJson.parseToJsonElement(raw),
             inReplyTo = inReplyTo,
         )
 

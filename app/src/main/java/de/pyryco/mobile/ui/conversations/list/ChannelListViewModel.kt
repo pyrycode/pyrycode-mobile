@@ -434,9 +434,6 @@ class ChannelListViewModel(
         }
         // Recorded before the send so the row highlights on the tap, not a dispatch later.
         lastOpenedTarget.value = target
-        // The list's open path clears that host's unread and failed marks at the tap (#877); the thread's
-        // viewing handle keeps it read while it is open.
-        hostSource.markOpened(target.serverId, target.conversationId)
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 

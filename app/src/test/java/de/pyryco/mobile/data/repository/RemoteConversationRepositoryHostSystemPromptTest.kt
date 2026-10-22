@@ -268,7 +268,7 @@ class RemoteConversationRepositoryHostSystemPromptTest {
             runCurrent()
             val before = repo.observeConversations(ConversationFilter.All).first()
             assertEquals("Before", before.single().name)
-            val rowsBefore = repo.observeThreadRowCounts().first()
+            val rowsBefore = repo.observeAuthoritativeThread("conv").first()
             val read = read(repo)
             val save = write(repo, CURRENT)
             runCurrent()
@@ -289,7 +289,7 @@ class RemoteConversationRepositoryHostSystemPromptTest {
             pump.reply(readId, reading("late", DEFAULT))
             runCurrent()
             assertEquals(before, repo.observeConversations(ConversationFilter.All).first())
-            assertEquals(rowsBefore, repo.observeThreadRowCounts().first())
+            assertEquals(rowsBefore, repo.observeAuthoritativeThread("conv").first())
         }
 
     @Test

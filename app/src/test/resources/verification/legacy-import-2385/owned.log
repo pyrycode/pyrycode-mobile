@@ -1,0 +1,9 @@
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.data.cache.OwnedLegacyMigrationTest'
+Completion output below. Full output including repeated compiler warnings: /tmp/builder-2385/owned-full.log. Full compiler-warning evidence also remains in cache.log.
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 2m 22s
+33 actionable tasks: 4 executed, 29 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html

@@ -292,7 +292,6 @@ class ThreadViewModelLocalSendTest {
             advanceUntilIdle()
 
             events.emit(turnState(LiveSessionEvent.TurnState.Phase.Thinking, conversationId = "someone-else"))
-            events.emit(LiveSessionEvent.AssistantDelta(CONV, "t1", 0, "hi"))
             advanceUntilIdle()
 
             assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)

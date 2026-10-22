@@ -34,14 +34,14 @@ class RemoteConversationRepositoryTurnPhaseTest {
         }
 
     @Test
-    fun turnEnd_returnsTheConversationToIdle() =
+    fun obsoleteTurnEndCannotOverrideTheHeldLivePhase() =
         runTest {
             val (pump, repo) = repo()
             pump.push(turnState("c1", "thinking", id = 1L))
             pump.push(turnEnd("c1", id = 2L))
             runCurrent()
 
-            assertEquals(Phase.Idle, repo.observeTurnPhase("c1").first())
+            assertEquals(Phase.Thinking, repo.observeTurnPhase("c1").first())
         }
 
     /**

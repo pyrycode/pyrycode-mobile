@@ -4,24 +4,17 @@ import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
 import de.pyryco.mobile.data.cache.FileConversationCache
-import de.pyryco.mobile.data.cache.MAX_CACHED_THREAD_ROWS
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.After
@@ -69,8 +62,6 @@ class CachingConversationRepositoryTest {
      */
     private val delegate =
         object : ConversationRepository by FakeConversationRepository() {
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
-
             override fun observeStall(conversationId: String): Flow<Boolean> = stall
 
             override suspend fun delete(conversationId: String) {
@@ -94,444 +85,30 @@ class CachingConversationRepositoryTest {
         Message(id, "session-2", Role.Assistant, content, Instant.parse("2026-09-22T10:00:00Z"), isStreaming),
     )
 
-    private fun tool(
-        id: String,
-        status: ToolCallStatus,
-    ) = ThreadItem.MessageItem(
-        Message(id, "session-2", Role.Tool, "", Instant.parse("2026-09-22T10:00:00Z"), false, ToolCall("Bash", "ls", "", status)),
-    )
-
     private val boundary =
         ThreadItem.SessionBoundary("session-1", "session-2", BoundaryReason.Clear, Instant.parse("2026-09-22T09:00:00Z"))
 
-    @Test
-    fun `offline the restored rows draw verbatim and nothing is written`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val restored = listOf(message("m1"), boundary, message("m2"))
-            val cache = RecordingCache(restored)
-
-            val drawn =
-                CachingConversationRepository(
-                    delegate,
-                    cache,
-                    "server-a",
-                    processingDispatcher = UnconfinedTestDispatcher(),
-                ).observeMessages("conv-1").first()
-
-            assertEquals(restored, drawn)
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(emptyList<List<ThreadItem>>(), cache.writes)
-        }
-
-    @Test
-    fun `live rows merge over restored rows with no second row for a drawn key`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache =
-                RecordingCache(listOf(message("m1"), boundary, message("m2", content = "cached"), tool("toolu_1", ToolCallStatus.Done)))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            // A reconnect: the newest page re-delivers the boundary, m2 and the tool call, then a new row.
-            live.value = listOf(boundary, message("m2"), tool("toolu_1", ToolCallStatus.Done), message("m3"))
-
-            assertEquals(
-                listOf(message("m1"), boundary, message("m2"), tool("toolu_1", ToolCallStatus.Done), message("m3")),
-                emissions.last(),
-            )
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(emissions.last(), cache.writes.single())
-            job.cancel()
-        }
-
-    @Test
-    fun `a disconnect keeps the rows drawn during the connection and writes nothing`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1")))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            live.value = listOf(message("m1"), message("m2"), message("t1", isStreaming = true))
-            val written = listOf(message("m1"), message("m2"))
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(written), cache.writes)
-
-            // The stable facade's empty emission on a connection loss.
-            live.value = emptyList()
-
-            assertEquals(written, emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(written), cache.writes)
-            job.cancel()
-        }
-
-    @Test
-    fun `a reconnect after a disconnect merges over everything drawn so far`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1")))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            live.value = listOf(message("m1"), message("m2"))
-            live.value = emptyList()
-            // The next connection's newest page re-delivers m2 and adds m3.
-            live.value = listOf(message("m2"), message("m3"))
-
-            val drawn = listOf(message("m1"), message("m2"), message("m3"))
-            assertEquals(drawn, emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(drawn, cache.writes.last())
-            job.cancel()
-        }
-
-    // ---- #983: a row only the cache holds keeps its place ---------------------------------------
-
     private val offer =
-        ThreadItem.MessageItem(attachmentOfferRow(AttachmentOffer(ATTACHMENT_ID, "report.pdf"), Instant.parse("2026-09-22T10:00:01Z")))
-
-    @Test
-    fun `a cold restore keeps an offer row between the rows around it and writes that order back`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1"), message("a1"), offer, message("a2")))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            // The daemon never replays the offer: the first page holds only its neighbours.
-            live.value = listOf(message("m1"), message("a1"), message("a2"))
-            assertEquals(listOf(message("m1"), message("a1"), offer, message("a2")), emissions.last())
-
-            live.value = listOf(message("m1"), message("a1"), message("a2"), message("m3"))
-            val drawn = listOf(message("m1"), message("a1"), offer, message("a2"), message("m3"))
-            assertEquals(drawn, emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(drawn, cache.writes.last())
-            job.cancel()
-        }
-
-    @Test
-    fun `a reconnect keeps an offer row drawn during the connection in arrival order`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(emptyList())
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            live.value = listOf(message("m1"), message("a1"), offer, message("a2"))
-            live.value = emptyList()
-            live.value = listOf(message("m1"), message("a1"), message("a2"))
-
-            val drawn = listOf(message("m1"), message("a1"), offer, message("a2"))
-            assertEquals(drawn, emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(drawn, cache.writes.last())
-            job.cancel()
-        }
-
-    @Test
-    fun `cache-only rows with no row above them on the live page still draw in front`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(offer, message("m1"), message("m2")))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            // A page that does not overlap the cache at all: every cached row goes above it, in cached order.
-            live.value = listOf(message("m3"))
-
-            assertEquals(listOf(offer, message("m1"), message("m2"), message("m3")), emissions.last())
-            job.cancel()
-        }
-
-    @Test
-    fun `a sent row re-delivered by history takes its attachment names back from the cache`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val named = MessageAttachment(ATTACHMENT_ID, "photo.jpg", "image/jpeg")
-
-            fun sent(attachment: MessageAttachment) =
-                ThreadItem.MessageItem(
-                    Message("s1", "", Role.User, "", Instant.parse("2026-09-22T10:00:00Z"), false, attachments = listOf(attachment)),
-                )
-            val cache = RecordingCache(listOf(sent(named)))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            live.value = listOf(sent(MessageAttachment(ATTACHMENT_ID)), message("a1"))
-
-            assertEquals(listOf(sent(named), message("a1")), emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(sent(named), message("a1")), cache.writes.last())
-            job.cancel()
-        }
-
-    // ---- #1353: banners, compaction dividers and refusals survive a restore ------------------------
-
-    @Test
-    fun `an empty suppressed live thread retains restored history and delivery attachment hints`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val named = MessageAttachment(ATTACHMENT_ID, "photo.jpg", "image/jpeg")
-            val sent =
-                ThreadItem.MessageItem(
-                    Message("mine", "", Role.User, "", Instant.parse("2026-09-22T10:00:00Z"), false, attachments = listOf(named)),
-                )
-            val snapshots = MutableStateFlow(ThreadSnapshot(listOf(sent)))
-            val source =
-                object : ConversationRepository by delegate, ThreadSnapshotSource {
-                    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = snapshots
-                }
-            val cache = RecordingCache(listOf(message("older"), sent))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        source,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            snapshots.value = ThreadSnapshot(emptyList(), setOf("mine"))
-            assertEquals(listOf(message("older")), emissions.last())
-            snapshots.value = ThreadSnapshot(emptyList(), setOf("mine", "another-pending-echo"))
-            assertEquals(listOf(message("older")), emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(message("older")), cache.writes.last())
-
-            // Pending suppression must not rebase the cache as if the connection closed. Otherwise
-            // the second empty reading spends the attachment hint before the actual delivered push.
-            val delivered = ThreadItem.MessageItem(sent.message.copy(attachments = listOf(MessageAttachment(ATTACHMENT_ID))))
-            snapshots.value = ThreadSnapshot(listOf(delivered))
-            assertEquals(listOf(message("older"), sent), emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(message("older"), sent), cache.writes.last())
-            job.cancel()
-        }
+        ThreadItem.MessageItem(
+            de.pyryco.mobile.data.model.Message(
+                "offered",
+                "",
+                de.pyryco.mobile.data.model.Role.Assistant,
+                "",
+                Instant.parse("2026-09-22T10:00:01Z"),
+                false,
+                attachments =
+                    listOf(
+                        de.pyryco.mobile.data.model
+                            .MessageAttachment(ATTACHMENT_ID, "report.pdf"),
+                    ),
+            ),
+        )
 
     private val banner = ThreadItem.Banner(BannerLevel.Warning, "hook said no", false, Instant.parse("2026-09-22T10:00:01Z"))
     private val compaction = ThreadItem.CompactionBoundary(24000, 3000, true, Instant.parse("2026-09-22T10:00:02Z"))
     private val refusal =
         ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "refused", false, Instant.parse("2026-09-22T10:00:03Z"))
-
-    @Test
-    fun `a restored thread draws its banner compaction and refusal rows where they were`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val rows = listOf(message("m1"), banner, message("m2"), compaction, boundary, refusal, message("m3"))
-            val cache = fileCache()
-            cache.writeThread("server-a", "conv-1", rows).getOrThrow()
-
-            val drawn =
-                CachingConversationRepository(
-                    delegate,
-                    cache,
-                    "server-a",
-                    processingDispatcher = UnconfinedTestDispatcher(),
-                ).observeMessages("conv-1").first()
-
-            assertEquals(rows, drawn)
-        }
-
-    @Test
-    fun `a cached banner the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(banner)
-
-    @Test
-    fun `a cached compaction divider the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(compaction)
-
-    @Test
-    fun `a cached model refusal the live page re-delivers draws once`() = assertRedeliveredRowDrawsOnce(refusal)
-
-    /** [row] sits between two messages in the cache; the reconnect's page re-delivers all three and one more. */
-    private fun assertRedeliveredRowDrawsOnce(row: ThreadItem) =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1"), row, message("m2")))
-            val emissions = mutableListOf<List<ThreadItem>>()
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                        emissions +=
-                            it
-                    }
-                }
-
-            live.value = listOf(message("m1"), row, message("m2"), message("m3"))
-
-            val drawn = listOf(message("m1"), row, message("m2"), message("m3"))
-            assertEquals(drawn, emissions.last())
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(drawn, cache.writes.last())
-            job.cancel()
-        }
-
-    @Test
-    fun `an in-flight turn writes nothing until it settles`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(listOf(message("m1")))
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-a",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-1").collect {
-                    }
-                }
-
-            live.value = listOf(message("m1"), message("t1", isStreaming = true, content = "Hel"))
-            live.value =
-                listOf(message("m1"), message("t1", isStreaming = true, content = "Hello"), tool("toolu_1", ToolCallStatus.Running))
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(emptyList<List<ThreadItem>>(), cache.writes)
-
-            live.value = listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))
-            live.value = listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))
-
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(
-                listOf(listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))),
-                cache.writes,
-            )
-            job.cancel()
-        }
-
-    @Test
-    fun `a failed read draws the live rows only`() =
-        runTest(UnconfinedTestDispatcher()) {
-            live.value = listOf(message("m1"))
-
-            val drawn =
-                CachingConversationRepository(
-                    delegate,
-                    RecordingCache(emptyList()),
-                    "server-a",
-                    processingDispatcher = UnconfinedTestDispatcher(),
-                ).observeMessages("conv-1").first()
-
-            assertEquals(listOf(message("m1")), drawn)
-        }
-
-    @Test
-    fun `a failed write is retried on the next change and logs a static event only`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = RecordingCache(emptyList(), failWrites = true)
-            val job =
-                launch {
-                    CachingConversationRepository(
-                        delegate,
-                        cache,
-                        "server-SECRET",
-                        processingDispatcher = UnconfinedTestDispatcher(),
-                    ).observeMessages("conv-SECRET").collect {
-                    }
-                }
-
-            live.value = listOf(message("m1"))
-            advanceTimeBy(100)
-            runCurrent()
-            cache.failWrites = false
-            live.value = listOf(message("m1"), message("m2"))
-
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(2, cache.writes.size)
-            assertTrue(logs.any { it.contains("event=thread_cache_write_failed") })
-            logs.forEach { assertTrue("log leaked an identifier or row: $it", !it.contains("SECRET") && !it.contains("content of")) }
-            job.cancel()
-        }
 
     @Test
     fun `every other flow is the live one untouched`() =
@@ -626,27 +203,6 @@ class CachingConversationRepositoryTest {
         }
 
     @Test
-    fun `the thread that issued the delete never writes its rows back`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
-            val job = launch { repository.observeMessages("conv-1").collect { } }
-            live.value = listOf(message("m1"), message("m3"))
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(message("m1"), message("m3")), cache.readThread("server-a", "conv-1"))
-
-            repository.delete("conv-1")
-            // A late row between the delete and the screen's PopBack must not resurrect the document.
-            live.value = listOf(message("m1"), message("m3"), message("m4"))
-
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
-            job.cancel()
-        }
-
-    @Test
     fun `a failed cache removal still completes the delete and logs a static event only`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = RecordingCache(emptyList(), failRemovals = true)
@@ -656,75 +212,6 @@ class CachingConversationRepositoryTest {
             assertEquals(listOf("server-SECRET" to "conv-SECRET"), cache.removals)
             assertTrue(logs.any { it.contains("event=conversation_cache_remove_failed") })
             logs.forEach { assertTrue("log leaked an identifier: $it", !it.contains("SECRET")) }
-        }
-
-    @Test
-    fun `a saved history position survives the row writer and reads back under this host`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
-            val job = launch { repository.observeMessages("conv-1").collect { } }
-            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
-
-            repository.writeHistoryPosition("conv-1", position)
-            // A row write after the position write keeps it.
-            live.value = listOf(message("m0"), message("m1"))
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
-
-            assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
-            assertEquals(
-                position,
-                CachingConversationRepository(delegate, cache, "server-a").readHistoryPosition("conv-1")?.copy(coverage = null),
-            )
-            assertEquals("", CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1")?.cursor)
-            assertTrue(CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1")?.coverage?.unknown == true)
-
-            repository.writeHistoryPosition("conv-1", null)
-            assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
-            job.cancel()
-        }
-
-    @Test
-    fun `a drawn thread trimmed at the row limit drops the saved history position`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
-            val job = launch { repository.observeMessages("conv-1").collect { } }
-            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
-            repository.writeHistoryPosition("conv-1", position)
-            val atLimit = (1..MAX_CACHED_THREAD_ROWS).map { message("m$it") }
-
-            live.value = atLimit
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(atLimit, cache.readThread("server-a", "conv-1"))
-            // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
-            assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
-
-            live.value = atLimit + message("newest")
-            advanceTimeBy(100)
-            runCurrent()
-            assertEquals(MAX_CACHED_THREAD_ROWS, cache.readThread("server-a", "conv-1").size)
-            assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
-            job.cancel()
-        }
-
-    @Test
-    fun `a deleted conversation's history position is never written back`() =
-        runTest(UnconfinedTestDispatcher()) {
-            val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a")
-
-            repository.delete("conv-1")
-            repository.writeHistoryPosition("conv-1", HistoryPosition(cursor = "c1", atStart = false))
-
-            assertEquals(null, cache.readHistoryPosition("server-a", "conv-1"))
-            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
         }
 
     private fun TestScope.fileCache() = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))

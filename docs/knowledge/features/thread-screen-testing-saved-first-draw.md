@@ -249,7 +249,7 @@ writer traversal. A repository-wide or conversation-wide flag would break repeat
 collections. Initial nonempty/suppressed snapshots and every subsequent snapshot
 retain reconciliation, including disconnect/reconnect; cancellation still prevents
 held preparation from publishing after exit. See the
-[restore contract](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+[restore contract](caching-conversation-repository.md).
 
 The repaired twin's fragmented row-to-snapshot intervals are **1–16 ms**; direct initial
 publication takes **0 ms** at worker-log resolution. Both in-depth twins retain

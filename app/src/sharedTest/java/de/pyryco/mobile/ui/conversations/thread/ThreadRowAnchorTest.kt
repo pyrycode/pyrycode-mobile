@@ -45,6 +45,9 @@ open class ThreadRowAnchorTest {
                     items =
                         history + tool("t1"),
                     queuedMessages = queued,
+                    displayRows =
+                        (history + tool("t1")).map { ThreadRow.Delivered(it) } +
+                            queued.map { ThreadRow.Queued(it.id, it.text, null) },
                 ),
             )
         var list: LazyListState? = null
@@ -80,7 +83,12 @@ open class ThreadRowAnchorTest {
             assertTrue("reader is away from newest queued row", current.firstVisibleItemIndex > 0)
             offset = current.firstVisibleItemScrollOffset
             assertTrue("probe uses a nonzero physical-pixel offset", offset > 0)
-            state.value = state.value.copy(items = state.value.items + tool("t2"))
+            val grown = state.value.items + tool("t2")
+            state.value =
+                state.value.copy(
+                    items = grown,
+                    displayRows = grown.map { ThreadRow.Delivered(it) } + queued.map { ThreadRow.Queued(it.id, it.text, null) },
+                )
         }
         compose.mainClock.advanceTimeBy(1000)
         compose.waitForIdle()

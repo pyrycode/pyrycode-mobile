@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
+import de.pyryco.mobile.data.network.ThreadItemDto
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -15,8 +16,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -60,15 +61,117 @@ internal const val FAKE_SCREEN_SNAPSHOT_TEXT =
  * and observers re-emit on every change. Phase 4 replaces this with a
  * Ktor-backed remote implementation behind the same interface.
  */
-class FakeConversationRepository(
-    initialMessages: Map<String, List<Message>> = emptyMap(),
-) : ConversationRepository {
-    private val state =
-        MutableStateFlow<Map<String, ConversationRecord>>(
-            SEED_RECORDS.mapValues { (id, record) ->
-                initialMessages[id]?.let { record.copy(messages = it) } ?: record
-            },
-        )
+class FakeConversationRepository : ConversationRepository {
+    private val state = MutableStateFlow(SEED_RECORDS)
+
+    /** Demo daemon: supplies complete authored facts through the same route as a remote host. */
+    override val negotiatedThread: NegotiatedThread =
+        object : NegotiatedThread() {
+            override val host = "demo"
+            override val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(this))
+            override val store = AuthoritativeThreadStore()
+
+            override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+                state.map { records ->
+                    val items = records[conversationId]?.authoredItems().orEmpty()
+                    store.establishComplete(
+                        host,
+                        conversationId,
+                        "demo",
+                        items.maxOfOrNull { it.rev } ?: 0,
+                        items,
+                        store.current(host, conversationId).generation,
+                    )
+                    store.current(host, conversationId)
+                }
+
+            override suspend fun open(conversationId: String) = true
+
+            override fun older(conversationId: String) = false
+
+            override fun cancel(conversationId: String) = Unit
+        }
+
+    private fun ConversationRecord.authoredItems(): List<ThreadItemDto> =
+        buildList {
+            fun append(
+                kind: String,
+                session: String,
+                content: JsonObject,
+                active: Boolean = false,
+                status: String = "done",
+            ) {
+                val id = size.toLong() + 1
+                add(
+                    ThreadItemDto.decode(
+                        JsonObject(
+                            buildMap {
+                                put("id", JsonPrimitive(id))
+                                put("rev", JsonPrimitive(id))
+                                put("order", JsonPrimitive(id))
+                                put("kind", JsonPrimitive(kind))
+                                put("session", JsonPrimitive(session))
+                                put("agent", JsonPrimitive(if (conversation.agent == ConversationAgent.Codex) "codex" else "claude"))
+                                put("active", JsonPrimitive(active))
+                                put("status", JsonPrimitive(status))
+                                put("shown", JsonPrimitive(true))
+                                put("summary", JsonPrimitive(""))
+                                put("content", content)
+                            },
+                        ),
+                    ),
+                )
+            }
+            conversation.sessionHistory.forEachIndexed { index, sessionId ->
+                if (index > 0) {
+                    val boundary = boundariesBySessionId[sessionId]
+                    append(
+                        "session_divider",
+                        sessionId,
+                        JsonObject(
+                            buildMap {
+                                put("previous_session_id", JsonPrimitive(conversation.sessionHistory[index - 1]))
+                                put("new_session_id", JsonPrimitive(sessionId))
+                                val reason =
+                                    when (boundary?.reason) {
+                                        BoundaryReason.WorkspaceChange -> "workspace_change"
+                                        BoundaryReason.IdleEvict -> "idle_evict"
+                                        else -> "clear"
+                                    }
+                                put("reason", JsonPrimitive(reason))
+                                sessions[sessionId]?.startedAt?.let { put("occurred_at", JsonPrimitive(it.toString())) }
+                                boundary?.workspaceCwd?.let { put("workspace_cwd", JsonPrimitive(it)) }
+                            },
+                        ),
+                    )
+                }
+                messages.filter { it.sessionId == sessionId }.forEach { message ->
+                    val tool = message.toolCall
+                    val content =
+                        JsonObject(
+                            buildMap {
+                                put("message_id", JsonPrimitive(message.id))
+                                put("device_id", JsonPrimitive("demo"))
+                                put("text", JsonPrimitive(message.content))
+                                put("sent_at", JsonPrimitive(message.timestamp.toString()))
+                                if (tool != null) {
+                                    put("name", JsonPrimitive(tool.toolName))
+                                    put("input_summary", JsonPrimitive(tool.input))
+                                    put("input", JsonObject(tool.inputFields.mapValues { JsonPrimitive(it.value) }))
+                                    put("result", JsonObject(mapOf("result_summary" to JsonPrimitive(tool.output))))
+                                }
+                            },
+                        )
+                    val kind =
+                        when (message.role) {
+                            Role.User -> "user_message"
+                            Role.Assistant -> "assistant_message"
+                            Role.Tool -> if (tool?.toolName in setOf("Agent", "Task")) "agent" else "tool_call"
+                        }
+                    append(kind, sessionId, content, message.isStreaming, if (message.role == Role.User) "delivered" else "done")
+                }
+            }
+        }
 
     private val recents = MutableStateFlow<List<String>>(initialRecents())
 
@@ -88,45 +191,12 @@ class FakeConversationRepository(
                 }.sortedByDescending { it.lastUsedAt }
         }
 
-    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        state.map { records ->
-            val record = records[conversationId] ?: return@map emptyList()
-            buildThreadItems(record.messages, record.boundariesBySessionId)
-        }
-
     override fun observeLastMessage(conversationId: String): Flow<Message?> =
         state.map { records ->
             records[conversationId]?.messages?.maxByOrNull { it.timestamp }
         }
 
     override fun recentWorkspaces(): Flow<List<String>> = recents
-
-    private fun buildThreadItems(
-        messages: List<Message>,
-        boundariesBySessionId: Map<String, AuthoredBoundary>,
-    ): List<ThreadItem> {
-        if (messages.isEmpty()) return emptyList()
-        val sorted = messages.sortedBy { it.timestamp }
-        val result = ArrayList<ThreadItem>(sorted.size + sorted.size / 4)
-        var previousSessionId: String? = null
-        for (message in sorted) {
-            val prior = previousSessionId
-            if (prior != null && prior != message.sessionId) {
-                val authored = boundariesBySessionId[message.sessionId]
-                result +=
-                    ThreadItem.SessionBoundary(
-                        previousSessionId = prior,
-                        newSessionId = message.sessionId,
-                        reason = authored?.reason ?: BoundaryReason.Clear,
-                        occurredAt = message.timestamp,
-                        workspaceCwd = authored?.workspaceCwd,
-                    )
-            }
-            result += ThreadItem.MessageItem(message)
-            previousSessionId = message.sessionId
-        }
-        return result
-    }
 
     override suspend fun createDiscussion(workspace: String?): Conversation =
         insertNew(name = null, cwd = workspace ?: "", isPromoted = false)
@@ -214,7 +284,7 @@ class FakeConversationRepository(
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         state
             .map { records ->
-                records[conversationId]?.let { ConversationReadMarks(it.readUpTo, it.messages.size.toULong()) }
+                records[conversationId]?.let { ConversationReadMarks(it.readUpTo, null, it.authoredItems().size.toULong(), true) }
             }.distinctUntilChanged()
 
     override suspend fun markConversationRead(
@@ -225,7 +295,7 @@ class FakeConversationRepository(
         return try {
             state.update { records ->
                 val record = records[conversationId] ?: throw IllegalArgumentException("Unknown conversation")
-                stored = maxOf(record.readUpTo, minOf(upTo, record.messages.size.toULong()))
+                stored = maxOf(record.readUpTo, minOf(upTo, record.authoredItems().size.toULong()))
                 records + (conversationId to record.copy(readUpTo = stored))
             }
             Result.success(stored)
@@ -290,6 +360,18 @@ class FakeConversationRepository(
     // See ConversationRepository.delete contract: tolerant of unknown ids
     // (Map - missingKey returns an equals-identical map, so StateFlow does not re-emit).
     override suspend fun delete(conversationId: String) {
+        val route = negotiatedThread
+        if (route.store.current(route.host, conversationId).epoch != null) {
+            route.store.reset(route.host, conversationId, "demo")
+            route.store.establishComplete(
+                route.host,
+                conversationId,
+                "demo",
+                0,
+                emptyList(),
+                route.store.current(route.host, conversationId).generation,
+            )
+        }
         state.update { it - conversationId }
     }
 
@@ -551,6 +633,15 @@ class FakeConversationRepository(
                     record.copy(
                         conversation = updatedConversation,
                         sessions = closedSessions + (newSessionId to newSession),
+                        boundariesBySessionId =
+                            record.boundariesBySessionId +
+                                (
+                                    newSessionId to
+                                        AuthoredBoundary(
+                                            if (workspace == null) BoundaryReason.Clear else BoundaryReason.WorkspaceChange,
+                                            workspace,
+                                        )
+                                ),
                     )
             )
         }
@@ -563,72 +654,7 @@ class FakeConversationRepository(
         recents.update { current -> listOf(cwd) + current.filterNot { it == cwd } }
     }
 
-    /**
-     * One backward page of the conversation's history (#623), paged over the seeded messages this
-     * fake already holds — a real walk over real data, not a stub. Entries are ordered oldest-first
-     * and numbered from 1, so an entry's [HistoryEntry.id] is its durable position in this log and
-     * stays stable across calls.
-     *
-     * It reproduces the daemon's termination rule exactly, which is the part worth having a fake for:
-     * `atStart` is set when the fill **ran out of log**, not merely when the page came back short. So
-     * a page that fills exactly at the first entry reports `atStart` false with a usable cursor, and
-     * the call after it returns no entries with `atStart` true — the boundary a client that stopped on
-     * an empty `entries` list would get wrong. All three daemon page shapes are reachable from here.
-     *
-     * The cursor is this fake's own minting (the position of the next older entry); it is opaque to
-     * callers exactly as the daemon's is. A non-positive [limit] means "choose", matching the wire.
-     * This fake deliberately does **not** model the daemon's negative-`limit` or bad-cursor rejects:
-     * a reject is a wire behaviour with no in-memory analogue, and inventing a second exception type
-     * for it would split one condition across two types for consumers. An unknown [conversationId]
-     * does throw [IllegalArgumentException] — that one the remote surfaces as the same type.
-     *
-     * Each entry carries `type = "message"` and a `message`-shaped payload object. A [Role.Tool]
-     * message rides with the wire's documented future-additive `"tool"` role, which a consumer that
-     * does not know it treats as an unrecognised entry — the forward-compatibility path, exercised
-     * rather than asserted.
-     */
-    override suspend fun requestHistory(
-        conversationId: String,
-        cursor: String,
-        limit: Int,
-    ): HistoryPage {
-        val record = state.value[conversationId] ?: throw unknown(conversationId)
-        val log = record.messages.sortedBy { it.timestamp }
-        val pageSize = if (limit > 0) limit else FAKE_HISTORY_PAGE_SIZE
-        // The number of entries at or older than the cursor position — an empty cursor starts at the
-        // newest, and a position this fake did not mint is coerced back into the log's bounds.
-        val remaining = if (cursor.isEmpty()) log.size else cursor.toIntOrNull()?.coerceIn(0, log.size) ?: log.size
-        val take = minOf(pageSize, remaining)
-        val entries =
-            (remaining downTo remaining - take + 1).map { id ->
-                historyEntry(conversationId, log[id - 1], id.toLong())
-            }
-        val atStart = remaining < pageSize
-        return HistoryPage(
-            entries = entries,
-            cursor = if (atStart) "" else (remaining - take).toString(),
-            atStart = atStart,
-        )
-    }
-
     /** One history entry for [message] at durable log position [id] — a `message`-shaped stored frame. */
-    private fun historyEntry(
-        conversationId: String,
-        message: Message,
-        id: Long,
-    ): HistoryEntry =
-        HistoryEntry(
-            id = id,
-            type = "message",
-            payload =
-                buildJsonObject {
-                    put("conversation_id", conversationId)
-                    put("message_id", message.id)
-                    put("role", message.role.name.lowercase())
-                    put("text", message.content)
-                },
-            timestamp = message.timestamp,
-        )
 
     private fun unknown(id: String) = IllegalArgumentException("Unknown conversation: $id")
 
@@ -646,13 +672,6 @@ class FakeConversationRepository(
     )
 
     companion object {
-        /**
-         * The page size [requestHistory] substitutes when the caller asks the fake to choose
-         * (`limit <= 0`), standing in for the daemon's own default. `internal` so the boundary tests
-         * that exercise the exact-fill case share one source of truth with the rule.
-         */
-        internal const val FAKE_HISTORY_PAGE_SIZE = 20
-
         private val SEED_RECORDS: Map<String, ConversationRecord> = buildSeedRecords()
 
         private fun initialRecents(): List<String> =

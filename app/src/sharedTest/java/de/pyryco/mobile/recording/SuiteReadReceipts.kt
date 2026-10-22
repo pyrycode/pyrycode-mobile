@@ -35,7 +35,6 @@ internal class SuiteReadReceipts(
 
     private val groups = linkedMapOf<Key, Group>()
     private val metadata = mutableMapOf<Pair<String, String>, JsonObject>()
-    private val shown = mutableMapOf<Pair<String, String>, ULong>()
     private val confirmed = mutableMapOf<Pair<String, String>, ULong>()
     private val lastRequests = mutableMapOf<Pair<String, String>, ULong>()
     private val guardedSnapshots = mutableListOf<Triple<String, JsonElement, ULong>>()
@@ -45,9 +44,6 @@ internal class SuiteReadReceipts(
     private fun phone(owner: String) = owner == "phone" || owner.startsWith("phone/")
 
     private val threadReceipts = SuiteThreadReadReceipts(source)
-    private val historyRequests = mutableMapOf<Pair<String, Long>, String>()
-    private val delivered = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
-    private val phoneHistory = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
     private val normalizedRequests = mutableSetOf<Pair<String, Long>>()
     private val snapshots = mutableMapOf<String, MutableSet<JsonElement>>()
     private val nextIds = mutableMapOf<String, Long>()
@@ -134,13 +130,6 @@ internal class SuiteReadReceipts(
         frame: Envelope,
     ) {
         threadReceipts.requested(owner, frame)
-        if (frame.type == "request_history") {
-            val conversation =
-                frame.payload.jsonObject
-                    .getValue("conversation_id")
-                    .jsonPrimitive.content
-            historyRequests[owner to frame.id] = conversation
-        }
     }
 
     fun delivered(
@@ -149,14 +138,6 @@ internal class SuiteReadReceipts(
     ) {
         threadReceipts.delivered(owner, frame)
         val payload = frame.payload.jsonObject
-
-        fun rememberHistory(
-            conversation: String,
-            id: ULong,
-        ) {
-            delivered.getOrPut(owner to conversation) { mutableSetOf() } += id
-            if (phone(owner)) phoneHistory.getOrPut(host(owner) to conversation) { mutableSetOf() } += id
-        }
 
         fun remember(row: JsonObject) {
             val id = row["id"]?.jsonPrimitive?.content ?: return
@@ -173,34 +154,6 @@ internal class SuiteReadReceipts(
             "conversations" ->
                 (payload["conversations"] as? kotlinx.serialization.json.JsonArray)
                     ?.forEach { remember(it.jsonObject) }
-        }
-        if (frame.type == "history_page") {
-            val conversation = historyRequests.remove(owner to frame.inReplyTo) ?: return
-            (payload["entries"] as? kotlinx.serialization.json.JsonArray)?.forEach { element ->
-                val entry = element.jsonObject
-                val id =
-                    entry
-                        .getValue("id")
-                        .jsonPrimitive.content
-                        .toULong()
-                rememberHistory(conversation, id)
-                val type = entry.getValue("type").jsonPrimitive.content
-                val body = entry.getValue("payload")
-                if (de.pyryco.mobile.data.repository
-                        .contributesToUnreadWatermark(type, body)
-                ) {
-                    shown.merge(host(owner) to conversation, id, ::maxOf)
-                }
-            }
-            return
-        }
-        val checkpoint = frame.historyEntryId ?: return
-        val conversation = payload["conversation_id"]?.jsonPrimitive?.content ?: return
-        rememberHistory(conversation, checkpoint)
-        if (de.pyryco.mobile.data.repository
-                .contributesToUnreadWatermark(frame.type, frame.payload)
-        ) {
-            shown.merge(host(owner) to conversation, checkpoint, ::maxOf)
         }
     }
 
@@ -252,22 +205,15 @@ internal class SuiteReadReceipts(
             }
         val group = key?.let(groups::getValue)
         val last = lastRequests[owner to conversation] ?: 0u
-        val authoritative = threadReceipts.handles(owner)
-        val wasDelivered =
-            if (authoritative) {
-                threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
-            } else {
-                target in delivered[owner to conversation].orEmpty() ||
-                    retainedPhoneHistory &&
-                    target in phoneHistory[host(owner) to conversation].orEmpty()
-            }
+        check(threadReceipts.handles(owner)) { "Phone read requires authoritative receipts" }
+        val wasDelivered = threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
         check(target > last && wasDelivered && (retainedPhoneHistory || group == null || target <= group.maxRequested)) {
             "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
                 "maximum=${group?.maxRequested} action=$action"
         }
         lastRequests[owner to conversation] = target
         val server = host(owner) to conversation
-        val shownCeiling = if (authoritative) threadReceipts.ceiling(owner, conversation) else shown[server]
+        val shownCeiling = threadReceipts.ceiling(owner, conversation)
         val ceiling =
             if (retainedPhoneHistory) {
                 group?.required?.let { maxOf(it, shownCeiling ?: it) }

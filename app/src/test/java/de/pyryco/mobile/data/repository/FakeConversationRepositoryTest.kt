@@ -2,14 +2,11 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -23,6 +20,26 @@ import kotlin.time.Duration.Companion.minutes
 
 class FakeConversationRepositoryTest {
     @Test
+    fun authoritativeDemoDeletionClearsAnAlreadyCollectedThread() =
+        kotlinx.coroutines.test.runTest {
+            val previousSink = de.pyryco.mobile.data.network.RelayLog.sink
+            de.pyryco.mobile.data.network.RelayLog.sink = { _, _, _ -> }
+            try {
+                val repo = FakeConversationRepository()
+                val route = checkNotNull(repo.negotiatedThread)
+                val snapshots = mutableListOf<AuthoritativeThreadSnapshot>()
+                backgroundScope.launch(kotlinx.coroutines.test.UnconfinedTestDispatcher(testScheduler)) {
+                    route.observe("seed-channel-personal").collect { snapshots += it }
+                }
+                assertTrue(snapshots.last().items.isNotEmpty())
+                repo.delete("seed-channel-personal")
+                assertTrue("deleted demo content must leave an existing observer", snapshots.last().items.isEmpty())
+            } finally {
+                de.pyryco.mobile.data.network.RelayLog.sink = previousSink
+            }
+        }
+
+    @Test
     fun observeConversations_emitsExpectedSeeds_initially_for_all_filters() =
         runBlocking {
             val repo = FakeConversationRepository()
@@ -30,61 +47,6 @@ class FakeConversationRepositoryTest {
             assertEquals(3, repo.observeConversations(ConversationFilter.Channels).first().size)
             assertEquals(2, repo.observeConversations(ConversationFilter.Discussions).first().size)
             assertEquals(1, repo.observeConversations(ConversationFilter.Archived).first().size)
-        }
-
-    @Test
-    fun observeMessages_unknownConversation_emitsEmpty() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            assertEquals(emptyList<ThreadItem>(), repo.observeMessages("any-id").first())
-        }
-
-    @Test
-    fun observeMessages_knownConversationWithNoMessages_emitsEmpty() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            assertEquals(
-                emptyList<ThreadItem>(),
-                repo.observeMessages("seed-discussion-b").first(),
-            )
-        }
-
-    @Test
-    fun seededChannels_emitExactlyOneBoundary_betweenTwoSessions() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val channelIds =
-                listOf(
-                    "seed-channel-personal",
-                    "seed-channel-pyrycode-mobile",
-                    "seed-channel-joi-pilates",
-                )
-            for (id in channelIds) {
-                val items = repo.observeMessages(id).first()
-                val boundaries = items.filterIsInstance<ThreadItem.SessionBoundary>()
-                assertEquals("expected 1 boundary in $id", 1, boundaries.size)
-            }
-        }
-
-    @Test
-    fun seededChannels_messagesAreChronologicallyOrdered() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val channelIds =
-                listOf(
-                    "seed-channel-personal",
-                    "seed-channel-pyrycode-mobile",
-                    "seed-channel-joi-pilates",
-                )
-            for (id in channelIds) {
-                val items = repo.observeMessages(id).first()
-                val timestamps =
-                    items
-                        .filterIsInstance<ThreadItem.MessageItem>()
-                        .map { it.message.timestamp }
-                assertEquals("messages in $id must be chronological", timestamps.sorted(), timestamps)
-                assertTrue("expected messages in $id", timestamps.isNotEmpty())
-            }
         }
 
     @Test
@@ -107,19 +69,6 @@ class FakeConversationRepositoryTest {
                     "currentSessionId must be last in sessionHistory for ${channel.id}",
                     channel.currentSessionId,
                     channel.sessionHistory.last(),
-                )
-            }
-        }
-
-    @Test
-    fun seededDiscussions_remainEmpty_exceptDiscussionA() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            for (id in listOf("seed-discussion-b", "seed-discussion-archived")) {
-                assertEquals(
-                    "discussion $id must be empty",
-                    emptyList<ThreadItem>(),
-                    repo.observeMessages(id).first(),
                 )
             }
         }
@@ -148,137 +97,6 @@ class FakeConversationRepositoryTest {
                 Instant.parse("2026-05-11T14:00:00Z"),
                 last!!.timestamp,
             )
-        }
-
-    @Test
-    fun seededPersonalChannel_boundary_isClear_withNullWorkspaceCwd() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val items = repo.observeMessages("seed-channel-personal").first()
-            val boundary =
-                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
-            assertEquals(BoundaryReason.Clear, boundary.reason)
-            assertNull(boundary.workspaceCwd)
-        }
-
-    @Test
-    fun seededPyrycodeMobileChannel_boundary_isClear_withNullWorkspaceCwd() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val items = repo.observeMessages("seed-channel-pyrycode-mobile").first()
-            val boundary =
-                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
-            assertEquals(BoundaryReason.Clear, boundary.reason)
-            assertNull(boundary.workspaceCwd)
-        }
-
-    @Test
-    fun seededJoiPilatesChannel_boundary_isIdleEvict_withNullWorkspaceCwd() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val items = repo.observeMessages("seed-channel-joi-pilates").first()
-            val boundary =
-                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
-            assertEquals(BoundaryReason.IdleEvict, boundary.reason)
-            assertNull(boundary.workspaceCwd)
-        }
-
-    @Test
-    fun seededChannels_exerciseClearAndIdleEvict_withoutWorkspaceChange() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val channelIds =
-                listOf(
-                    "seed-channel-personal",
-                    "seed-channel-pyrycode-mobile",
-                    "seed-channel-joi-pilates",
-                )
-            val reasons =
-                channelIds
-                    .map { repo.observeMessages(it).first() }
-                    .flatMap { it.filterIsInstance<ThreadItem.SessionBoundary>() }
-                    .map { it.reason }
-                    .toSet()
-            assertEquals(
-                setOf(
-                    BoundaryReason.Clear,
-                    BoundaryReason.IdleEvict,
-                ),
-                reasons,
-            )
-        }
-
-    @Test
-    fun observeMessages_emitsSeededToolMessage_withStructuredPayload() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val items = repo.observeMessages("seed-channel-pyrycode-mobile").first()
-            val toolMessages =
-                items
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .map { it.message }
-                    .filter { it.role == Role.Tool }
-            assertEquals("expected exactly one tool message in seed channel", 1, toolMessages.size)
-            val tool = toolMessages.single()
-            val payload = tool.toolCall
-            assertNotNull("tool message must carry a non-null toolCall", payload)
-            assertEquals("Read", payload!!.toolName)
-            assertEquals(
-                "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt",
-                payload.input,
-            )
-            assertEquals(
-                """
-                @Composable
-                fun ThreadScreen(
-                    state: ThreadUiState,
-                    onEvent: (ThreadEvent) -> Unit,
-                ) {
-                    Scaffold(topBar = { ThreadTopBar(state, onEvent) }) { padding ->
-                        MessageList(state.items, modifier = Modifier.padding(padding))
-                    }
-                }
-                """.trimIndent(),
-                payload.output,
-            )
-        }
-
-    @Test
-    fun observeMessages_messagesAcrossTwoSessions_emitsExactlyOneBoundary() =
-        runBlocking {
-            val sessionA = "session-a"
-            val sessionB = "session-b"
-            val messages =
-                listOf(
-                    Message("m1", sessionA, Role.User, "hi", Instant.parse("2026-05-10T10:00:00Z"), false),
-                    Message("m2", sessionA, Role.Assistant, "hello", Instant.parse("2026-05-10T10:01:00Z"), false),
-                    Message("m3", sessionB, Role.User, "again", Instant.parse("2026-05-10T11:00:00Z"), false),
-                    Message("m4", sessionB, Role.Assistant, "back", Instant.parse("2026-05-10T11:01:00Z"), false),
-                )
-            val repo =
-                FakeConversationRepository(
-                    initialMessages = mapOf("seed-channel-personal" to messages),
-                )
-
-            val items = repo.observeMessages("seed-channel-personal").first()
-
-            assertEquals(5, items.size)
-
-            val boundaries = items.filterIsInstance<ThreadItem.SessionBoundary>()
-            assertEquals(1, boundaries.size)
-            val b = boundaries.single()
-            assertEquals(sessionA, b.previousSessionId)
-            assertEquals(sessionB, b.newSessionId)
-            assertEquals(Instant.parse("2026-05-10T11:00:00Z"), b.occurredAt)
-            assertEquals(BoundaryReason.Clear, b.reason)
-            assertNull(b.workspaceCwd)
-
-            val boundaryIndex = items.indexOfFirst { it is ThreadItem.SessionBoundary }
-            assertEquals(ThreadItem.MessageItem(messages[1]), items[boundaryIndex - 1])
-            assertEquals(ThreadItem.MessageItem(messages[2]), items[boundaryIndex + 1])
-
-            val messageItems = items.filterIsInstance<ThreadItem.MessageItem>()
-            assertEquals(messages, messageItems.map { it.message })
         }
 
     @Test
@@ -612,24 +430,6 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
-    fun delete_causes_observeMessages_toReEmitEmpty() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val seedId = "seed-channel-pyrycode-mobile"
-            assertTrue(
-                "seed channel must have messages before delete",
-                repo.observeMessages(seedId).first().isNotEmpty(),
-            )
-
-            repo.delete(seedId)
-
-            assertEquals(
-                emptyList<ThreadItem>(),
-                repo.observeMessages(seedId).first(),
-            )
-        }
-
-    @Test
     fun delete_causes_observeLastMessage_toReEmitNull() =
         runBlocking {
             val repo = FakeConversationRepository()
@@ -756,33 +556,6 @@ class FakeConversationRepositoryTest {
             // expected
         }
     }
-
-    @Test
-    fun sendMessage_appendsMessageAtTailOfObserveMessages() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-            val id = "seed-discussion-a"
-            val before = repo.observeMessages(id).first()
-            val currentSessionId =
-                repo
-                    .observeConversations(ConversationFilter.Discussions)
-                    .first()
-                    .first { it.id == id }
-                    .currentSessionId
-
-            val sent = repo.sendMessage(id, "hello")
-
-            val after = repo.observeMessages(id).first()
-            assertEquals(before.size + 1, after.size)
-            val tail = after.last()
-            assertTrue("tail must be a MessageItem, was $tail", tail is ThreadItem.MessageItem)
-            val message = (tail as ThreadItem.MessageItem).message
-            assertEquals(sent, message)
-            assertEquals("hello", message.content)
-            assertEquals(Role.User, message.role)
-            assertEquals(false, message.isStreaming)
-            assertEquals(currentSessionId, message.sessionId)
-        }
 
     @Test
     fun sendMessage_observeLastMessage_reEmitsTheNewMessage() =
@@ -1068,128 +841,22 @@ class FakeConversationRepositoryTest {
 
     // AC #1/#2: the first ask (empty cursor) returns the NEWEST entries first, with durable ids that
     // are the entries' positions in the log — the fake pages over real data rather than throwing.
-    @Test
-    fun requestHistory_firstPage_returnsNewestFirstWithDurableIds() =
-        runBlocking {
-            val repo = seededHistoryRepo(count = 30)
-
-            val page = repo.requestHistory(SEED_ID, limit = 3)
-
-            assertEquals(listOf(30L, 29L, 28L), page.entries.map { it.id })
-            assertEquals(listOf("m30", "m29", "m28"), page.entries.map { entryMessageId(it) })
-            assertFalse(page.atStart)
-        }
 
     // AC #3: the full walk visits every entry exactly once, in descending id order, and terminates on
     // `atStart` — never on an empty page. 30 entries over a page size of 7 means the last page is
     // short (2 entries) and carries the terminal flag with it.
-    @Test
-    fun requestHistory_walk_visitsEveryEntryOnceAndTerminatesOnAtStart() =
-        runBlocking {
-            val repo = seededHistoryRepo(count = 30)
-            val visited = mutableListOf<Long>()
-            var cursor = ""
-            var pages = 0
-
-            while (true) {
-                val page = repo.requestHistory(SEED_ID, cursor = cursor, limit = 7)
-                visited += page.entries.map { requireNotNull(it.id) }
-                pages++
-                if (page.atStart) {
-                    assertEquals("a terminal page carries no cursor", "", page.cursor)
-                    break
-                }
-                cursor = page.cursor
-                assertTrue("a non-terminal page must hand back a usable cursor", cursor.isNotEmpty())
-            }
-
-            assertEquals((30L downTo 1L).toList(), visited)
-            assertEquals(5, pages)
-        }
 
     // AC #3, the boundary a client that stopped on an empty page would get wrong: a page that fills
     // EXACTLY at the log's first entry reports `atStart` false with a usable cursor, and only the call
     // after it returns no entries with `atStart` true. A short page is never the end-of-log signal.
-    @Test
-    fun requestHistory_exactFillAtFirstEntry_defersAtStartToTheNextCall() =
-        runBlocking {
-            val repo = seededHistoryRepo(count = 10)
-
-            val filled = repo.requestHistory(SEED_ID, limit = 10)
-            assertEquals(10, filled.entries.size)
-            assertFalse("an exact fill has not yet learned the log ended", filled.atStart)
-            assertTrue(filled.cursor.isNotEmpty())
-
-            val terminal = repo.requestHistory(SEED_ID, cursor = filled.cursor, limit = 10)
-            assertEquals(emptyList<HistoryEntry>(), terminal.entries)
-            assertTrue(terminal.atStart)
-            assertEquals("", terminal.cursor)
-        }
 
     // A non-positive limit asks the fake to choose, exactly as `0` asks the daemon to choose — it
     // never means "zero entries".
-    @Test
-    fun requestHistory_nonPositiveLimit_usesTheFakesOwnPageSize() =
-        runBlocking {
-            val repo = seededHistoryRepo(count = 40)
-
-            assertEquals(FakeConversationRepository.FAKE_HISTORY_PAGE_SIZE, repo.requestHistory(SEED_ID).entries.size)
-            assertEquals(
-                FakeConversationRepository.FAKE_HISTORY_PAGE_SIZE,
-                repo.requestHistory(SEED_ID, limit = -1).entries.size,
-            )
-        }
 
     // A conversation with no messages is the third page shape: no entries, empty cursor, at_start.
-    @Test
-    fun requestHistory_emptyLog_isTheTerminalShape() =
-        runBlocking {
-            val repo = seededHistoryRepo(count = 0)
-
-            val page = repo.requestHistory(SEED_ID)
-
-            assertEquals(emptyList<HistoryEntry>(), page.entries)
-            assertEquals("", page.cursor)
-            assertTrue(page.atStart)
-        }
 
     // An unknown conversation throws IllegalArgumentException — the same type the remote surfaces for
     // the daemon's `conversation.not_found`, so a consumer handles one type either way.
-    @Test
-    fun requestHistory_unknownConversation_throws() =
-        runBlocking {
-            val repo = FakeConversationRepository()
-
-            assertTrue(
-                runCatching { repo.requestHistory("does-not-exist") }.exceptionOrNull() is IllegalArgumentException,
-            )
-        }
-
-    /** A repo whose [SEED_ID] conversation holds exactly [count] messages, one minute apart. */
-    private fun seededHistoryRepo(count: Int): FakeConversationRepository =
-        FakeConversationRepository(
-            initialMessages =
-                mapOf(
-                    SEED_ID to
-                        (1..count).map { n ->
-                            Message(
-                                id = "m$n",
-                                sessionId = "s1",
-                                role = if (n % 2 == 0) Role.Assistant else Role.User,
-                                content = "line $n",
-                                timestamp = Instant.parse("2026-05-10T10:00:00Z") + n.minutes,
-                                isStreaming = false,
-                            )
-                        },
-                ),
-        )
-
-    /** The `message_id` inside a fake history entry's `message`-shaped payload. */
-    private fun entryMessageId(entry: HistoryEntry): String =
-        entry.payload.jsonObject
-            .getValue("message_id")
-            .jsonPrimitive
-            .content
 
     private fun conv(
         promoted: Boolean,

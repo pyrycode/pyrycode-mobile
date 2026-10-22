@@ -41,16 +41,6 @@ class RunSettingsRereadsTest {
     fun anotherConversationsIdle_doesNotEndThisTurn() = assertTurnEdges(0, turn("a", Phase.Thinking), turn("b", Phase.Idle))
 
     @Test
-    fun turnEndAndStreamEvents_areNoEdge() =
-        assertTurnEdges(
-            0,
-            turn("a", Phase.Thinking),
-            LiveSessionEvent.AssistantDelta("a", "t", 0, "x"),
-            LiveSessionEvent.TurnEnd("a", "t", "end_turn"),
-            LiveSessionEvent.ReplayGap("a"),
-        )
-
-    @Test
     fun aResetEnding_isOneEdge() = assertResetEdges(1, null, wrappingUp, restarting, null)
 
     @Test

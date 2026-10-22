@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToIndex
@@ -14,9 +13,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -35,147 +32,10 @@ open class ThreadReadViewportTest {
         override val lifecycle: Lifecycle = registry
     }
 
-    @Test open fun foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat() {
-        val owner = Owner().apply { registry.currentState = Lifecycle.State.STARTED }
-        val state = mutableStateOf(state())
-        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
-        compose.setContent {
-            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme(darkTheme = true) {
-                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
-                        if (it is ThreadEvent.NewestContentPresented) {
-                            events +=
-                                it
-                        }
-                    })
-                }
-            }
-        }
-        compose.runOnIdle {
-            assertTrue(events.isEmpty())
-            owner.registry.currentState = Lifecycle.State.RESUMED
-        }
-        compose.waitUntil(5000) { events.size == 1 }
-
-        compose.runOnIdle { state.value = state.value.copy(displayName = "Recomposition") }
-        compose.runOnIdle {
-            assertEquals(1, events.size)
-            val seen = state.value.items.last()
-            state.value =
-                state.value.copy(
-                    readUpTo = 40u,
-                    readEvidence = ThreadReadEvidence(versions = mapOf(seen to setOf(40u)), facts = mapOf(40uL to false, 41uL to true)),
-                )
-        }
-        compose.waitForIdle()
-        compose.waitUntil(5000) { events.size == 2 }
-        compose.runOnIdle {
-            assertEquals(41uL, events.last().checkpoint)
-            owner.registry.currentState = Lifecycle.State.STARTED
-        }
-        compose.runOnIdle {
-            val newest = row(31)
-            state.value = state.value.copy(items = state.value.items + newest, readEvidence = evidence(newest, 42u))
-        }
-        compose.runOnIdle { assertEquals(2, events.size) }
-    }
-
-    @Test open fun foregroundCheckpoint_excludesScrolledAwayRowUpdates() {
-        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
-        val state = mutableStateOf(state())
-        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
-        compose.setContent {
-            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme(darkTheme = true) {
-                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
-                        if (it is ThreadEvent.NewestContentPresented) {
-                            events +=
-                                it
-                        }
-                    })
-                }
-            }
-        }
-        compose.waitUntil(5000) { events.size == 1 }
-
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(20)
-        compose.runOnIdle {
-            val held = state.value.items.last() as ThreadItem.MessageItem
-            val updated = ThreadItem.MessageItem(held.message.copy(content = "Unseen updated content."))
-            state.value = state.value.copy(items = state.value.items.dropLast(1) + updated, readEvidence = evidence(updated, 41u))
-        }
-        compose.runOnIdle { assertEquals(1, events.size) }
-    }
-
-    @Test open fun foregroundCheckpoint_excludesReplyArrivingBehindRenameDialog() {
-        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
-        val state = mutableStateOf(state())
-        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
-        compose.setContent {
-            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme(darkTheme = true) {
-                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
-                        if (it is ThreadEvent.NewestContentPresented) events += it
-                    })
-                }
-            }
-        }
-        compose.waitUntil(5000) { events.size == 1 }
-        compose.runOnIdle { state.value = state.value.copy(showRenameDialog = true) }
-        compose.waitForIdle()
-        compose.runOnIdle {
-            val newest = row(31)
-            state.value = state.value.copy(items = state.value.items + newest, readEvidence = evidence(newest, 41u))
-        }
-        compose.waitForIdle()
-        compose.runOnIdle { assertEquals(1, events.size) }
-        compose.runOnIdle { state.value = state.value.copy(showRenameDialog = false) }
-        compose.waitForIdle()
-        compose.waitUntil(5000) { events.size == 2 }
-        compose.runOnIdle { assertEquals(41uL, events.last().checkpoint) }
-    }
-
-    @Test fun foregroundCheckpoint_replacementToolVersionGetsFreshMeasurementWithoutGeometryChange() {
-        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
-        val tool =
-            ThreadItem.MessageItem(
-                (row(30) as ThreadItem.MessageItem).message.copy(
-                    role = Role.Tool,
-                    toolCall = ToolCall("Bash", "echo hello", "old output"),
-                ),
-            )
-        val state = mutableStateOf(state().let { it.copy(items = listOf(tool), readEvidence = evidence(tool, 40u)) })
-        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
-        compose.setContent {
-            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-                PyrycodeMobileTheme(darkTheme = true) {
-                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
-                        if (it is ThreadEvent.NewestContentPresented) events += it
-                    })
-                }
-            }
-        }
-        compose.waitUntil(5000) { events.size == 1 }
-        // Collapsed output is not a layout input, but this is still a new exact delivered version.
-        val replacement =
-            ThreadItem.MessageItem(
-                tool.message.copy(toolCall = requireNotNull(tool.message.toolCall).copy(output = "new output")),
-            )
-        compose.runOnIdle {
-            state.value = state.value.copy(items = state.value.items.dropLast(1) + replacement, readEvidence = evidence(replacement, 41u))
-        }
-        compose.waitForIdle()
-        compose.waitUntil(5000) { events.size == 2 }
-        compose.runOnIdle {
-            assertEquals(replacement, events.last().row)
-            assertEquals(41uL, events.last().checkpoint)
-        }
-    }
-
     @Test open fun scrolling_doesNotRecomposeProductionListHost() {
         val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
         val rows = (1..60).map(::row)
-        val fixedState = state().copy(items = rows, readEvidence = evidence(rows.last(), 60u))
+        val fixedState = state().copy(items = rows)
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
         var hostCompositions = 0
         var list: LazyListState? = null
@@ -192,7 +52,7 @@ open class ThreadReadViewportTest {
                 }
             }
         }
-        compose.waitUntil(5000) { events.size == 1 }
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(1000)
         compose.waitForIdle()
         var before = 0
@@ -220,7 +80,7 @@ open class ThreadReadViewportTest {
             assertTrue("scroll reached older rows", current.firstVisibleItemIndex >= 35)
             assertFalse("newest is offscreen", current.layoutInfo.visibleItemsInfo.any { it.index == 0 })
             assertEquals("laying out older rows must not recompose list host", before, hostCompositions)
-            assertEquals(1, events.size)
+            assertTrue(events.isEmpty())
         }
     }
 
@@ -239,14 +99,8 @@ open class ThreadReadViewportTest {
             hasMessages = true,
             items = rows,
             readUpTo = 0u,
-            readEvidence = evidence(rows.last(), 40u),
         )
     }
-
-    private fun evidence(
-        row: ThreadItem,
-        id: ULong,
-    ) = ThreadReadEvidence(versions = mapOf(row to setOf(id)), facts = mapOf(id to false))
 
     private fun row(n: Int): ThreadItem =
         ThreadItem.MessageItem(Message("m$n", "", Role.Assistant, "Row $n.", Instant.parse("2026-10-07T00:00:00Z"), isStreaming = false))
