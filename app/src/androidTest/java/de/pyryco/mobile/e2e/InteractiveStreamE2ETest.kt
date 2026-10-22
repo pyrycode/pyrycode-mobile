@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -7654,13 +7655,24 @@ class InteractiveStreamE2ETest {
      * the relaunch. Close the returned scenario in the test's `finally`.
      */
     private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
+        fun awaitBackground() =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    ProcessLifecycleOwner
+                        .get()
+                        .lifecycle.currentStateFlow
+                        .first { !it.isAtLeast(Lifecycle.State.STARTED) }
+                }
+            }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         RecordedSuiteNative.beforePhoneRestart()
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+        awaitBackground()
         instrumentation.runOnMainSync {
             (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
         }
         beforeLaunch()
+        awaitBackground()
         return ActivityScenario.launch(MainActivity::class.java)
     }
 

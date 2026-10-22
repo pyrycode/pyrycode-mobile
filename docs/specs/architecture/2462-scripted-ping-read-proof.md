@@ -133,6 +133,12 @@ The controlled notification run executed 20 tests: 19 passed and the new notific
 
 Retaining genuine notifications also releases a qualified ordinary notification while a list prerequisite remains unmatched. The termination regression therefore checks that neither its correlated acknowledgement nor termination is released early, while allowing that independent notification; all original production/native assertions remain unchanged. Its first over-broad empty-list assertion failure is retained separately.
 
+### 2026-10-23 — Fence the old process lifecycle before graph replacement
+
+Reading `InteractiveStreamE2ETest.restartApp`, `E2eTestApplication.rebuildGraph` and `docs/knowledge/features/lifecycle-connection-driver.md` explains the remaining Agent failure: the replacement graph observes the old process's foreground state, then its delayed stop retires the replacement before required startup requests. A controlled background-before-relaunch wait executed once and failed once; its first lifecycle cause explicitly passes through `LifecycleConnectionDriver.onStop`, with required replacement queries outstanding. Raw reports and the exact control patch are retained at agents `logs/evidence/2462/rework-lifecycle-controlled-red/`.
+
+Await process background before rebuilding, retaining the same background-before-relaunch control afterward. Both observe the existing lifecycle flow under `THREAD_TIMEOUT_MS`; no sleep, deadline extension, request omission, production driver change or ownership relaxation is added. Four restart callers keep their signatures and original assertions. The recorded Agent method is the native regression because this delayed real process lifecycle cannot be proved by the paused JVM clock. Security re-review: PASS; trusted lifecycle observation has bounded cancellation and no new job, credential, transport or storage surface. Final scope remains below 1600 written lines.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
