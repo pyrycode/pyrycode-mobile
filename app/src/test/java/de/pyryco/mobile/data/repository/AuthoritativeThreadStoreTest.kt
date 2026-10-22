@@ -302,6 +302,45 @@ class AuthoritativeThreadStoreTest {
         assertTrue(state().items.isEmpty())
     }
 
+    @Test fun supplementingKnownLiveFactsDoesNotInventRepairOrCertification() {
+        val live = item(text = "held prefix")
+        batch(listOf(live), version = 10)
+        assertFalse(state().repairNeeded)
+        for (savedVersion in listOf(5L, 10L)) {
+            val saved = AuthoritativeThreadSnapshot("e", listOf(live), completedVersion = savedVersion)
+            assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved, 0))
+            assertFalse("a supplement at/below the admitted live version must not invent repair", state().repairNeeded)
+            assertEquals(listOf(live.raw), state().items.map { it.raw })
+            assertEquals(10L, state().completedVersion)
+            assertEquals(0L, state().checkpoint)
+            assertNull(state().coverage)
+        }
+    }
+
+    @Test fun coldAndAheadUncertifiedRestoresStillRequireRepair() {
+        for (knownVersion in listOf(0L, 5L)) {
+            val local = AuthoritativeThreadStore()
+            if (knownVersion > 0) local.applyBatch("h", "c", "e", knownVersion, listOf(item()), 0)
+            val saved = AuthoritativeThreadSnapshot("e", listOf(item()), completedVersion = 10)
+            assertEquals(AuthoritativeThreadOutcome.Applied, local.restore("h", "c", saved, 0))
+            assertTrue(local.current("h", "c").repairNeeded)
+            assertEquals(0L, local.current("h", "c").checkpoint)
+            assertNull(local.current("h", "c").coverage)
+        }
+    }
+
+    @Test fun knownLiveRestoreCannotClearExistingRepairOrCrossReset() {
+        batch(listOf(item()), version = 10)
+        store.requestRepair("h", "c")
+        val saved = AuthoritativeThreadSnapshot("e", listOf(item()), completedVersion = 10)
+        assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved, 0))
+        assertTrue(state().repairNeeded)
+        store.reset("h", "c", "e")
+        val reset = state()
+        assertEquals(AuthoritativeThreadOutcome.StaleGeneration, store.restore("h", "c", saved, 0))
+        assertEquals(reset, state())
+    }
+
     companion object {
         internal fun item(
             id: Long = 1,

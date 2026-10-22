@@ -310,15 +310,16 @@ a child beneath it, as in `FaultEvidenceTest.test_destination_symlinks_are_rejec
 Check permission fixtures under both `077` and `022`; retain nonzero executed
 counts for focused checks and complete scripts discovery.
 
-Scenario report enumeration does not establish scenario launch order (#2383).
+Scenario report enumeration does not establish launch order (#2383).
 `AgentScenarioReportsTest.test_two_independent_outcomes_keep_the_first_failure`
 exercises sorted and reverse-sorted `Path.rglob` results. Assert the exact multiset
-of expected method names before building an identity map: a map alone hides
-duplicate reports. Check each outcome by identity, while checking retained-then-restart
-launch order and overall failure separately. The retained scenario must retain its
-failure, and the restart scenario must have no failure, error or skip. Positional
-report assertions can fail solely because the filesystem enumerates files differently;
-sorting reports alone does not prove missing or duplicate cases are rejected.
+of method names before building a map, which alone hides duplicates. Check each
+outcome by identity and launch order separately; the retained failure must survive,
+and restart must have no failure, error or skip. Sorting cannot prove completeness.
+For stream reports (#2455), retain each execution's XML before filename reuse and
+restore collected evidence even on interruption. [Selected-device ownership and
+counted regression evidence](development-verification-test-scheduling.md#stream-report-execution-ownership-2455)
+explain why pre-launch cleanup replaces mtime filtering.
 
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
 own output before it lands on `main`. That stage writes `docs/knowledge/features/`

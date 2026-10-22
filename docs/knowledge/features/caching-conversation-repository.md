@@ -22,6 +22,13 @@ and both held sides without inferring order. Generation, epoch/incarnation, exac
 host/conversation and cache lifetime are checked after suspension. Disk cannot
 supply current prompts, progress, pending sends or configuration readings.
 
+Restore publishes the store and committed baseline under the `authoritativeThreads` monitor.
+Observation reads that baseline under the same monitor on `processingDispatcher` before
+checking for missing committed facts, then releases it before further processing or IO.
+Otherwise a restored 400-fact store can be compared with its old 200-fact baseline and trigger
+redundant parent closure. A concurrent map does not pair those publications. See the
+[controlled publication regression and accepted receipt](authoritative-reader-paging.md#retry-publication-and-baseline-ownership-2452).
+
 ## Retrieving an attachment for this host (#899)
 
 ```kotlin
@@ -93,6 +100,9 @@ hydration; confirmed conversation/host deletion fences final saves while preserv
 identities on another host. See [writer custody](caching-conversation-repository-concurrency.md#state-and-concurrency).
 
 ### Older authoritative saved pages (#2334)
+
+Native acceptance follows the [approved authoritative mapping](authoritative-reader-paging.md#approved-native-acceptance-mapping-2447); legacy projection/span measurements remain historical.
+
 
 Reader movement and the existing explicit retry admit one local page of at most **200 additional
 display contributions**, plus active inputs and required parent/placement witnesses. Indexed

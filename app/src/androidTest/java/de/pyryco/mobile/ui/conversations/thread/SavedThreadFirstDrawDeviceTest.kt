@@ -44,6 +44,7 @@ import de.pyryco.mobile.data.cache.AuthoritativeUpsertCache
 import de.pyryco.mobile.data.cache.AuthoritativeWindowCache
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheDatabase
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.cache.MigratingConversationCache
 import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
 import de.pyryco.mobile.data.cache.SavedThreadCoverage
@@ -52,6 +53,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
 import de.pyryco.mobile.e2e.awaitEmulatorCpuIdle
 import de.pyryco.mobile.e2e.readEmulatorCpuTicks
@@ -70,9 +72,11 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -80,6 +84,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /** The GL renderer this process draws with, as the guest reports it. */
 private val firstDrawRenderer: String by lazy {
@@ -128,6 +133,7 @@ class SavedThreadFirstDrawDeviceTest {
         val vm: ThreadViewModel,
         val probe: Probe,
         val online: Boolean,
+        val retryFrame: AtomicReference<Probe?>? = null,
     )
 
     private fun awaitDeviceReadiness(case: String) {
@@ -249,13 +255,17 @@ class SavedThreadFirstDrawDeviceTest {
 
         fun assertBound() {
             assertTrue(
-                "$name first drawn newest row: ${elapsed(drawn.get())} ms ($firstDrawBoundLabel)",
+                "$name first committed visible row: ${elapsed(drawn.get())} ms ($firstDrawBoundLabel)",
                 metBound(),
             )
         }
     }
 
     @Test fun databaseSavedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_coldOpenAndReopen() {
+        measureDatabaseOpenings()
+    }
+
+    private fun measureDatabaseOpenings(readDelayMs: Long = 0) {
         installHost()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "database-first-draw-${SystemClock.elapsedRealtimeNanos()}")
@@ -290,9 +300,9 @@ class SavedThreadFirstDrawDeviceTest {
             }
             for (online in listOf(false, true)) {
                 repeat(2) { opening ->
-                    awaitDeviceReadiness("database online=$online opening=$opening")
+                    awaitDeviceReadiness("database online=$online opening=$opening delay_ms=$readDelayMs")
                     // Construction, the first SQLite open, cache restore and the destination are timed.
-                    val probe = Probe("database online=$online opening=$opening", "Saved 18000.")
+                    val probe = Probe("database online=$online opening=$opening delay_ms=$readDelayMs", "Saved 18000.")
                     activeProbe = probe
                     val db = database()
                     val disk = MigratingConversationCache(File(root, "files"), db)
@@ -302,10 +312,12 @@ class SavedThreadFirstDrawDeviceTest {
                                 serverId: String,
                                 conversationId: String,
                                 size: Int,
-                            ): AuthoritativeThreadWindow? =
-                                disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
+                            ): AuthoritativeThreadWindow? {
+                                delay(readDelayMs)
+                                return disk.newestAuthoritativeWindow(serverId, conversationId, size).also {
                                     probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
                                 }
+                            }
                         }
                     val owner = ViewModelStore()
                     lateinit var destination: SavedAuthoritativeDestination
@@ -356,7 +368,12 @@ class SavedThreadFirstDrawDeviceTest {
                     }
                     try {
                         composeRule.waitUntil(15000) { probe.drawn.get() > 0 }
-                        probe.assertBound()
+                        if (readDelayMs == 0L) {
+                            probe.assertBound()
+                        } else {
+                            assertTrue(probe.elapsed(probe.drawn.get()) >= readDelayMs)
+                            assertThrows(AssertionError::class.java) { probe.assertBound() }
+                        }
                         composeRule.waitUntil(15000) {
                             destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") } == if (online) 1 else 0
                         }
@@ -405,6 +422,14 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     @Test fun databaseSavedThreads_upwardDemandAndRetry_offlineAndHeldNewest_coldReopen() {
+        measureDatabasePages()
+    }
+
+    @Test fun slowOlderDatabaseRead_negativeControlRejectsTheSameRetryFrameBound() {
+        measureDatabasePages(successfulOlderReadDelayMs = 3000)
+    }
+
+    private fun measureDatabasePages(successfulOlderReadDelayMs: Long = 0) {
         installHost()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.noBackupFilesDir, "database-pages-${SystemClock.elapsedRealtimeNanos()}")
@@ -441,6 +466,8 @@ class SavedThreadFirstDrawDeviceTest {
                     val db = database()
                     val disk = MigratingConversationCache(File(root, "files"), db)
                     val attempts = AtomicInteger()
+                    val successfulReadMs = AtomicLong()
+                    val retryFrame = AtomicReference<Probe?>()
                     val release = CompletableDeferred<Unit>()
                     var fail = true
                     val cache =
@@ -453,7 +480,10 @@ class SavedThreadFirstDrawDeviceTest {
                                 size: Int,
                             ): AuthoritativeThreadWindow? {
                                 attempts.incrementAndGet()
+                                val started = SystemClock.elapsedRealtimeNanos()
+                                if (!fail) delay(successfulOlderReadDelayMs)
                                 val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                                if (!fail) successfulReadMs.set((SystemClock.elapsedRealtimeNanos() - started) / 1_000_000)
                                 release.await()
                                 return if (fail) null else page
                             }
@@ -466,7 +496,7 @@ class SavedThreadFirstDrawDeviceTest {
                         if (online) destination.connect()
                         vm = destination.open()
                         owner.put("thread", vm)
-                        selected.value = Opening(vm, probe, online)
+                        selected.value = Opening(vm, probe, online, retryFrame)
                     }
                     try {
                         composeRule.waitUntil(15_000) { probe.drawn.get() > 0 }
@@ -524,8 +554,22 @@ class SavedThreadFirstDrawDeviceTest {
                                 ?.rows
                                 ?.size == 400
                         }
+                        val retried = requireNotNull(retryFrame.get())
                         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(399)
                         composeRule.onNodeWithText("Saved 17601.").assertIsDisplayed()
+                        composeRule.waitUntil(15_000) { retried.drawn.get() > 0 }
+                        Log.i(
+                            "SavedThreadPaging",
+                            "event=retry_frame case=${probe.name} retry_ms=${retried.elapsed(retried.drawn.get())} " +
+                                "successful_read_ms=${successfulReadMs.get()} injected_ms=$successfulOlderReadDelayMs " +
+                                "bound_ms=$firstDrawBoundMs renderer=$firstDrawRenderer",
+                        )
+                        if (successfulOlderReadDelayMs == 0L) {
+                            retried.assertBound()
+                        } else {
+                            assertTrue(retried.elapsed(retried.drawn.get()) >= successfulOlderReadDelayMs)
+                            assertThrows(AssertionError::class.java) { retried.assertBound() }
+                        }
                         val olderBounds = composeRule.onNodeWithText("Saved 17601.").fetchSemanticsNode().boundsInRoot
                         val viewport = composeRule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
                         assertTrue(
@@ -566,6 +610,15 @@ class SavedThreadFirstDrawDeviceTest {
                                 "counts=${disk.authoritativeReadCounts} drawn_ms=${probe.elapsed(probe.drawn.get())} " +
                                 "older=$olderBounds viewport=$viewport",
                         )
+                        Log.i(
+                            "SavedThreadPaging",
+                            "event=older_read_control case=${probe.name} injected_ms=$successfulOlderReadDelayMs " +
+                                "successful_read_ms=${successfulReadMs.get()} opening_drawn_ms=${probe.elapsed(probe.drawn.get())} " +
+                                "retry_frame_ms=${retried.elapsed(retried.drawn.get())} bound_ms=$firstDrawBoundMs",
+                        )
+                        if (successfulOlderReadDelayMs > 0) {
+                            assertTrue(successfulReadMs.get() >= successfulOlderReadDelayMs)
+                        }
                     } finally {
                         composeRule.runOnUiThread {
                             selected.value = null
@@ -580,6 +633,200 @@ class SavedThreadFirstDrawDeviceTest {
             }
         } finally {
             root.deleteRecursively()
+        }
+    }
+
+    @Test fun authoritativeFileCompatibility_preservesExactFacts_offlineAndHeldNewest_firstOpenAndReopen() {
+        measureAuthoritativeFiles(guardLegacyReads = false)
+    }
+
+    @Test fun authoritativeFileCompatibility_exposesNoRetiredReadApis_firstOpenAndReopen() {
+        measureAuthoritativeFiles(guardLegacyReads = true)
+    }
+
+    @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
+        measureDatabaseOpenings(readDelayMs = 3000)
+    }
+
+    private fun authoritativeFileFacts(fragmented: Boolean): List<JsonObject> =
+        (0 until if (fragmented) 36_000 else 20).map { index ->
+            val visible = !fragmented || index % 2 == 0
+            val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
+            MobileJson
+                .parseToJsonElement(
+                    """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
+                "kind":"${if (visible) "assistant_message" else "future_fixture"}",
+                "status":"done","active":false,"shown":$visible,"summary":"",
+                "content":{"text":"Saved ${if (fragmented) index / 2 else index}."},"future":{"clear":null}}""",
+                ).jsonObject
+        }
+
+    private fun measureAuthoritativeFiles(guardLegacyReads: Boolean) {
+        installHost()
+        val probes = mutableListOf<Probe>()
+        for (fragmented in listOf(false, true)) {
+            val facts = authoritativeFileFacts(fragmented)
+            withAuthoritativeFileFixture(facts) { source ->
+                for (online in listOf(false, true)) {
+                    val root = File(source.parentFile, "authoritative-file-copy-${SystemClock.elapsedRealtimeNanos()}")
+                    try {
+                        check(source.copyRecursively(root))
+                        repeat(2) { opening ->
+                            probes += measureAuthoritativeFileOpening(root, facts, online, opening, guardLegacyReads)
+                        }
+                    } finally {
+                        root.deleteRecursively()
+                    }
+                }
+            }
+        }
+        assertEquals(8, probes.size)
+        val requireLatency = InstrumentationRegistry.getArguments().getString("requireFullFileLatencyBound") == "true"
+        Log.i("SavedThreadFirstDraw", "event=file_latency_scope required=$requireLatency followup=2456 openings=${probes.size}")
+        if (requireLatency) probes.forEach(Probe::assertBound)
+    }
+
+    private fun withAuthoritativeFileFixture(
+        facts: List<JsonObject>,
+        block: (File) -> Unit,
+    ) {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.noBackupFilesDir, "authoritative-file-${SystemClock.elapsedRealtimeNanos()}")
+        try {
+            runBlocking {
+                FileConversationCache(root)
+                    .writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 100_000, 90_000))
+                    .getOrThrow()
+            }
+            block(root)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun measureAuthoritativeFileOpening(
+        root: File,
+        facts: List<JsonObject>,
+        online: Boolean,
+        opening: Int,
+        guardLegacyReads: Boolean,
+    ): Probe {
+        val fragmented = facts.size == 36_000
+        val expectedText = (0 until if (fragmented) 18_000 else 20).map { "Saved $it." }
+        val name =
+            "authoritative-file fragmented=$fragmented online=$online opening=$opening " +
+                "guard_legacy=$guardLegacyReads scope=file_compatibility"
+        awaitDeviceReadiness(name)
+        val probe = Probe(name, expectedText.last())
+        activeProbe = probe
+        // Fresh cache, repository, registry and ViewModel on every timed opening, including reopen.
+        val disk = FileConversationCache(root)
+        val retiredNames = setOf("readThread", "readHistoryPosition")
+        val retiredApis = (ConversationCache::class.java.methods.asList() + disk.javaClass.methods).filter { it.name in retiredNames }
+        if (guardLegacyReads) assertTrue("Retired cache read APIs must be absent", retiredApis.isEmpty())
+        val fullReads = AtomicInteger()
+        val measured =
+            object : ConversationCache by disk {
+                override suspend fun readAuthoritativeThread(
+                    serverId: String,
+                    conversationId: String,
+                ): SavedAuthoritativeThread? {
+                    fullReads.incrementAndGet()
+                    return disk.readAuthoritativeThread(serverId, conversationId).also {
+                        probe.restored.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                    }
+                }
+            }
+        val owner = ViewModelStore()
+        lateinit var destination: SavedAuthoritativeDestination
+        lateinit var vm: ThreadViewModel
+        composeRule.runOnUiThread {
+            destination =
+                SavedAuthoritativeDestination(measured, decorate = { repository ->
+                    val route = requireNotNull(repository.negotiatedThread)
+                    object : ConversationRepository by repository {
+                        override val negotiatedThread =
+                            object : NegotiatedThread() {
+                                override val host = route.host
+                                override val support = route.support
+                                override val store = route.store
+
+                                override fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot> =
+                                    route.observe(conversationId).onEach {
+                                        if (it.items.isNotEmpty()) probe.snapshot.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                    }
+
+                                override fun progress(
+                                    conversationId: String,
+                                    connection: Any,
+                                ) = route.progress(conversationId, connection)
+
+                                override suspend fun open(conversationId: String) = route.open(conversationId)
+
+                                override suspend fun acquire(
+                                    conversationId: String,
+                                    connection: Any,
+                                ) = route.acquire(conversationId, connection)
+
+                                override fun older(conversationId: String) = route.older(conversationId)
+
+                                override fun cancel(conversationId: String) = route.cancel(conversationId)
+                            }
+                    }
+                })
+            if (online) destination.connect()
+            vm = destination.open()
+            owner.put("thread", vm)
+            selected.value = Opening(vm, probe, online)
+        }
+        try {
+            composeRule.waitUntil(20000) { probe.drawn.get() > 0 }
+            composeRule.waitUntil(15000) {
+                destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") } == if (online) 1 else 0
+            }
+            assertTrue(probe.restored.get() > 0 && probe.snapshot.get() > 0 && probe.complete.get() > 0)
+            var islands = 0
+            composeRule.runOnIdle {
+                val state = vm.state.value
+                val snapshot = requireNotNull(state.authoritativeThread).sourceSnapshot
+                assertEquals(facts, snapshot.items.map { it.raw })
+                assertEquals(100_000L, snapshot.completedVersion)
+                assertEquals(90_000L, snapshot.checkpoint)
+                assertEquals(null, snapshot.coverage)
+                assertEquals(expectedText, state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
+                assertEquals(expectedText.size, state.items.size)
+                assertEquals(
+                    facts.size,
+                    snapshot.items
+                        .map { it.id }
+                        .distinct()
+                        .size,
+                )
+                val orders = snapshot.items.map { requireNotNull(it.order) }
+                islands = 1 + orders.zipWithNext().count { (before, after) -> after != before + 1 }
+                assertEquals(if (fragmented) 18_000 else 1, islands)
+                assertTrue("Retired cache read APIs must remain absent", retiredApis.isEmpty())
+                // Full-file fallback restores for observation and again before the live lease.
+                assertEquals(if (online) 2 else 1, fullReads.get())
+                assertEquals(if (online) 1 else 0, destination.requests.count { it.type in setOf("thread_page", "thread_catch_up") })
+                assertTrue(destination.requests.none { it.type == "thread_page" && it.payload.jsonObject.containsKey("before_order") })
+            }
+            Log.i(
+                "SavedThreadFirstDraw",
+                "case=${probe.name} durable=${facts.size} order_islands=$islands visible_rows=${expectedText.size} " +
+                    "full_reads=${fullReads.get()} retired_apis=${retiredApis.size} " +
+                    "restored_ms=${probe.elapsed(probe.restored.get())} snapshot_ms=${probe.elapsed(probe.snapshot.get())} " +
+                    "complete_ms=${probe.elapsed(probe.complete.get())} drawn_ms=${probe.elapsed(probe.drawn.get())}",
+            )
+            return probe
+        } finally {
+            composeRule.runOnUiThread {
+                selected.value = null
+                owner.clear()
+                destination.close()
+            }
+            runBlocking { vm.viewModelScope.coroutineContext[Job]?.join() }
+            composeRule.waitForIdle()
         }
     }
 
@@ -646,6 +893,43 @@ class SavedThreadFirstDrawDeviceTest {
                                 // Require a subsequent frame, still containing the exact visible text.
                                 view.postInvalidateOnAnimation()
                             }
+                            val retry = opening.retryFrame?.get()
+                            if (retry != null && retry.drawn.get() == 0L && viewport != null) {
+                                val header =
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-top-bar"
+                                        }?.boundsInRoot
+                                val composer =
+                                    nodes
+                                        .firstOrNull {
+                                            it.config.getOrNull(SemanticsProperties.TestTag) == "thread-composer"
+                                        }?.boundsInRoot
+                                val older =
+                                    nodes.firstOrNull { node ->
+                                        node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == retry.newestText } == true
+                                    }
+                                if (older != null &&
+                                    header != null &&
+                                    composer != null &&
+                                    older.layoutInfo.isPlaced &&
+                                    older.boundsInRoot.width > 0 &&
+                                    older.boundsInRoot.height > 0 &&
+                                    older.boundsInRoot.left >= viewport.left &&
+                                    older.boundsInRoot.right <= viewport.right &&
+                                    older.boundsInRoot.top >= viewport.top &&
+                                    older.boundsInRoot.bottom <= viewport.bottom &&
+                                    older.boundsInRoot.top >= header.bottom &&
+                                    older.boundsInRoot.bottom <= composer.top
+                                ) {
+                                    view.viewTreeObserver.registerFrameCommitCallback {
+                                        if (selected.value === opening && opening.retryFrame?.get() === retry) {
+                                            retry.drawn.compareAndSet(0, SystemClock.elapsedRealtimeNanos())
+                                        }
+                                    }
+                                    view.postInvalidateOnAnimation()
+                                }
+                            }
                         }
                     observer.addOnDrawListener(listener)
                     onDispose { observer.removeOnDrawListener(listener) }
@@ -661,7 +945,10 @@ class SavedThreadFirstDrawDeviceTest {
                         ThreadScreen(state, {
                         }, {
                         }, if (online) ConnectionState.Connected else ConnectionState.Offline, {
-                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = vm::onRetryOlderHistory)
+                        }, onDemandOlderHistory = vm::onDemandOlderHistory, onRetryOlderHistory = {
+                            opening.retryFrame?.set(Probe("${probe.name} Retry", "Saved 17601."))
+                            vm.onRetryOlderHistory()
+                        })
                     }
                 }
             }

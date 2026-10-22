@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.di.SavedAuthoritativeDestination
+import de.pyryco.mobile.e2e.harnessThreadEvidence
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
@@ -25,6 +28,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -131,6 +136,237 @@ class AuthoritativeReaderPagingTest {
                 disk.upsertAuthoritativeThread(serverId, conversationId, saved, reset, baseline, orderMoves).also {
                     if (it.isSuccess && raw in saved.items) committed.complete(Unit)
                 }
+        }
+
+    @Test fun indexedLiveSupplementKeepsTheHeldReplyAdmittedWithoutCertification() =
+        runTest {
+            val empty = SavedAuthoritativeThread("e", emptyList(), 0, 0)
+            val cache = disk()
+            cache.writeAuthoritativeThread("host", "c", empty).getOrThrow()
+            destination(cache) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.sourceSnapshot?.epoch == "e" }
+                val raw = JsonObject(fact(1) + mapOf("active" to JsonPrimitive(true), "status" to JsonPrimitive("running")))
+                // The real durable writer may win before the reader handles the corresponding live facts.
+                val committed = empty.copy(items = listOf(raw), appliedVersion = 10)
+                cache.upsertAuthoritativeThread("host", "c", committed, false, empty, emptyMap()).getOrThrow()
+                repo.authoritativeThreads.applyBatch("host", "c", "e", 10, listOf(ThreadItemDto.decodeReplacement(raw)), 0)
+                val state =
+                    vm.state.first {
+                        it.authoritativeThread
+                            ?.sourceSnapshot
+                            ?.items
+                            ?.any { fact -> fact.id == 1L } == true
+                    }
+                val snapshot = requireNotNull(state.authoritativeThread).sourceSnapshot
+                assertFalse("indexed supplementation cannot revoke a healthy live reply", snapshot.repairNeeded)
+                assertFalse(snapshot.resetNeeded)
+                assertEquals(listOf(raw), snapshot.items.map { it.raw })
+                assertEquals(10L, snapshot.completedVersion)
+                assertEquals(0L, snapshot.checkpoint)
+                assertEquals(null, snapshot.coverage)
+                assertEquals(listOf("Saved exact 1"), state.items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content })
+                assertTrue(
+                    state.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message.isStreaming,
+                )
+                assertTrue(fixture.requests.none { it.type in setOf("thread_page", "thread_catch_up") })
+                assertEquals(0, cache.authoritativeFullReads)
+            }
+        }
+
+    @Test fun establishedReaderPublishesStructuralLiveFactsWithoutSecondaryObservation() =
+        runTest {
+            readerSurvivesSecondaryObservation(
+                false,
+            )
+        }
+
+    @Test fun completedEvidenceObservationCannotRetireTheEstablishedReader() = runTest { readerSurvivesSecondaryObservation(true) }
+
+    private suspend fun TestScope.readerSurvivesSecondaryObservation(secondary: Boolean) {
+        val original = SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)
+        val cache = disk()
+        cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+        destination(cache) { fixture, vm, repo ->
+            vm.state.first { it.authoritativeThread?.rows?.size == 1 }
+            val requests = fixture.requests.toList()
+            if (secondary) {
+                val observed = harnessThreadEvidence(repo).observe("c").first { it.records.any { row -> row.fact?.id == 1L } }
+                assertEquals(listOf(fact(1)), observed.records.map { requireNotNull(it.fact).raw })
+            }
+            val added = fact(2)
+            repo.authoritativeThreads.applyBatch("host", "c", "e", 101, listOf(ThreadItemDto.decodeReplacement(added)), 0)
+            val state =
+                withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(5_000) {
+                        vm.state.first {
+                            it.authoritativeThread
+                                ?.sourceSnapshot
+                                ?.items
+                                ?.any { row -> row.id == 2L } == true
+                        }
+                    }
+                }
+            val retained = repo.authoritativeThreads.current("host", "c")
+            println("secondary_reader secondary=$secondary store_facts=${retained.items.size} ui_updated=${state != null}")
+            assertEquals(listOf(fact(1), added), retained.items.map { it.raw })
+            assertTrue("a completed secondary read must not retire the established UI reader", state != null)
+            assertEquals(
+                listOf("Saved exact 1", "Saved exact 2"),
+                requireNotNull(state).items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.content },
+            )
+            assertEquals(100L, retained.checkpoint)
+            assertFalse(retained.repairNeeded)
+            assertFalse(retained.resetNeeded)
+            assertEquals(0, cache.authoritativeFullReads)
+            assertEquals(requests, fixture.requests)
+        }
+    }
+
+    @Test fun connectionReplacementKeepsTheOriginalReaderPublishingWithPassiveEvidence() =
+        runTest {
+            for (observeEvidence in listOf(false, true)) {
+                databaseName = "replacement-$observeEvidence.db"
+                val cache = disk()
+                cache.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)).getOrThrow()
+                destination(cache, online = true) { fixture, vm, repo ->
+                    vm.state.first { it.authoritativeThread?.rows?.size == 1 }
+                    val route = requireNotNull(repo.negotiatedThread)
+                    val original = route.support.first { it is ThreadSupport.Supported } as ThreadSupport.Supported
+                    if (observeEvidence) harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                    fixture.disconnect()
+                    runCurrent()
+                    fixture.connect()
+                    route.support.first { it is ThreadSupport.Supported && it.connection !== original.connection }
+                    runCurrent()
+                    val catchUp = fixture.requests.last { it.type == "thread_catch_up" }
+                    fixture.reply(
+                        catchUp,
+                        """{"conversation_id":"c","epoch":"e","version":100,"items":[],"final":true,"from_version":100}""",
+                    )
+                    vm.state.first { it.authoritativeThread?.sourceSnapshot?.repairNeeded == false }
+                    if (observeEvidence) harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                    val requests = fixture.requests.toList()
+                    val added = fact(2)
+                    repo.authoritativeThreads.applyBatch("host", "c", "e", 101, listOf(ThreadItemDto.decodeReplacement(added)), 0)
+                    val state =
+                        withContext(Dispatchers.IO) {
+                            withTimeoutOrNull(5_000) {
+                                vm.state.first {
+                                    it.authoritativeThread
+                                        ?.sourceSnapshot
+                                        ?.items
+                                        ?.any { row -> row.id == 2L } == true
+                                }
+                            }
+                        }
+                    val current = repo.authoritativeThreads.current("host", "c")
+                    println("replacement_reader evidence=$observeEvidence facts=${current.items.size} ui_updated=${state != null}")
+                    assertTrue("the original UI reader must publish after connection replacement", state != null)
+                    assertEquals(listOf(fact(1), added), current.items.map { it.raw })
+                    assertEquals(100L, current.checkpoint)
+                    assertFalse(current.repairNeeded)
+                    assertFalse(current.resetNeeded)
+                    assertEquals(0, cache.authoritativeFullReads)
+                    assertEquals(requests, fixture.requests)
+                }
+            }
+        }
+
+    @Test fun evidenceObservationPreservesSettledRetryAndItsReaderBoundary() =
+        runTest {
+            val facts = (1..600).map { fact(it) }
+            val disk = disk()
+            disk.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 1000)).getOrThrow()
+            var attempts = 0
+            val cache =
+                object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                    override suspend fun beforeAuthoritativeWindow(
+                        serverId: String,
+                        conversationId: String,
+                        cursor: AuthoritativeDisplayCursor,
+                        admitted: Set<Pair<Long, Boolean>>,
+                        size: Int,
+                    ): AuthoritativeThreadWindow? {
+                        attempts++
+                        if (attempts == 1) return null
+                        return disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                    }
+                }
+            destination(cache) { fixture, vm, repo ->
+                vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                vm.onDemandOlderHistory()
+                vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                val requests = fixture.requests.toList()
+                val evidence = harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
+                assertTrue(evidence.admitted)
+                runCurrent()
+                assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
+                vm.onRetryOlderHistory()
+                vm.state.first { it.authoritativeThread?.rows?.size == 400 }
+                assertEquals(
+                    facts.takeLast(400),
+                    repo.authoritativeThreads
+                        .current("host", "c")
+                        .items
+                        .map { it.raw },
+                )
+                assertEquals(2, attempts)
+                assertEquals(0, disk.authoritativeFullReads)
+                assertEquals(requests, fixture.requests)
+            }
+        }
+
+    @Test fun savedOpaqueNumbersRemainExactThroughFileDestinationColdReopen() =
+        runTest {
+            val root = File(temporary.root, "opaque-numbers")
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val opaque =
+                MobileJson.parseToJsonElement(
+                    """{"nested":[-0,1e-400,1e400,1.234567890123456789,9007199254740993123456789,"1e-400",true,null]}""",
+                )
+            val raw = JsonObject(fact(1) + mapOf("future" to opaque))
+            val saved = SavedAuthoritativeThread("e", listOf(raw), 10, 9)
+            FileConversationCache(root, dispatcher).writeAuthoritativeThread("host", "c", saved).getOrThrow()
+            for (online in listOf(false, true)) {
+                repeat(2) {
+                    destination(FileConversationCache(root, dispatcher), online) { fixture, vm, repo ->
+                        val state =
+                            vm.state.first {
+                                it.authoritativeThread
+                                    ?.sourceSnapshot
+                                    ?.items
+                                    ?.size == 1
+                            }
+                        assertEquals(
+                            listOf(raw),
+                            state.authoritativeThread
+                                ?.sourceSnapshot
+                                ?.items
+                                ?.map { it.raw },
+                        )
+                        assertEquals(
+                            listOf(raw),
+                            repo.authoritativeThreads
+                                .current("host", "c")
+                                .items
+                                .map { it.raw },
+                        )
+                        advanceTimeBy(300)
+                        runCurrent()
+                        val requests = fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") }
+                        assertEquals(if (online) 1 else 0, requests.size)
+                        advanceTimeBy(300)
+                        runCurrent()
+                        assertEquals(requests, fixture.requests.filter { it.type in setOf("thread_page", "thread_catch_up") })
+                    }
+                    val reopened = FileConversationCache(root, dispatcher).readAuthoritativeThread("host", "c")
+                    assertEquals(saved, reopened)
+                    assertEquals(opaque, reopened?.items?.single()?.get("future"))
+                }
+            }
         }
 
     @Test fun demandIsIndependentAndNeverWalksAtRest() =
@@ -1005,6 +1241,164 @@ class AuthoritativeReaderPagingTest {
                 assertEquals(original.coverage?.toDomain(), snapshot.coverage)
                 assertFalse(snapshot.items.any { it.id in 18_001L..20_000L })
                 println("reader_extras counts=${cache.authoritativeReadCounts}")
+            }
+        }
+
+    @Test fun retryPublicationCannotExposeAnOlderBaselineToTheObserver() =
+        runTest {
+            for (online in listOf(false, true)) {
+                repeat(2) { opening ->
+                    databaseName = "retry-publication-$online-$opening.db"
+                    val facts = (1..600).map { fact(it) }
+                    disk().writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 900)).getOrThrow()
+                    val disk = disk()
+                    val attempts =
+                        java.util.concurrent.atomic
+                            .AtomicInteger()
+                    val cache =
+                        object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
+                            override suspend fun beforeAuthoritativeWindow(
+                                serverId: String,
+                                conversationId: String,
+                                cursor: AuthoritativeDisplayCursor,
+                                admitted: Set<Pair<Long, Boolean>>,
+                                size: Int,
+                            ): AuthoritativeThreadWindow? {
+                                val page = disk.beforeAuthoritativeWindow(serverId, conversationId, cursor, admitted, size)
+                                return if (attempts.incrementAndGet() == 1) null else page
+                            }
+                        }
+                    destination(cache, online) { fixture, vm, repo ->
+                        vm.state.first { it.authoritativeThread?.rows?.size == 200 }
+                        runCurrent()
+                        vm.onDemandOlderHistory()
+                        vm.state.first { it.historyTail == ThreadHistoryTail.Retry }
+                        runCurrent()
+                        assertEquals(1, attempts.get())
+
+                        fun field(name: String) =
+                            CachingConversationRepository::class.java.getDeclaredField(name).also { it.isAccessible = true }
+                        val dispatcherField = field("processingDispatcher")
+                        val baselineField = field("persistedAuthoritative")
+                        val formerDispatcher = dispatcherField.get(repo)
+                        val formerMap = baselineField.get(repo)
+                        val published = java.util.concurrent.CountDownLatch(1)
+                        val release = java.util.concurrent.CountDownLatch(1)
+                        val premature = java.util.concurrent.CountDownLatch(1)
+                        val armed =
+                            java.util.concurrent.atomic
+                                .AtomicBoolean(true)
+                        val threads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
+                        val executor =
+                            java.util.concurrent.Executors.newFixedThreadPool(2) { runnable ->
+                                Thread(runnable, "retry-publication-worker").also { threads.add(it) }
+                            }
+                        val worker = executor.asCoroutineDispatcher()
+                        val baselines =
+                            object : java.util.concurrent.ConcurrentHashMap<String, Any>() {
+                                override fun get(key: String): Any? {
+                                    if (published.count == 0L && release.count > 0L) premature.countDown()
+                                    return super.get(key)
+                                }
+
+                                override fun compute(
+                                    key: String,
+                                    remappingFunction: java.util.function.BiFunction<in String, in Any?, out Any?>,
+                                ): Any? {
+                                    val pagePublished =
+                                        repo.authoritativeThreads
+                                            .current("host", "c")
+                                            .items.size == 400
+                                    if (pagePublished && armed.compareAndSet(true, false)) {
+                                        published.countDown()
+                                        check(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                                    }
+                                    return super.compute(key, remappingFunction)
+                                }
+                            }
+                        @Suppress("UNCHECKED_CAST")
+                        baselines.putAll(formerMap as Map<String, Any>)
+                        baselineField.set(repo, baselines)
+                        dispatcherField.set(repo, worker)
+                        try {
+                            vm.onRetryOlderHistory()
+                            val deadline =
+                                System.nanoTime() +
+                                    java.util.concurrent.TimeUnit.SECONDS
+                                        .toNanos(8)
+                            var observerWaits = false
+                            while (System.nanoTime() < deadline) {
+                                runCurrent()
+                                observerWaits =
+                                    threads.any { thread ->
+                                        thread.state == Thread.State.BLOCKED &&
+                                            thread.stackTrace.any {
+                                                it.className.contains("CachingConversationRepository\$observeAuthoritativeThread")
+                                            }
+                                    }
+                                if (published.count == 0L && (premature.count == 0L || observerWaits)) break
+                                Thread.sleep(5)
+                            }
+                            assertEquals("retry must reach store publication before baseline compute", 0L, published.count)
+                            assertTrue("observer must reach the controlled publication edge", premature.count == 0L || observerWaits)
+                            // Drain prior observer validation work before releasing the writer, without waiting for its mutex.
+                            val exposedOldBaseline = premature.count == 0L
+                            if (exposedOldBaseline) executor.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                            release.countDown()
+                            val settled =
+                                System.nanoTime() +
+                                    java.util.concurrent.TimeUnit.SECONDS
+                                        .toNanos(8)
+                            while (System.nanoTime() < settled) {
+                                runCurrent()
+                                if (vm.state.value.authoritativeThread
+                                        ?.rows
+                                        ?.size == 400 &&
+                                    vm.state.value.historyTail != ThreadHistoryTail.Loading
+                                ) {
+                                    break
+                                }
+                                Thread.sleep(5)
+                            }
+                            advanceTimeBy(500)
+                            runCurrent()
+                            assertEquals(
+                                400,
+                                vm.state.value.authoritativeThread
+                                    ?.rows
+                                    ?.size,
+                            )
+                            assertEquals(
+                                facts.takeLast(400),
+                                repo.authoritativeThreads
+                                    .current("host", "c")
+                                    .items
+                                    .map { it.raw },
+                            )
+                            assertEquals(2, attempts.get())
+                            println(
+                                "retry_publication online=$online opening=$opening old_baseline=$exposedOldBaseline " +
+                                    "counts=${disk.authoritativeReadCounts}",
+                            )
+                            assertEquals(
+                                "retry must not cause a redundant parent closure",
+                                200,
+                                disk.authoritativeReadCounts.itemDecodes,
+                            )
+                            assertFalse("observer read baseline before its restore publication completed", exposedOldBaseline)
+                            val requests = fixture.requests.toList()
+                            advanceTimeBy(1000)
+                            runCurrent()
+                            assertEquals(requests, fixture.requests)
+                            assertEquals(if (online) 1 else 0, requests.count { it.type in setOf("thread_page", "thread_catch_up") })
+                        } finally {
+                            release.countDown()
+                            dispatcherField.set(repo, formerDispatcher)
+                            baselineField.set(repo, formerMap)
+                            worker.close()
+                        }
+                    }
+                }
             }
         }
 
