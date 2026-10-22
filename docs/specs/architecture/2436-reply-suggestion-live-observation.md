@@ -133,3 +133,61 @@ Daemon source is `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; its binary SHA-256 
 The four focused JVM classes executed/passed 19 tests, with zero failures or skips;
 their raw reports are in the adjacent `builder-green-jvm-20261021/` directory.
 Lint passed. Complete configured scripted acceptance remains dispatcher/verifier-owned.
+
+### 2026-10-22 — Reopened scenario investigation and repair plan
+
+The post-repair failure on Mobile `d37187df190fbb8a810aa2f52deb9b31923d9cc7`
+is retained in #2388 bundle
+`dfc1022f0c76e9b08b2f0af80a35bcd43d4c61619cda8b581d8ab812abc5fdd5`.
+It records 24 executed, 23 passed and one failed, followed by a named 1/1 pass.
+Its phone checkpoint trace is missing. The producer gap and replacement handshake
+are correlations; the original failure stage remains unknown.
+
+Additional files read: `ThreadViewModel`'s suggestion collectors and
+`ThreadViewModelReplySuggestionTest`, `ThreadInputBar`'s pointer handler,
+`scripts/e2e-emulator.sh`'s fragment-release fence and
+`scripts/e2e-fixtures/reply-suggestion.jsonl`. The owning lesson in
+`thread-screen-composer-drafts-and-attachments.md` is that disconnect invalidates
+an observed revision: same-revision reconciliation must not re-arm the composer.
+Core's `replySuggestions.current` and `reconcileReplySuggestions` retain and
+re-deliver that same revision. The earlier live-source repair cannot change this
+product contract. No decision record or product change is proposed.
+
+First reproduce this boundary with the actual daemon offer: observe it, retire
+the phone connection with `severLink`, restore it, then run the unchanged long-press
+proof. Retain the failing native XML and checkpoint trace. A fresh unmodified
+Linux baseline at Mobile `e6397e0159d7d5e011146882107fe29ddef990ac` passed 1/1
+without a producer gap; it does not establish causality.
+
+If the controlled run confirms the mismatch, fence scripted suggestion publication
+after reply settlement and a controlled connection replacement. Split the existing
+native fixture at its `prompt_suggestion`, using the existing phone-controlled
+second-fragment release. Prove that the initial reply and its delivered user echo
+survive replacement, that no offer precedes release, then release the actual
+native suggestion and retain all existing placeholder, gesture, echo and clear
+assertions. No Send is retried. Both fragments remain from the existing scenario;
+the live twin and the product's revocation rules remain unchanged.
+
+State/concurrency: reuse bounded test reads, `firstOnLive` and the existing
+`DaemonFaultControl.releaseStream`; no new jobs or production state. The native
+scenario covers cold setup, reused conversation/session IDs, reply recovery and
+offer delivery after replacement. Existing `ReplySuggestionReadsTest` and
+`LiveConnectionReadsTest` retain the retired-source and clear-isolation checks.
+`ThreadViewModelReplySuggestionTest` retains the same-revision revocation contract.
+`ScriptedReplySuggestionTest` retains repository-to-composer delivery coverage.
+Native transport and pointer input require the existing device test. Deadlines
+remain unchanged. Failures retain static checkpoints and their original causes.
+
+Sizing: one useful behavior, the existing scripted submission proof; about 300
+written lines including this plan, no exported types, no production signatures or
+reject branches, one native consumer, three acceptance criteria. In-flight #2462
+and other deterministic-class branches change different methods; edits stay local.
+Run the affected JVM classes, the focused scripted scenario, lint, assembly,
+instrumented compilation, formatting and final pre-verification on Linux.
+
+## Documentation handoff
+
+Pending documentation stage: update `docs/e2e-interactive-stream.md`,
+“Reply suggestion live-connection observation (#2436)”, with the reopened failure,
+demonstrated remaining cause and counted Linux evidence. Preserve the previous
+controlled proof and historical evidence limitations.
