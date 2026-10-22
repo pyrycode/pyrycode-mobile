@@ -511,6 +511,8 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         }
+        // Control the observed race: retire the captured connection after certification, before proof.
+        severAndRestoreLink()
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         var readSamples = 0
         var previousReadSample = ""

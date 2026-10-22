@@ -68,3 +68,11 @@ Write a controlled regression before the repair and observe its failure. Test st
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-22
+
+## Revisions
+
+### 2026-10-22 — Controlled connection replacement
+
+The first diagnostic managed pair passed 2/2 on `5ea831bdc4098fcdeb2e5836bcec3dc16734dc2a`: certification was already 12 while shown was 9 and confirmed was 0; after qualified sight, confirmed became 9 on the same connection. Raw evidence is retained at agents `logs/evidence/2462/diagnostic-stable-5ea831bdc/`. This stable run does not erase the retained #2344 failure, where the connection ended and a replacement applied read 9 while the wait remained bound to the retired repository.
+
+`replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner` executed once and failed exactly at fresh replacement completion against the extracted original predicate. To make the managed diagnostic causal rather than dependent on intermittent timing, use the existing `severAndRestoreLink` after the original certification wait and before the original 90000 ms final wait. Retain this controlled transition as the native regression; both methods still run together and all original assertions and teardown remain. The repair itself is still pending the diagnostic result.
