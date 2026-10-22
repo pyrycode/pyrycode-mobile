@@ -53,6 +53,11 @@ native validation and independent acceptance are pending.
 
 Source324df55be6a3978a5a166aac3bcfec3af1cd0acf passed forced formatting and native compilation/SpotlessCheck, then ui-maqwbx4h selected/executed6/pass6/fail0/error0/skip0. DB first-draw frames247/244/243/207ms retained200payloadresults/decodes,5queries,oneevidence row and nofullreads. The actualDB3000ms slow-control frames3868/3403/3343/3320ms all rejected the same2000ms bound while retaining identical counts. Paging/retry/reopen and descriptor cleanup passed. Both complete file compatibility methods logged required=false/followup2456, each8ordinary/fragmented offline/held-newest first/reopen arms, exact36000facts/18000islands/18000visiblemessages and fullreads offline1/online2/retiredAPIs0. File fragmented frames2166–2646ms remain measurements for2456, never normal DB latency or actual one-time import timing. Raw XML/phone/APKs/source/plan/image/runtime/receipt:2452/manual-20261022/db-file-separated-324d, manifestffce81fc6fb25b0fb76309e20130c9b9c8c29168ed1deea44ef14b935c33ad4c. The selected native runtime uses production destination/repository/ViewModel with controlled transport, no external daemon. Independent complete configured acceptance and actual documentation/merge remain pending.
 
+
+### Independent opt-in file benchmark
+
+On the same324df55be6 source, normal admitted native gate ui-562olv0x with requireFullFileLatencyBound=true selected/executed1/pass0/fail1/errors0/skips0. Phone records confirmed required=true/followup2456 after all8exact compatibility arms completed. Fragmented file frames2501/2246/2825/2687ms; the actual failure was Probe.assertBound at2501ms versus2000ms. This is retained as a separate2456 latency failure, not DB acceptance or real import latency. Complete XML/phone/APKs/source/image/runtime are under logs/evidence/2456/manual-20261022/optin-324d, manifestb54f7a09902a6c63af9dbbe2c341d0e5f67a561aec3962c992391b160827d949. Together with default required=false in both six-suite file methods, this verifies effective scope selection rather than silently disabling the benchmark. No production change followed the failure.
+
 ## Storage continuation contract
 
 `beforeAuthoritativeWindow` returns up to 200 additional display contributions plus validated
