@@ -241,6 +241,12 @@ class AuthoritativeReaderPagingTest {
                     fixture.connect()
                     route.support.first { it is ThreadSupport.Supported && it.connection !== original.connection }
                     runCurrent()
+                    val catchUp = fixture.requests.last { it.type == "thread_catch_up" }
+                    fixture.reply(
+                        catchUp,
+                        """{"conversation_id":"c","epoch":"e","version":100,"items":[],"final":true,"from_version":100}""",
+                    )
+                    vm.state.first { it.authoritativeThread?.sourceSnapshot?.repairNeeded == false }
                     if (observeEvidence) harnessThreadEvidence(repo).observe("c").first { it.records.isNotEmpty() }
                     val requests = fixture.requests.toList()
                     val added = fact(2)
