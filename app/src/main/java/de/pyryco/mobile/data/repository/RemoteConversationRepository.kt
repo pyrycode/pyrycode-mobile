@@ -349,9 +349,11 @@ class RemoteConversationRepository internal constructor(
             authoritativeNowMillis,
             retireAuthoritativeConnection,
             onCertified = { conversation, generation, reply ->
-                if (publishAuthoritativeCompletions(conversation, generation, certificate = reply)) {
+                if (publishAuthoritativeCompletions(conversation, generation, certificate = reply) &&
+                    currentReadMarks(conversation)?.let { it.threadSupported && it.unreadWatermark == null } == true
+                ) {
                     // A live-triggered summary can precede the daemon's usable fold. Certification
-                    // supplies a new refresh edge, never shown metadata or read confirmation itself.
+                    // refreshes that unavailable reading, never supplying shown/read facts itself.
                     refreshAuthoritativeReadFacts(conversation, generation)
                 }
             },

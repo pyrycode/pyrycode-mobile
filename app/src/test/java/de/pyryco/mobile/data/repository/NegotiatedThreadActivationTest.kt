@@ -560,7 +560,11 @@ class NegotiatedThreadActivationTest {
             }
         }
 
-    @Test fun unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement() =
+    @Test fun unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement() = unreadPostSummaryAfterRecovery(shownAfterPost = null)
+
+    @Test fun unreadPostWithAvailableSummaryNeedsNoCertificationRefresh() = unreadPostSummaryAfterRecovery(shownAfterPost = 13)
+
+    private fun unreadPostSummaryAfterRecovery(shownAfterPost: Long?) =
         runTest {
             val host = host("h")
             var source: HostConversationSource? = null
@@ -631,10 +635,10 @@ class NegotiatedThreadActivationTest {
                     }
                 updates.forEach(pump::push)
                 runCurrent()
-                // The first completion refresh races the daemon's fold and reports unavailable shown metadata.
-                pump.push(summary(null))
+                // The live refresh can report either an available fold or temporary unavailability.
+                pump.push(summary(shownAfterPost))
                 runCurrent()
-                assertNull(repo.currentReadMarks("c")?.unreadWatermark)
+                assertEquals(shownAfterPost?.toULong(), repo.currentReadMarks("c")?.unreadWatermark)
                 assertEquals(
                     "c",
                     hostSource.snapshots.value
@@ -643,7 +647,10 @@ class NegotiatedThreadActivationTest {
                         .single()
                         .id,
                 )
-                assertTrue(hostSource.attention.value["h"].isNullOrEmpty())
+
+                fun attention() = hostSource.attention.value["h"]?.get("c") ?: ConversationAttention.Idle
+                val expectedAttention = if (shownAfterPost == null) ConversationAttention.Idle else ConversationAttention.Unread
+                assertEquals(expectedAttention, attention())
                 val beforeCertification = pump.sent.count { it.type == "list_conversations" }
                 // Only a new request after recovery gets usable daemon facts; no unsolicited update.
                 val refreshes = mutableListOf<Envelope>()
@@ -665,16 +672,23 @@ class NegotiatedThreadActivationTest {
                 )
                 runCurrent()
                 assertEquals(
-                    "certified recovery must refresh the unavailable daemon summary",
-                    beforeCertification + 1,
+                    "certified recovery must refresh only an unavailable daemon summary",
+                    beforeCertification + if (shownAfterPost == null) 1 else 0,
                     pump.sent.count { it.type == "list_conversations" },
                 )
-                assertNull("certification itself is not shown metadata", repo.currentReadMarks("c")?.unreadWatermark)
-                assertTrue(hostSource.attention.value["h"].isNullOrEmpty())
-                pump.push(summary(13).copy(inReplyTo = refreshes.single().id))
+                assertEquals(
+                    "certification itself is not shown metadata",
+                    shownAfterPost?.toULong(),
+                    repo.currentReadMarks("c")?.unreadWatermark,
+                )
+                assertEquals(expectedAttention, attention())
+                if (shownAfterPost == null) {
+                    pump.push(summary(13).copy(inReplyTo = refreshes.single().id))
+                } else {
+                    assertTrue(refreshes.isEmpty())
+                }
                 runCurrent()
 
-                fun attention() = hostSource.attention.value["h"]?.get("c") ?: ConversationAttention.Idle
                 assertEquals(ConversationAttention.Unread, attention())
                 pump.push(summary(13))
                 pump.push(summary(9))
