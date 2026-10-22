@@ -249,11 +249,19 @@ Initial and later unavailable supplemental reads withhold unchecked captures fro
 writer baselines. Observation-owned bounded retries retain the last validated view; stale owner,
 incarnation, generation or cache lifetime rejects application. Hydration may retain the committed
 certificate but cannot advance it over unapplied/unsaved facts, manufacture continuous coverage,
-or replace a daemon cursor with local position. Owned saves retain omitted facts. Until
-authoritative demand paging replaces it, reader movement or explicit retry can request a full
-compatibility restore in the observation lifetime; opening, reconnect and page arrival cannot.
-Failed/unapplied hydration forwards the original older demand to the negotiated route. See
-[repository validation and reader-only compatibility hydration](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+or replace a daemon cursor with local position. Owned saves retain omitted facts. Authoritative
+reader paging uses the bounded continuation below; full-file compatibility APIs remain separate.
+See [repository validation](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+
+#### Authoritative reader continuation (#2334)
+
+One reader movement/retry selects up to 200 older display contributions plus required extras,
+independently of held newest/catch-up. Committed owned placement changes extend storage-owned
+reader bounds using old/new metadata already visited by the writer. This retains access to
+moved older components regardless of boundary survival or distance. Retry belongs to its reader/generation; reset or replacement clears it. Local exhaustion cannot certify
+coverage, set daemon exhaustion or overwrite daemon continuation. Owned saves retain unloaded
+facts. The [reader paging contract, native mapping and evidence](authoritative-reader-paging.md) covers bounded
+metadata recovery, fragmented ranges, retirement and fresh reopen.
 
 #### Placement metadata and deep-parent availability
 

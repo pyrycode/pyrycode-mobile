@@ -96,6 +96,46 @@ class AuthoritativeRoomStorageTest {
             )
         }
 
+    @Test fun readerBoundsRequireCommittedOwnedPlacementHistory() =
+        runTest {
+            var reject = false
+            val store = open { if (reject) throw IOException("injected") }
+            val parent = JsonObject(raw(90_000, 10_000) + mapOf("kind" to JsonPrimitive("agent"), "shown" to JsonPrimitive(false)))
+            val children = (1..600).map { JsonObject(raw(it) + ("parent" to JsonPrimitive(90_000))) }
+            val standalone = (11_000..11_419).map { raw(it) }
+            val original = saved(children + parent + standalone)
+            seed(store, original)
+            val opening = requireNotNull(store.newestDisplayWindow("Host", "thread", 200))
+            val cursor = requireNotNull(opening.cursor)
+            val moved = JsonObject(parent + mapOf("rev" to JsonPrimitive(300_000), "order" to JsonPrimitive(20_000)))
+            val update = original.copy(items = listOf(moved), appliedVersion = 300_000)
+            reject = true
+            assertTrue(store.upsertAuthoritativeThread("Host", "thread", update, false, original, emptyMap()).isFailure)
+            reject = false
+            val unchanged = requireNotNull(store.beforeDisplayWindow("Host", "thread", cursor, opening.rows, 200))
+            assertEquals((11_020..11_219).map { it.toLong() to false }.toSet(), unchanged.rows)
+            assertEquals(200, store.lastReadCounts.ordinalReads)
+            assertEquals(original, store.readAuthoritativeThread("Host", "thread"))
+            store.upsertAuthoritativeThread("Host", "thread", update, false, original, emptyMap()).getOrThrow()
+            val recovered = requireNotNull(store.beforeDisplayWindow("Host", "thread", cursor, opening.rows, 200))
+            assertEquals((401..600).map { it.toLong() to false }.toSet(), recovered.rows)
+            assertEquals(original.coverage, recovered.saved.coverage)
+            assertEquals(original.checkpoint, recovered.saved.checkpoint)
+            // A second storage owner cannot publish a receipt for this owner's cursors.
+            val external = AuthoritativeRoomStorage(requireNotNull(database), Dispatchers.IO)
+            val movedAgain = JsonObject(moved + mapOf("rev" to JsonPrimitive(400_000), "order" to JsonPrimitive(30_000)))
+            val baseline = requireNotNull(store.readAuthoritativeThread("Host", "thread"))
+            val externalUpdate = baseline.copy(items = listOf(movedAgain), appliedVersion = 400_000)
+            external.upsertAuthoritativeThread("Host", "thread", externalUpdate, false, baseline, emptyMap()).getOrThrow()
+            assertNull(store.beforeDisplayWindow("Host", "thread", cursor, opening.rows, 200))
+            // A later ordinary write must not bless a missing generation in the receipt chain.
+            store.upsertAuthoritativeThread("Host", "thread", externalUpdate, false, externalUpdate, emptyMap()).getOrThrow()
+            assertNull(store.beforeDisplayWindow("Host", "thread", cursor, opening.rows, 200))
+            val fresh = requireNotNull(store.newestDisplayWindow("Host", "thread", 200))
+            assertEquals(200, store.beforeDisplayWindow("Host", "thread", requireNotNull(fresh.cursor), fresh.rows, 200)?.rows?.size)
+            assertNull(store.beforeDisplayWindow("other", "thread", requireNotNull(fresh.cursor), fresh.rows, 200))
+        }
+
     @Test fun availabilityInvariant_nestedAgentsKeepBoundedKeysThroughImportUpgradeAndStructuralWrites() =
         runTest(timeout = 5.minutes) {
             val facts =

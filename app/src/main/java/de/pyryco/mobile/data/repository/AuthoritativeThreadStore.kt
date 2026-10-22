@@ -269,6 +269,7 @@ internal class AuthoritativeThreadStore {
         generation: Long,
         expected: AuthoritativeThreadSnapshot? = null,
         openingRows: Set<Pair<Long, Boolean>>? = null,
+        olderSaved: Boolean = false,
     ): AuthoritativeThreadOutcome {
         val current = current(host, conversation)
         if (expected != null && current != expected) return AuthoritativeThreadOutcome.Ignored
@@ -282,24 +283,54 @@ internal class AuthoritativeThreadStore {
         val adoptCertification = current.checkpoint == 0L
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
-        publish(
+        publishSnapshot(
             host,
             conversation,
             current.copy(
                 epoch = saved.epoch,
                 incarnation = saved.incarnation,
                 retirements = retirements,
-                items = ordered(merged),
+                items = ordered(if (olderSaved) insertOlderSaved(current.items, saved.items, merged) else merged),
                 completedVersion = completedVersion,
                 checkpoint = checkpoint,
                 coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
                 openingRows = openingRows?.plus(current.openingRows ?: current.items.flatMap { listOf(it.id to false, it.id to true) }),
-                repairNeeded = current.repairNeeded || completedVersion > checkpoint,
+                // Live updates may lead the checkpoint until completion; a known-live supplement adds no new gap.
+                repairNeeded = current.repairNeeded || saved.completedVersion > current.completedVersion && completedVersion > checkpoint,
             ),
             restoring = true,
+            preservePlacement = olderSaved,
         )
         RelayLog.i { "event=thread_store code=restored" }
         return AuthoritativeThreadOutcome.Applied
+    }
+
+    /** Insert older committed tie peers before their next held saved peer, preserving held/live order. */
+    private fun insertOlderSaved(
+        held: List<ThreadItemDto>,
+        saved: List<ThreadItemDto>,
+        merged: List<ThreadItemDto>,
+    ): List<ThreadItemDto> {
+        val winners = merged.associateBy { it.id }
+        val heldIds = held.mapTo(HashSet()) { it.id }
+        val pending = linkedMapOf<Long, MutableList<ThreadItemDto>>()
+        val before = mutableMapOf<Long, List<ThreadItemDto>>()
+        saved.forEach { committed ->
+            val item = winners[committed.id] ?: return@forEach
+            val order = orderKey(item)
+            if (item.id !in heldIds) {
+                pending.getOrPut(order) { mutableListOf() }.add(item)
+            } else if (orderKey(committed) == order) {
+                pending.remove(order)?.let { before[item.id] = it }
+            }
+        }
+        return buildList {
+            held.forEach { item ->
+                addAll(before[item.id].orEmpty())
+                winners[item.id]?.let(::add)
+            }
+            pending.values.forEach(::addAll)
+        }
     }
 
     /** Capture notification ownership while the live route still holds its reset lock. */

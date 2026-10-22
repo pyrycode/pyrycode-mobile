@@ -31,11 +31,22 @@ class SuiteReadReceiptsTest {
         readerOwner: String = sourceOwner,
         finalVersion: Long = 15,
         legacyEvidence: Boolean = false,
+        queryBeforeRead: String? = null,
+        queryConversation: String = "chat",
+        intermediateRead: Boolean = false,
     ): RecordedSuiteTape {
         val item = """{
             "id":11,"kind":"assistant_message","rev":13,"order":11,"status":"done",
             "active":false,"shown":true,"summary":"reply","content":{"text":"reply"}
         }"""
+        val items =
+            if (intermediateRead) {
+                """{"id":10,"kind":"assistant_message","rev":10,"order":10,"status":"done",
+                    "active":false,"shown":true,"summary":"earlier","content":{"text":"earlier"}},$item"""
+            } else {
+                item
+            }
+        val lower = if (intermediateRead) 10 else 11
         return RecordedSuiteTape(
             listOf(
                 SuiteStep("open", sourceOwner, capabilities = setOf("interactive", "thread")),
@@ -45,6 +56,17 @@ class SuiteReadReceiptsTest {
                     emptyArray()
                 } else {
                     arrayOf(SuiteStep("open", readerOwner, capabilities = setOf("interactive", "thread")))
+                },
+                *if (!intermediateRead) {
+                    emptyArray()
+                } else {
+                    arrayOf(
+                        SuiteStep(
+                            "daemon",
+                            sourceOwner,
+                            frame(8, "conversation_updated", """{"id":"chat","last_shown_version":10,"read_up_to":0}"""),
+                        ),
+                    )
                 },
                 SuiteStep(
                     "daemon",
@@ -66,7 +88,7 @@ class SuiteReadReceiptsTest {
                 SuiteStep(
                     "daemon",
                     sourceOwner,
-                    frame(2, "thread_items", """{"conversation_id":"chat","epoch":"e","version":15,"items":[$item],"final":false}""", 1),
+                    frame(2, "thread_items", """{"conversation_id":"chat","epoch":"e","version":15,"items":[$items],"final":false}""", 1),
                 ),
                 SuiteStep(
                     "daemon",
@@ -74,10 +96,57 @@ class SuiteReadReceiptsTest {
                     frame(
                         3,
                         "thread_items",
-                        """{"conversation_id":"chat","epoch":"e","version":$finalVersion,"items":[],"final":true,"lower_order":11,"upper_order":16,"continuation":11,"older_exists":false}""",
+                        """{"conversation_id":"chat","epoch":"e","version":$finalVersion,"items":[],"final":true,"lower_order":$lower,"upper_order":16,"continuation":$lower,"older_exists":false}""",
                         1,
                     ),
                 ),
+                *if (!intermediateRead) {
+                    emptyArray()
+                } else {
+                    arrayOf(
+                        SuiteStep("client", readerOwner, frame(4, "mark_conversation_read", """{"conversation_id":"chat","up_to":10}""")),
+                        SuiteStep(
+                            "daemon",
+                            readerOwner,
+                            frame(7, "conversation_updated", """{"id":"chat","last_shown_version":11,"read_up_to":10}""", 4),
+                        ),
+                    )
+                },
+                *if (queryBeforeRead == null) {
+                    emptyArray()
+                } else {
+                    arrayOf(
+                        SuiteStep(
+                            "client",
+                            sourceOwner,
+                            frame(
+                                3,
+                                queryBeforeRead,
+                                if (queryBeforeRead ==
+                                    "list_conversations"
+                                ) {
+                                    "{}"
+                                } else {
+                                    """{"conversation_id":"$queryConversation","epoch":"e","version":15}"""
+                                },
+                            ),
+                        ),
+                        SuiteStep(
+                            "daemon",
+                            sourceOwner,
+                            if (queryBeforeRead == "list_conversations") {
+                                frame(6, "conversations", """{"conversations":[{"id":"chat","last_shown_version":11,"read_up_to":0}]}""", 3)
+                            } else {
+                                frame(
+                                    6,
+                                    "thread_items",
+                                    """{"conversation_id":"$queryConversation","epoch":"e","version":15,"items":[],"final":true,"from_version":15}""",
+                                    3,
+                                )
+                            },
+                        ),
+                    )
+                },
                 SuiteStep("client", readerOwner, frame(2, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}""")),
                 SuiteStep(
                     "daemon",
@@ -124,6 +193,65 @@ class SuiteReadReceiptsTest {
         val tape = authoritativeTape(legacyEvidence = true)
         deliverInitial(tape)
         assertThrows(IllegalStateException::class.java) { authoritativeRead(tape) }
+    }
+
+    @Test fun coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery() {
+        for (type in listOf("thread_catch_up", "list_conversations")) {
+            val tape = authoritativeTape(queryBeforeRead = type)
+            deliverInitial(tape)
+            authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+            assertTrue("the read must wait for its captured $type prerequisite", authoritativeRead(tape).deliveries.isEmpty())
+            val payload = if (type == "list_conversations") "{}" else """{"conversation_id":"chat","epoch":"e","version":15}"""
+            val released = tape.send("phone/host0/0", frame(92, type, payload)).deliveries
+            val acknowledgement = released.single { it.message?.type == "conversation_updated" }.message!!
+            assertEquals(91L, acknowledgement.inReplyTo)
+            assertEquals(JsonPrimitive(11), acknowledgement.payload.jsonObject["last_shown_version"])
+            assertEquals(JsonPrimitive(11), acknowledgement.payload.jsonObject["read_up_to"])
+            tape.assertComplete()
+        }
+    }
+
+    @Test fun aForeignConnectionOrConversationCannotHoldAQualifiedRead() {
+        for ((reader, conversation) in listOf("phone/host0/1" to "chat", "phone/host0/0" to "other")) {
+            val tape = authoritativeTape(readerOwner = reader, queryBeforeRead = "thread_catch_up", queryConversation = conversation)
+            deliverInitial(tape)
+            authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+            assertEquals(
+                91L,
+                authoritativeRead(tape, reader)
+                    .deliveries
+                    .single()
+                    .message!!
+                    .inReplyTo,
+            )
+            tape.send("phone/host0/0", frame(92, "thread_catch_up", """{"conversation_id":"$conversation","epoch":"e","version":15}"""))
+            tape.assertComplete()
+        }
+    }
+
+    @Test fun anIntermediateCapturedReadMustNotWaitForTheQueryItCauses() {
+        val tape = authoritativeTape(queryBeforeRead = "thread_catch_up", intermediateRead = true)
+        deliverInitial(tape)
+        authoritativeReplies(tape).forEach { tape.delivered(it.owner, it.message!!) }
+        val first = authoritativeRead(tape, target = 10).deliveries
+        assertEquals("the earlier captured read releases its own later query", 1, first.size)
+        assertEquals(
+            JsonPrimitive(10),
+            first
+                .single()
+                .message!!
+                .payload.jsonObject["read_up_to"],
+        )
+        val finalRead = frame(93, "mark_conversation_read", """{"conversation_id":"chat","up_to":11}""")
+        assertTrue(tape.send("phone/host0/0", finalRead).deliveries.isEmpty())
+        val released =
+            tape
+                .send(
+                    "phone/host0/0",
+                    frame(92, "thread_catch_up", """{"conversation_id":"chat","epoch":"e","version":15}"""),
+                ).deliveries
+        assertEquals(93L, released.single { it.message?.type == "conversation_updated" }.message!!.inReplyTo)
+        tape.assertComplete()
     }
 
     @Test fun aReadQualifiedByDeliveredCertifiedContentSurvivesANewerLiveRevision() {

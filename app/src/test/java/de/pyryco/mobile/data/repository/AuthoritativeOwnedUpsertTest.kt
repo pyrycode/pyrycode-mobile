@@ -369,6 +369,7 @@ class AuthoritativeOwnedUpsertTest {
             observer.cancelAndJoin()
             phase("trim_flushed")
             assertWork(cache, 0, 1, 1)
+            phase("trimmed")
             // The held store still carries the old certificate. A later revision must not reinstall it.
             observer = observe(repo)
             apply(repo, 210_001, raw(100_001, 210_001))
@@ -384,6 +385,7 @@ class AuthoritativeOwnedUpsertTest {
             assertEquals(210_001L, restored.appliedVersion)
             assertEquals(0L, restored.checkpoint)
             assertNull(restored.coverage)
+            phase("reopen_asserted")
 
             // Completion inherits coverage for the trimmed fact; metadata changes cannot repair it.
             val checkpoint =
