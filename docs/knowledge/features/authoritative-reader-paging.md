@@ -192,6 +192,50 @@ observations of the same repository, cancels the old reader while the new local 
 and proves its Loading/completion/ordinary Retry and final cleanup remain owned. Separate
 destination factories create separate repositories and cannot establish this owner collision.
 
+### Reader ownership at the application boundary
+
+A local page and observation-owned supplement carry their captured reader through validation.
+Before mutating either store or persisted baseline, the repository checks current reader
+identity and coroutine cancellation under the store monitor. Registration and owned cleanup
+share it; both application mutations commit there together. A page blocked entering that
+monitor cannot apply after replacement. Cursor completion is serialized against replacement.
+Disk reads and validation remain outside. Coordinator calls stay outside the monitor to retain
+its lock order. This adds no schema, wire behavior, payload traversal or automatic demand.
+
+Independent run `450817178f` rejected `d81339fd3`: its controlled production disk/repository/
+ViewModel probe grew 200 facts to 400 after replacement without new demand. Configured gates
+were green: **6462/6462 JVM, 338/338 UI, 22/22 scripted**, zero failures/errors, one UI and one
+scripted skip. All six named saved-thread native methods passed. Database opening frames
+were **269/274/212/222 ms**; full-file fragmented frames **605/218/612/156 ms**; delayed
+fragmented frames **687/226/636/202 ms**. The unchanged 2000 ms SwiftShader bound rejected
+the **3090 ms** slow control; product target 1000 ms and the 36000-entry/18000-span fixture
+remain unchanged. These historical gates do not accept the application-boundary fix.
+
+Complete XML, original native phone logs, APKs and source/daemon/image identities were copied
+before cleanup to `logs/evidence/2437/independent-d813-20261022/`; the 963-file manifest was
+`bc8423e315e61a9b30c10b02d6d170388ada1d3895bbc16295298fc68ce37e5f` before the final verdict
+was added. The failing probe is retained separately in
+`logs/evidence/2437/verifier-reader-apply-race-d813-20261022/`.
+
+Permanent method `AuthoritativeReaderPagingTest.retiredReaderCannotApplyAfterReplacementAtStoreMonitor`
+controls the same boundary by restore symbol rather than line number. It checks unchanged
+facts, opening rows, complete snapshot and persisted baseline, then successful replacement
+demand. Test-first source `cb2ed3808` executed **1 / 0 passed / 1 failed / 0 errors/skips**,
+expected 200 but observed 400. Its red receipt is in
+`logs/evidence/2437/manual-reader-apply-20261022/red-cb2ed/`, six files, manifest
+`0530c5dab5d64d75cf27fc976fa0ac76b03d00285105eb4d01144c0791a0e4ad`.
+
+Repaired formatted source **`c183f82d85cdc6de5b4ec64a25ee45d730b02f50`** passed **85/85 affected
+JVM methods**, zero failures/errors/skips: paging 15, cache wrapper 26, authoritative cache 23,
+store 15 and negotiated ViewModel 6. Forced format, lint, assembly and instrumented compilation
+passed. Exact tested files, formatter diff, five raw XML reports and full logs are retained in
+`logs/evidence/2437/manual-reader-apply-20261022/green-4e6/`, 15 files, manifest
+**`9e812e67d8c8ea63f05703f5bc9d4cbc1eb8ee1009b4e10a4d5d3bc829967073`**. Three formatting
+preparation failures are retained separately and executed no tests. Final pre-verification,
+complete independent current-candidate acceptance and actual documentation completion remain
+required. Child acceptance/merge must precede #2334's own final acceptance, documentation
+and merged/Done workflow.
+
 ### Retained independent FAIL on the preceding candidate
 
 Verifier `26f513ea363b0a75f3e0aa79933b529b79e1a995bc5dc0794e88429cfa343798`

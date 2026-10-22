@@ -95,6 +95,27 @@ facts, opening rows or baseline escape, and that replacement demand still applie
 Keep all earlier retry/reset/ownership/generation tests. The duplicate reopen timing event
 will be named for its distinct completed assertions.
 
-Security review for this delta: **PENDING** until the failing boundary regression passes.
+Security review for this delta: **PASS**, manual maintainer self-review on 2026-10-22.
+Independent current-candidate review remains required.
 The existing status-ownership review did not prove application ownership. No schema, wire,
 network, payload-read bound, timing target or native fixture changes are intended.
+
+
+The implementation checks captured reader identity and current coroutine cancellation under
+the store monitor, before committing either store or persisted baseline. Reader registration
+and owned cleanup share it; observation-owned supplement restores carry the same reader.
+Cursor completion is serialized there. Coordinator calls remain outside the store monitor,
+preserving coordinator-before-store order. Disk reads and validation remain outside; the
+history-writes-before-store order remains unchanged. No new security surface or traversal.
+
+Test-first source `cb2ed3808` executed 1/failed 1, expected 200 but observed 400 facts after
+replacement without demand. Repaired formatted source `c183f82d85cdc6de5b4ec64a25ee45d730b02f50`
+passed 85/85 affected methods: paging 15, cache wrapper 26, authoritative cache 23, store 15
+and negotiated ViewModel 6, with zero failures/errors/skips. The probe checks unchanged
+persisted baseline and successful replacement demand too. Forced format, lint, assembly and
+instrumented compilation passed. Raw XML, full logs and exact source are retained under
+`logs/evidence/2437/manual-reader-apply-20261022/`; green manifest
+`9e812e67d8c8ea63f05703f5bc9d4cbc1eb8ee1009b4e10a4d5d3bc829967073`.
+Three retained formatting preparation failures executed no tests. The second reopen event
+is now `reopen_asserted`; fixture, assertions and allowance are unchanged. Final
+pre-verification and complete independent acceptance must bind the handoff candidate.
