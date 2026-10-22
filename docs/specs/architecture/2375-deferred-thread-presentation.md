@@ -137,3 +137,28 @@ island checks in a single streaming pass as well. Avoid assertion-only full-file
 map/distinct/zip collections beside the mounted fixture. Every source fact and
 every displayed expected message is still compared; counts and certification stay
 explicit, and first-draw timing/production are untouched.
+
+
+2026-10-22 allocation repair #2477: the final streaming assertions pass in the
+focused class, but the complete candidate UI sequence still exhausts the normal
+192 MiB heap during query lease release. The complete identical main sequence
+passes both full-file compatibility methods. Preserve those reports and exact
+APKs. The deferred projector retains empty root prose models and repeatedly
+creates separate complete models for their always-open content. Adapt admitted
+root user/assistant messages once per immutable presentation and share that same
+row between structural rows, demand and exact-content qualification. Keep null
+and zero root parents equivalent; negative or positive parents remain deferred.
+Unadmitted opening-window rows remain deferred. Partition the resolver index so
+root models replace their DTO entries rather than adding another whole-file
+index. No mutable cache, cross-snapshot sharing, I/O, wire, heap, fixture size,
+assertion weakening, deadline or teardown-order changes are permitted.
+
+Security audit for #2477: PASS on this design. Root model sharing stays within
+one scoped immutable presentation and uses existing bounded typed adaptation.
+Current exact revision, presentation/binding and connection checks remain the
+read boundary; sharing a model alone establishes no viewport sight. A root moved
+under an ancestor is deferred by its new presentation. Closed tool/agent models
+and their descendants remain summaries. New probes cover identity reuse,
+revision/scope/parent replacement and opening-window exclusions. Run them red
+before the fix, then all affected read/closure classes, fresh configured JVM/build,
+the saved-thread and deferred native classes, complete UI and scripted acceptance.
