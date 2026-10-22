@@ -369,7 +369,7 @@ A completion supplier captures the exact host generation, repository, conversati
 known completion checkpoint). Within a three-second total timeout it requests one newest raw
 history page and reduces it independently. Even a settled local prefix cannot authorize a preview:
 forgiving decoding may have dropped a trailing delta or segment boundary. The
-[completeness checks](remote-conversation-repository-assistant-reply-segments.md#notification-preview-evidence-1725)
+[completeness checks](remote-conversation-repository-assistant-reply-segments.md)
 require exact attribution, consecutive durable ids, matching completion and represented row evidence
 before selecting the last nonblank settled top-level segment of that turn. No older-page walk or
 previous/child-turn substitution occurs; unavailable or incomplete evidence yields fixed copy.

@@ -276,7 +276,7 @@ Otherwise it starts at zero. Pre-open streaming text is therefore immediate on
 opening/reopening, while post-open appends reveal progressively from the retained
 prefix. The seed only initializes a fresh body; changing content or replacing a
 synthetic row with a repository row under the same lazy key does not reseed it.
-See [first-arrival timestamps](streaming-assistant-turns.md#the-fold).
+See [first-arrival timestamps](streaming-assistant-turns.md).
 
 The composable derives two pieces of state via `produceState`:
 
@@ -373,7 +373,7 @@ fixtures, metadata gestures, palette and geometry guards, and attachment coverag
 ## Edge cases / limitations
 
 - **User variant is plain text; assistant variant renders markdown** (since #129, unchanged by #644). User blank-line paragraphs have a 12dp gap while single line breaks remain literal. Assistant messages render through [`MarkdownText`](./markdown-text.md).
-- **Word boundaries follow arrived whitespace, not token boundaries.** A final arrived word is revealed even without trailing whitespace, so later deltas may extend that word. A 2000-character string with no whitespace reveals in one step. Large backlogs accelerate beyond the nominal one-word cadence to meet the catch-up deadline — see [Streaming assistant turns](streaming-assistant-turns.md#lifecycle-errors-edge-cases).
+- **Word boundaries follow arrived whitespace, not token boundaries.** A final arrived word is revealed even without trailing whitespace, so later deltas may extend that word. A 2000-character string with no whitespace reveals in one step. Large backlogs accelerate beyond the nominal one-word cadence to meet the catch-up deadline — see [Streaming assistant turns](streaming-assistant-turns.md).
 - **Streaming state is lost on `LazyColumn` item disposal.** Disposing a streaming item cancels both `produceState` coroutines and forgets `revealedLength`; re-mounting uses a new catch-up budget and the timestamp-based seed: full current text for a row predating the thread opening, zero for a post-open row or a standalone bubble without `threadOpenedAt`. Reopening the thread captures a fresh opening time and shows all arrived text immediately. Appended content during the same composition preserves the prefix and both clocks. Finalization removes the streaming body and renders the full static markdown immediately.
 - **Unfinished constructs show their text without punctuation (since #1766).** An open `**bold`, code span, link target or strikethrough in the trailing text renders plain and untappable, and a pipe header waiting for its delimiter row shows its cells separated by spaces. A construct never closed renders literally once the reply is final. See [`MarkdownText` streaming](./markdown-text.md#streaming-since-1766).
 - **`Role.Tool` routes to [`ToolCallRow`](./tool-call-row.md) since #131.** The null-safe `?.let` renders nothing if a `Role.Tool` message arrives with `toolCall = null`.

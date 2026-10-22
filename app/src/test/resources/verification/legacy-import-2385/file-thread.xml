@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" tests="40" skipped="0" failures="0" errors="0" timestamp="2026-10-22T01:09:58.919Z" hostname="0eeeba6d2d09" time="2.174">
+  <properties/>
+  <testcase name="lifecycleEvidence_isExcludedWithoutChangingStoredRowsOrCacheSchema" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.194"/>
+  <testcase name="a thread document holding only messages and boundaries still reads" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.006"/>
+  <testcase name="a received empty page stores a position even with no rows" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.008"/>
+  <testcase name="tool input fields round-trip through a fresh instance" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.006"/>
+  <testcase name="a thread write failure reports a coded exception without a cause" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="unreadable thread documents read empty and are left on disk" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.005"/>
+  <testcase name="stopped turn rows round-trip field-for-field in place through a fresh instance" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a document repeating a banner compaction or refusal key or mixing two kinds reads empty" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.007"/>
+  <testcase name="attachment references round-trip with ids names and mime hints unchanged" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="lifecycleEvidence_keepsSavedCursorAndCompletedHistory" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.013"/>
+  <testcase name="no conversation id reaches a path or a log line" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="threads are isolated per conversation and per host" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="banner compaction and refusal rows round-trip field-for-field in place" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="a document repeating a stopped turn id reads empty" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="past the row limit the newest settled rows are kept" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.426"/>
+  <testcase name="a compaction row saved without the failed key reads as not failed" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.009"/>
+  <testcase name="removing a host removes its threads and no other host's" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.005"/>
+  <testcase name="an inconsistent seq record loads the row without it" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.005"/>
+  <testcase name="unrecognized streaming and running rows are never stored" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a row write trimmed at the row limit drops the position" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="1.372"/>
+  <testcase name="a document holding a duplicate key or a running tool reads empty" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.005"/>
+  <testcase name="a refusal with and without a fallback on one instant both read back" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.002"/>
+  <testcase name="a thread document written before positions were kept reads as rows with no position" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.002"/>
+  <testcase name="an assistant segment seq record round-trips" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.002"/>
+  <testcase name="removing a conversation or a host removes its position" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="clearing the position keeps the rows and a clear with no document writes nothing" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="boundaries sharing a session pair but not an instant read back" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="the row limit is one hundred thousand" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.0"/>
+  <testcase name="removing a conversation whose host metadata was never written still removes its thread" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="position writes log no cursor" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.002"/>
+  <testcase name="a position in an unreadable thread document reads as none" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a row write keeps the stored position and a position write keeps the stored rows" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.004"/>
+  <testcase name="a thread only ever fed rows stores no position" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a thread round-trips field-for-field through a fresh instance" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a boundary repeating a held session pair and instant reads empty" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="removing a conversation removes its thread and leaves siblings readable" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.01"/>
+  <testcase name="a thread document written before attachment references still loads" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a tool record written before input fields were kept reads back with none" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.002"/>
+  <testcase name="a history position round-trips beside the rows through a fresh instance" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <testcase name="a second write replaces the whole thread" classname="de.pyryco.mobile.data.cache.FileConversationCacheThreadTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

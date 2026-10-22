@@ -1,0 +1,172 @@
+{
+  "ticket": 2367,
+  "scope": "Manual repair checks. Complete independent verifier acceptance remains pending.",
+  "operatingSystem": "macOS",
+  "implementationRevision": "98bfe46993275f8b9b1a446f7f0c9eb56d34b6ba",
+  "integratedMain": "d2130e229",
+  "daemonRevision": "fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe",
+  "relayRevision": "72f40c5de9e851e6c6c1ca3c789761320e05ce51",
+  "privateEvidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2367/manual-takeover-20261021/manual-checks",
+  "scriptChecks": {
+    "executed": 210,
+    "passed": 210,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "reports": [
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.data.network.BackgroundTaskPayloadsTest.xml",
+      "sha256": "4ca8196e45f055c0096524408110603ad01f22d7f686dbe7992a45689bfaa44b",
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.data.network.BackgroundTaskPayloadsTest#progressMissingCounter_failsTheFrame",
+        "de.pyryco.mobile.data.network.BackgroundTaskPayloadsTest#progressStringCounter_failsTheFrame",
+        "de.pyryco.mobile.data.network.BackgroundTaskPayloadsTest#progressFixture_decodesEveryField"
+      ]
+    },
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest.xml",
+      "sha256": "db3d9166bc9fa75faf89bf5428e7db73ac2958901651e40a97594753ba764bb8",
+      "executed": 13,
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#failedSendRetiresCorrelationAndKeepsTaskData",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#sendsExactlyOneVerbatimEnvelopePerCallAndReturnsWithoutReplyOrStateMutation",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#newerAttemptCannotBeRefusedByAnOlderAttempt",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#successfulDistinctTargetsExpireWithoutDisconnectAndRejectStaleRefusals",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#inboundCompletionDisablesAdmission",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#failureOfOlderSendDoesNotRetireConcurrentNewerAttempt",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#nonterminalAndMalformedTaskFramesDoNotRetireTracking",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#sendExceptionsAreStaticAndCancellationPropagatesWithoutCorrelation",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#expiredOlderAttemptCannotRetireReplacementForTheSameTask",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#helloAdvertisesStopDetectionAlongsideInteractive",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#refusalDuringSendUsesOriginalPairAndIsConsumedOnce",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#unsupportedAndEndedRepositoryFailWithoutSendAndEndClearsCorrelation",
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryStopTaskTest#malformedMissingUnknownAndOtherErrorsDoNotSignalOrConsumeValidCorrelation"
+      ]
+    },
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.design.CaptureThreadTest.xml",
+      "sha256": "e902bb7ecb2ada55c01f8ef8c46b40f43d16dc32411ceb4c42d42d5b893c140b",
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.design.CaptureThreadTest#refusalSceneUsesCanonicalIdentityAndTaskFactsReachTheProductionProjection",
+        "de.pyryco.mobile.design.CaptureThreadTest#unrecognizedScenePreservesSiteTypeAndRawText",
+        "de.pyryco.mobile.design.CaptureThreadTest#nestedToolsRetainStatusNumericParentsResultDetailAndProgress"
+      ]
+    },
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.e2e.HeldBackgroundTaskProbeTest.xml",
+      "sha256": "fcdfa8ef30ee40533fa145d9cf81b13574466c07a90f72be3bfd5558c9dbc20e",
+      "executed": 3,
+      "passed": 3,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.e2e.HeldBackgroundTaskProbeTest#descriptionContainingCommandIsNotIdentity_andTruncatedKeysCannotJoin",
+        "de.pyryco.mobile.e2e.HeldBackgroundTaskProbeTest#rosterBeforeStartAndToolCompletesJoin_withoutMatchingDescription",
+        "de.pyryco.mobile.e2e.HeldBackgroundTaskProbeTest#onlyStoppedOrUncappedOmissionCompletes_notAcceptanceSilenceOrAnotherTask"
+      ]
+    },
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.ui.conversations.thread.RestoredSubagentNestingTest.xml",
+      "sha256": "040778eba8499f314d75e44a8101cb7a7e13b1cbd3d88d1e9d57b73a2774c7bb",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.ui.conversations.thread.RestoredSubagentNestingTest#reopenedThread_keepsSubagentRowsUnderTheirAgent"
+      ]
+    },
+    {
+      "report": "focused-xml/TEST-de.pyryco.mobile.ui.conversations.thread.ThreadRowAnchorTest.xml",
+      "sha256": "e2e8771429abbd7c6f6e58fc816a987f3b31b49b2d0676bc1f429a247759ff67",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.ui.conversations.thread.ThreadRowAnchorTest#loneToolGrowth_preservesBottomAnchorAndOffset"
+      ]
+    },
+    {
+      "report": "native-focused-results/TEST-pixel2Api33Atd_0-_app-.xml",
+      "sha256": "16de80b958c327a8e4fb5ee497292b725ea080d9880eaa0712fad8074c1143c1",
+      "executed": 9,
+      "passed": 9,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#threadStatusFramesAt412By892",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#threadNoticeFramesAt412By892",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#backgroundTaskPanelAt412By892",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#compactAt320By700",
+        "de.pyryco.mobile.design.ThreadDesignCaptureTest#refusalStateFramesAt412By892",
+        "de.pyryco.mobile.design.DesignHarnessSmokeTest#compactLargeTextLaunchCapturesRealFrame",
+        "de.pyryco.mobile.design.DesignHarnessSmokeTest#everyThreadInputReachesTheThreadViewModel"
+      ]
+    },
+    {
+      "report": "stream-final-results/TEST-stream-stream-0.xml",
+      "sha256": "f5ffd8460ff595f59042e3bb3cef3d8b43904dd6b91b5c6fd914a363c1a021a5",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
+      ]
+    },
+    {
+      "report": "stream-final-results/TEST-stream-stream-queued-echo-0.xml",
+      "sha256": "a2eb2effc4f857debf82339f60b8c11af293b0db1d621dba3c58a9da6cf4fb39",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "methods": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply"
+      ]
+    }
+  ],
+  "sourceNote": "Focused unit and nine Android checks ran on the repaired tree committed as 5aad6b49c. The integrated stream run used 98bfe4699. Main integration adds the independently merged Agent paging work. The final production difference is deletion of one unused roster constant. Complete verifier gates must use the final published candidate.",
+  "historicalEvidence": "Retain the earlier seven-case capture with one failure, all builder red/green checks, cancelled takeover wrappers, setup-only script errors and initial formatting failure. The formerly failed row-and-notice capture passes in the nine-case manual run. Original evidence.json remains bound to its original revisions.",
+  "staticChecks": {
+    "buildAndLint": {
+      "result": "passed",
+      "log": "integrated-build-lint.log",
+      "sha256": "b8a2c6557d65bc1f4561a6e40730cfafbabc9d9d711cfab8671773c0679756f4"
+    },
+    "formatAndAllKotlinCompilation": {
+      "result": "passed",
+      "log": "preverify.log",
+      "sha256": "e4c5a40f3cfc8f2b9174fd81a59df9851838a534184ef07ddbc4a5f394bfa689"
+    },
+    "scriptChecks": {
+      "result": "passed",
+      "log": "python-tests-configured.log",
+      "sha256": "188b23e9c52f7faf76565cbad71dfe17a5174069cd9b3cf48cf4b108529968eb"
+    }
+  }
+}

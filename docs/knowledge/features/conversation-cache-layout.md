@@ -5,17 +5,42 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 ## Layout
 
 Since #2161, `appModule` binds `MigratingConversationCache` through
-`openConversationCache(Context)`. Both thread families now live in Room at
+`openConversationCache(Context)`. Supported authoritative threads live in Room at
 `<noBackupFilesDir>/conversation-cache.db`, including its sidecars. Lists and read
 positions still use `FileConversationCache` under `<noBackupFilesDir>/conversations`;
 settings and attachment storage are unchanged. The paths below describe those metadata
-files and the version-1 thread sources retained for migration and downgrade compatibility.
+files and the retained version-1 thread files. Since #2385, only authoritative files are import
+sources. Legacy `threads/` files are ignored during opening, reading and import, including
+unknown-owner hashes; ownership is never inferred from filenames. Since #2386, schema 12
+discards the legacy Room family too. Its backend, entities, DAO and wrapper delegations are
+removed; dormant interface defaults and file codecs remain for #2387. Explicit scoped removal
+still cleans up the corresponding files. No reopen recreates legacy tables or imports their files.
 
-Database version 3 adds `file_imports` through additive `AutoMigration(from = 2, to = 3)`;
-the complete upgrade chain is 1 → 2 → 3, with exported `1.json`, `2.json` and `3.json`
-schemas and no destructive fallback. The ledger's primary key is `(host, conversation,
+The production opener retains explicit automatic migrations through every shipped schema,
+1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12, without destructive fallback.
+Exported schemas under
+`app/src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/`
+retain versions 1–11 unchanged alongside the new `12.json`. The 11 → 12
+`DiscardLegacyMigration` uses `DeleteTable` for `legacy_headers`, `legacy_rows` and
+`legacy_evidence`; SQLite drops their exclusive indexes with them. Supported tables are
+`authoritative_headers`, `authoritative_items`, `authoritative_retirements` and `file_imports`,
+with authoritative indexes retained on upgrades and fresh creation.
+
+Earlier migrations still supply supported defaults and backfills. `OwnedRowsMigration`
+retains its historical 3 → 4 codec dependencies until #2387; malformed obsolete row bytes
+must survive that step without blocking their eventual discard. `DisplayWindowMigration`,
+`RenderPlacementMigration` and `PlacementWitnessMigration` retain display, nested placement
+and witness/contribution backfills. Missing older fields receive their supported SQL defaults
+(including empty incarnation, zero flags/ids, empty placement keys and maximum renderer order)
+and applicable backfills; existing raw payloads, identities, revisions, order, epoch,
+incarnation, applied progress and certification/continuation retain their meaning. Backfill
+work belongs to upgrade, not ordinary reopen. See the [all-schema proof](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
+
+Version 3 introduced the shared import ledger. Its primary key is `(host, conversation,
 family)`, with static `outcome` values. Families are `legacy`, `authoritative` and `host`;
-a host-wide retirement uses family `host` and conversation `""`. Imported content/evidence
+a host-wide retirement uses family `host` and conversation `""`. Historical legacy ledger
+records and both thread families' retirement fences remain; legacy operations no longer read
+or create import completion records. Authoritative imported content/evidence
 and its completion marker commit in one transaction. Completed imports leave their source
 bytes intact until explicit conversation or host removal; the ledger prevents a leftover
 file from replacing a newer database save. See [import classification and write
@@ -79,84 +104,38 @@ backup-excluded directory. There is no destructive migration fallback. Owner str
 bound SQL values, never filenames, with SQLite's default binary, case-sensitive equality.
 The existing plaintext app-private cache threat model remains unchanged.
 
-The schema separates three explicitly legacy tables:
-
-- `legacy_headers`: exact host/conversation owner, committed generation, saved cursor/`atStart`
-  and a scalar coverage header, including unknown/incomplete flags and saved unsigned edges.
-- `legacy_rows`: one canonical row payload per owner and held ordinal. Ordinals preserve arrival
-  order and multiplicity independently of timestamps; no whole-thread JSON cell is stored.
-- `legacy_evidence`: individually indexed spans, gaps, row order, each producing-entry claim,
-  proofs, fragment aliases/offsets/lengths/hashes and cursor/walk anchors. Owner/kind/interval
-  and owner/ordinal indexes support bounded selection. Unsigned interval columns are zero-padded
-  20-digit decimal text, retaining numeric ordering through `ULong.MAX_VALUE`. The header never
-  contains all proofs. Full metadata reads reconstruct evidence without decoding row payloads.
-
-The narrow internal row/history codec seam in `FileConversationCache.kt` preserves `MobileJson`
-canonical encoding and `cachedThreadRowProof` inputs. Room and file storage retain the same six
-row kinds, uniqueness rules, settled-row exclusions and 100000-row tail cap. File readers and
-proof compatibility remain available; indexed storage introduces no new row format.
-
-`LegacyRoomStorage` runs caller-owned suspend work on its injected IO dispatcher. Room
-transactions give reads a coherent snapshot and commit row/evidence replacement, history
-replacement/clear and scoped removal atomically across instances. Cancellation rolls back
-unfinished mutations. Removal deletes all three legacy tables for the exact conversation or
-host, preserving sibling owners, including another host with identical ids. No new job, scope,
-save coordinator or background history download is introduced. See
-[the bounded contract](conversation-cache-contract.md#indexed-legacy-operations-and-pages-2162)
-for continuation and optional-evidence rules.
-
-The backend is independently callable and is now used by the migration-aware application
-cache (#2161), alongside authoritative Room storage (#2163). #2068 owns bounded reader
-activation and owned partial writes.
-Legacy evidence cannot certify authoritative facts. Conversation lists, read positions, settings
-and attachment bytes retain their existing storage.
+Schemas 1–11 historically included `legacy_headers`, `legacy_rows` and
+`legacy_evidence`, with ordinal and evidence indexes. Schema 12 removes them and
+`LegacyRoomStorage`. Legacy evidence cannot certify authoritative facts. Historical schema
+exports remain the source for installed-database fixtures; changing only a current database's
+version no longer models an older installation after table removal.
 
 ### The additive version 1 → 2 migration and authoritative tables (#2163)
 
-`ConversationCacheDatabase` raises its schema from version 1 to version 2 through Room's
-`AutoMigration(from = 1, to = 2)` — additive only: it adds the two authoritative tables below
-without altering or dropping any of the three legacy tables, so an existing on-disk database
-from #2162 opens and keeps every legacy row, header and evidence entry it already held. There
-is no destructive fallback. The exported schema for both versions lives under
-`app/src/main/roomSchemas/de.pyryco.mobile.data.cache.ConversationCacheDatabase/`
-(`1.json`, `2.json`, with `3.json` added by #2161).
-`AuthoritativeRoomStorageTest.migrationInvariant_preservesLegacyContentAndEvidence`
-builds a real on-disk version 1 database from the checked-in `1.json` schema, seeds legacy
-content, reopens it through Room's full 1 → 2 → 3 automatic migration chain, and asserts the
-legacy rows/evidence are unchanged before writing and reading back an authoritative replacement on the upgraded file.
+Version 1 → 2 introduced authoritative storage additively. Upgrades now continue through
+schema 12, discarding the legacy tables only at the final step. Supported Room storage keeps:
 
-Two new tables, scoped and indexed the same way as the legacy three:
+- `authoritative_headers`: exact host/conversation owner, epoch, per-write replacement
+  generation (a fresh UUID per write), applied version, checkpoint, optional serialized coverage, item count and
+  incarnation. Its primary key is `(host, conversation)`.
+- `authoritative_items`: exact owner, epoch and item id, stable ordinal/order and complete
+  raw JSON payload. The primary key includes `(host, conversation, epoch, id)`. The unique
+  owner/epoch/ordinal index and display, extra, parent, placement, order/placement and
+  contribution indexes support bounded authoritative selection.
+- `authoritative_retirements`: exact host/conversation/item id and retired revision, keeping
+  stale item replay from resurrecting removed facts.
 
-- `authoritative_headers`: one row per exact host/conversation owner, holding the committed
-  epoch, a per-write replacement generation (a fresh UUID minted on every write, not a content
-  hash), `appliedVersion`, `checkpoint`, an optional serialized `SavedThreadCoverage` and the
-  item count written with it.
-- `authoritative_items`: one row per owner, epoch and item id, with a stable sorted `ordinal`
-  and the item's full raw JSON payload. A unique index over `(host, conversation, epoch,
-  ordinal)` keeps bounded reverse selection (`ORDER BY ordinal DESC LIMIT`) indexed for
-  `newestPage`/`beforePage`, the same shape `legacy_rows`' ordinal indexing already uses.
+Unknown raw fields remain facts rather than certification. See the
+[authoritative contract](conversation-cache-contract.md#indexed-authoritative-room-storage-and-pages-2163)
+for validation, continuation and certification rules.
 
-Composite primary keys on both tables make epoch part of item and header identity, so two
-epochs for the same owner — or the same ids reused under a different owner — never collide.
-See [the authoritative contract](conversation-cache-contract.md#indexed-authoritative-room-storage-and-pages-2163)
-for the storage operations, validation, page/continuation and certification rules built on
-this schema.
-
-**Atomic scoped removal of both families.** `ConversationCacheDatabase.removeScope(host,
-conversation)` is the one place that deletes rows from all five tables — the three legacy
-plus the two authoritative — for an exact host or host/conversation, in a single Room
-transaction. `LegacyRoomStorage.removeConversation`/`removeHost` and
-`AuthoritativeRoomStorage.removeConversation`/`removeHost` all call this shared operation, so a
-scoped removal through either backend clears both families together; a conversation or host
-that still has rows in one family after a removal call indicates a bug, not a partial-removal
-contract. This is deliberately **not** used by ordinary replacement writes: `LegacyRoomStorage`'s
-`writeThread` keeps calling its own family-local row/evidence delete-then-insert, and
-`AuthoritativeRoomStorage.writeAuthoritativeThread` deletes and reinserts only the authoritative
-tables, so writing one family's facts never touches the other family's content for the same
-owner. `AuthoritativeRoomStorageTest.ownershipInvariant_familiesAndRemovalStayIsolated` pins
-both halves: a legacy write/removal leaves authoritative facts alone and an authoritative
-write/removal leaves legacy rows and evidence alone, for the same owner and across sibling
-owners that share an id under a different host, conversation or case.
+**Atomic scoped removal.** `ConversationCacheDatabase.removeScope(host, conversation)`
+deletes authoritative items, item retirements and headers for the exact owner in one Room
+transaction. The migration-aware wrapper commits that removal together with shared ledger
+retirement markers; see [removal fences](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
+Ordinary authoritative replacement remains separate from scoped retirement. Metadata and
+read positions retain file-backed ownership; provisional sends retain their independent
+in-memory lifetime and gain no process-death persistence.
 
 ### The cache-local record must mirror every `Conversation` field (#999)
 
@@ -242,7 +221,7 @@ page look like a new ordinary row after process death. Explicit metadata preserv
 without parsing aliases that could themselves be real daemon ids. Segment identity still comes
 from `CachedSegment`; when reconciliation converts legacy content to segments, ordinary-only
 metadata is cleared. See [Message identities](data-model.md#message) and
-[restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+[restore ownership](caching-conversation-repository.md).
 
 Assistant attribution (`Message.parentToolUseId`, #1826) is persisted as of #2221, which supersedes
 \#1826's "disk serialization is unchanged" / "attribution is not serialized" decision for this field.
@@ -262,7 +241,7 @@ retains reconciled rows across reconnect, so a later unattributed cache copy can
 parent. What #2221 changes is that the *next* write of an enriched row — including the collector's final
 flush on cancellation — persists the parent it learned, so a subsequent restore (including after a
 process restart) already carries it instead of relying solely on in-memory enrichment. See [parent
-precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md)
 for conflict handling. `AssistantParentCacheTest.diskFormatKeepsAttribution_wireEvidenceEnrichesUnattributedRows_andReconnectKeepsIt`
 and `LegacyRowCodecTest` verify the attributed round trip, the pre-#2221 unattributed restore, enrichment
 and reconnect/flush retention, and that a parentless row's encoded bytes and proof are unchanged.
@@ -307,7 +286,7 @@ Field order and unknown fields preserve this boundary. Metadata writers retain
 the full typed `CachedThread` decoder and independent fallback.
 
 A rows-only API is insufficient if its repository waits for optional coverage to
-seed order before publishing. See [rows-first merging](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
+seed order before publishing. See [rows-first merging](caching-conversation-repository.md)
 and [controlled first-draw evidence](thread-screen-testing-saved-first-draw-comparisons.md#allocation-margin-and-retained-evidence-2018).
 Canonical persisted bytes, SHA-256 proofs and the serializer/provider stay unchanged.
 
@@ -389,7 +368,7 @@ against the rows actually retained:
   stored records are serialized. A corrupt row document supplies no retained rows;
   a null clear of a never-written document remains a no-op. The wrapper must have written rows
   first: the file lock prevents torn read-modify-write, but does not by itself order two caller
-  operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
+  operations. Its [rows-before-state mutex](caching-conversation-repository.md)
   supplies that ordering and preserves the trim reset in the subsequent state write.
 
 Deferred observer scheduling (#1967) does not change this document format. The wrapper's
@@ -405,7 +384,7 @@ entry that completes during restoration. The wrapper captures the successful `co
 before reads and advances it only after a successful coverage row write; observer writes preserve
 it. Already retained coverage cannot make an unchanged failed restore erase rows. A coverage save
 completed during this collection can instead permit a newer intentional removal. See [the
-wrapper's saved-history rules](caching-conversation-repository.md#the-saved-history-position-1354)
+wrapper's saved-history rules](caching-conversation-repository.md)
 for candidate eligibility. Generations, revisions and baselines are destination-local metadata,
 not serialized fields.
 
@@ -429,7 +408,7 @@ policy exclusions cannot silently certify discarded cacheable content. Received 
 entries can still establish spans without storing their raw envelopes.
 
 `BackgroundTaskLifecycle` stays excluded before the row limit and serialization and adds no
-persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md).
 
 **Trim accounting must use serialization's exclusions.** `threadRowsWereTrimmed` compares the
 kept count with settled rows excluding `UnrecognizedMessage` and `BackgroundTaskLifecycle`.

@@ -23,6 +23,8 @@ import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SwitchAgentCall
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
+import de.pyryco.mobile.data.repository.ownedBy
+import de.pyryco.mobile.data.repository.sessionSnapshotClear
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -525,8 +527,9 @@ class ThreadViewModelAgentSwitchTest {
             RemoteConversationRepository(
                 pump,
                 CoroutineScope(backgroundScope.coroutineContext + StandardTestDispatcher(testScheduler)),
-                negotiatedCapabilities = { setOf("interactive", "multi_agent") },
-            )
+                negotiatedCapabilities = { setOf("interactive", "multi_agent", "thread") },
+                authoritativeHostId = "host",
+            ).also { it.refreshSessionSettings(CONV) }
         var succeeded = false
         val repo =
             object : ConversationRepository by remote {
@@ -577,7 +580,9 @@ class ThreadViewModelAgentSwitchTest {
             pump.settings = reading("s1", backing.original, "high")
             remote.refreshSessionSettings(CONV)
             runCurrent()
-            assertFalse(vm.state.value.runConfig.writable)
+            assertTrue(vm.state.value.runConfig.writable)
+            assertEquals("s3", vm.state.value.runConfig.sessionId)
+            assertEquals("low", vm.state.value.runConfig.selectedEffort)
             pump.transition("s3", "s4", backing.other)
             runCurrent()
             assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
@@ -604,14 +609,8 @@ class ThreadViewModelAgentSwitchTest {
             vm.state.value.runConfig.selectedChoice
                 ?.value,
         )
-        pump.answerSettings = false
+        pump.settings = reading("", "", "")
         remote.refreshSessionSettings(CONV)
-        runCurrent()
-        pump.push(
-            "error",
-            """{"code":"session_settings.unavailable","retryable":false,"message":"Reading unavailable"}""",
-            pump.sent.last { it.type == "request_session_settings" }.id,
-        )
         runCurrent()
         assertEquals(UNKNOWN_RUN_CONFIG_LABEL, vm.state.value.runConfig.modelLabel)
         assertNull(vm.state.value.runConfig.confirmedSwitchChoice)
@@ -674,8 +673,9 @@ class ThreadViewModelAgentSwitchTest {
                 RemoteConversationRepository(
                     pump,
                     CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
-                    negotiatedCapabilities = { setOf("interactive", "multi_agent") },
-                )
+                    negotiatedCapabilities = { setOf("interactive", "multi_agent", "thread") },
+                    authoritativeHostId = "host",
+                ).also { it.refreshSessionSettings(CONV) }
             val menu = Repo().backing
             val repo =
                 object : ConversationRepository by remote {
@@ -692,11 +692,7 @@ class ThreadViewModelAgentSwitchTest {
                 runCurrent()
                 assertTrue(vm.state.value.runConfig.pending)
                 // Daemon order, with no consumer yield between transition and confirming update.
-                pump.push(
-                    "session_transition",
-                    """{"conversation_id":"$CONV","previous_session_id":"$previous","new_session_id":"$successor","reason":"clear","occurred_at":"2026-10-10T10:00:00Z"}""",
-                )
-                pump.push("conversation_updated", pump.row(target))
+                pump.transition(previous, successor, target)
                 runCurrent()
                 assertFalse(vm.state.value.runConfig.pending)
                 assertFalse(vm.state.value.runConfig.settingsAvailable)
@@ -774,9 +770,10 @@ class ThreadViewModelAgentSwitchTest {
                     RemoteConversationRepository(
                         pump,
                         CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
-                        negotiatedCapabilities = { setOf("interactive", "multi_agent") },
+                        negotiatedCapabilities = { setOf("interactive", "multi_agent", "thread") },
+                        authoritativeHostId = "host",
                         hostReadings = held,
-                    )
+                    ).also { it.refreshSessionSettings(CONV) }
                 return object : ConversationRepository by live {
                     override fun observeModelMenu(conversationId: String) = menu.observeModelMenu(conversationId)
                 }
@@ -790,13 +787,14 @@ class ThreadViewModelAgentSwitchTest {
             vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
             oldPump.settings = reading("s2", "gpt-6-luna", "high")
             oldPump.transition("s1", "s2", ConversationAgent.Codex)
+            stable.refreshSessionSettings(CONV)
             runCurrent()
             assertEquals("s2", vm.state.value.runConfig.sessionId)
             current.value = null
             runCurrent()
             assertFalse(vm.state.value.runConfig.writable)
             val newPump =
-                ProjectionPump().apply {
+                ProjectionPump(initialSession = "s3").apply {
                     settings = reading("s3", "gpt-6-sol", "low")
                     answerSettings = false
                 }
@@ -840,8 +838,9 @@ class ThreadViewModelAgentSwitchTest {
                 RemoteConversationRepository(
                     pump,
                     CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
-                    negotiatedCapabilities = { setOf("interactive", "multi_agent") },
-                )
+                    negotiatedCapabilities = { setOf("interactive", "multi_agent", "thread") },
+                    authoritativeHostId = "host",
+                ).also { it.refreshSessionSettings(CONV) }
             val menu = Repo().backing
             val repo =
                 object : ConversationRepository by remote {
@@ -947,12 +946,19 @@ class ThreadViewModelAgentSwitchTest {
         return vm to job
     }
 
-    private class ProjectionPump : SessionPump {
+    private class ProjectionPump(
+        initialSession: String = "s1",
+    ) : SessionPump {
         private val channel = Channel<Envelope>(Channel.UNLIMITED)
         override val inbound = channel.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
         var settings = reading("s1", "opus", "high")
         var answerSettings = true
+        private var currentSession = initialSession
+
+        init {
+            check(channel.trySend(sessionSnapshotClear(CONV, initialSession)).isSuccess)
+        }
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
@@ -970,7 +976,15 @@ class ThreadViewModelAgentSwitchTest {
                 MobileJson.encodeToJsonElement(
                     SessionSettingsPayloadDto(s.sessionId, s.model, s.effort, s.yolo, s.permissionMode, 0, 0),
                 )
-            check(channel.trySend(Envelope(900, "session_settings", "2026-10-10T10:00:00Z", payload, inReplyTo = request.id)).isSuccess)
+            val reply =
+                Envelope(
+                    900,
+                    "session_settings",
+                    "2026-10-10T10:00:00Z",
+                    payload,
+                    inReplyTo = request.id,
+                ).ownedBy(CONV, s.sessionId.ifEmpty { currentSession })
+            check(channel.trySend(reply).isSuccess)
         }
 
         fun transition(
@@ -978,10 +992,9 @@ class ThreadViewModelAgentSwitchTest {
             successor: String,
             agent: ConversationAgent,
         ) {
-            push(
-                "session_transition",
-                """{"conversation_id":"$CONV","previous_session_id":"$previous","new_session_id":"$successor","reason":"clear","occurred_at":"2026-10-10T10:00:00Z"}""",
-            )
+            check(previous == currentSession)
+            currentSession = successor
+            push("conversations", """{"conversations":[${row(agent)}]}""")
             push("conversation_updated", row(agent))
         }
 
@@ -993,7 +1006,13 @@ class ThreadViewModelAgentSwitchTest {
             check(
                 channel
                     .trySend(
-                        Envelope(900, type, "2026-10-10T10:00:00Z", MobileJson.parseToJsonElement(payload), inReplyTo = replyTo),
+                        Envelope(
+                            900,
+                            type,
+                            "2026-10-10T10:00:00Z",
+                            MobileJson.parseToJsonElement(payload),
+                            inReplyTo = replyTo,
+                        ).ownedBy(CONV, currentSession),
                     ).isSuccess,
             )
         }
@@ -1002,7 +1021,7 @@ class ThreadViewModelAgentSwitchTest {
             agent: ConversationAgent,
             name: String = "channel",
         ) =
-            """{"id":"$CONV","name":"$name","is_promoted":true,"is_archived":false,"cwd":"/p","last_message_ts":"2026-10-10T10:00:00Z","last_used_at":"2026-10-10T10:00:00Z","agent":"${agent.name.lowercase()}"}"""
+            """{"id":"$CONV","name":"$name","is_promoted":true,"is_archived":false,"cwd":"/p","last_message_ts":"2026-10-10T10:00:00Z","last_used_at":"2026-10-10T10:00:00Z","current_session_id":"$currentSession","agent":"${agent.name.lowercase()}"}"""
     }
 
     private class Repo(

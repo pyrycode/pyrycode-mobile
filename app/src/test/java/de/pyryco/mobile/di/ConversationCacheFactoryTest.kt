@@ -3,19 +3,20 @@ package de.pyryco.mobile.di
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import de.pyryco.mobile.data.cache.MigratingConversationCache
+import de.pyryco.mobile.data.cache.SavedAuthoritativeThread
+import de.pyryco.mobile.data.cache.SavedThreadCoverage
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,7 +33,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class ConversationCacheFactoryTest {
-    private val row = ThreadItem.MessageItem(Message("m", "s", Role.User, "probe", Instant.parse("2026-10-17T00:00:00Z"), false))
+    private val saved =
+        SavedAuthoritativeThread(
+            "epoch",
+            listOf(
+                MobileJson
+                    .parseToJsonElement(
+                        """{"id":1,"rev":2,"kind":"future-kind","status":"done","active":false,"shown":true,"summary":"probe","content":{},"order":3}""",
+                    ).jsonObject,
+            ),
+            5,
+            4,
+            SavedThreadCoverage(3, 3, 3, true),
+        )
 
     @Test fun boundCacheStoresThreadsInRoomAndListsInFilesUnderNoBackupFilesDir() =
         runBlocking {
@@ -51,13 +64,13 @@ class ConversationCacheFactoryTest {
                     lastUsedAt = Instant.parse("2026-10-17T00:00:00Z"),
                 )
             cache.writeConversations("probe-host", listOf(conversation)).getOrThrow()
-            cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
+            cache.writeAuthoritativeThread("probe-host", "probe", saved).getOrThrow()
 
-            assertEquals(listOf(row), openConversationCache(context).readThread("probe-host", "probe"))
+            assertEquals(saved, openConversationCache(context).readAuthoritativeThread("probe-host", "probe"))
             assertTrue(File(context.noBackupFilesDir, "conversation-cache.db").isFile)
             assertTrue(files(File(context.noBackupFilesDir, "conversations")).any { it.endsWith("conversations.json") })
             // The thread went to Room: the file root holds no thread document for it.
-            assertTrue(files(File(context.noBackupFilesDir, "conversations")).none { "/threads/" in it })
+            assertTrue(files(File(context.noBackupFilesDir, "conversations")).none { "/threads/" in it || "/authoritative-threads/" in it })
             assertEquals(filesBefore, files(context.filesDir))
         }
 
@@ -83,12 +96,12 @@ class ConversationCacheFactoryTest {
                     override suspend fun remove(serverId: String) = Unit
                 }
             val store = ObservablePairedServerStore(pairings, admitSavedHost(lazyOf(cache))) { cache.removeHost(it) }
-            cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
+            cache.writeAuthoritativeThread("probe-host", "probe", saved).getOrThrow()
             store.remove("probe-host")
-            assertTrue(cache.writeThread("probe-host", "probe", listOf(row)).isFailure)
+            assertTrue(cache.writeAuthoritativeThread("probe-host", "probe", saved).isFailure)
             store.save(PairedServer("probe-host", "token", "wss://relay.invalid", "key"))
-            cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
-            assertEquals(listOf(row), cache.readThread("probe-host", "probe"))
+            cache.writeAuthoritativeThread("probe-host", "probe", saved).getOrThrow()
+            assertEquals(saved, cache.readAuthoritativeThread("probe-host", "probe"))
         }
 
     @Test fun repairInvariant_cancelledSavedPairingFinishesAdmissionAfterMutexWait() =
@@ -136,9 +149,9 @@ class ConversationCacheFactoryTest {
                         admit(it)
                     }) { cache.removeHost(it) }
                 store.remove("probe-host")
-                assertTrue(cache.writeThread("probe-host", "probe", listOf(row)).isFailure)
+                assertTrue(cache.writeAuthoritativeThread("probe-host", "probe", saved).isFailure)
                 hold.set(true)
-                val holder = launch { cache.writeThread("other-host", "probe", listOf(row)).getOrThrow() }
+                val holder = launch { cache.writeAuthoritativeThread("other-host", "probe", saved).getOrThrow() }
                 entered.await()
                 try {
                     val record = PairedServer("probe-host", "token", "wss://relay.invalid", "key")
@@ -152,8 +165,8 @@ class ConversationCacheFactoryTest {
                     holder.join()
                     saver.join()
                     assertTrue(saver.isCancelled)
-                    cache.writeThread("probe-host", "probe", listOf(row)).getOrThrow()
-                    assertEquals(listOf(row), cache.readThread("probe-host", "probe"))
+                    cache.writeAuthoritativeThread("probe-host", "probe", saved).getOrThrow()
+                    assertEquals(saved, cache.readAuthoritativeThread("probe-host", "probe"))
                 } finally {
                     release.complete(Unit)
                     holder.join()

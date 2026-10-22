@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
-import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.repository.LiveRootTurnEnd
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -47,9 +46,6 @@ enum class TurnRecoveryNotice { ContextTooLong, BillingError, AuthenticationFail
  * `prompt_too_long`, else the billing or sign-in notice for its `error_category`. Every other turn gets
  * `null`. The daemon's tokens are only compared, never shown, so nothing here needs sanitizing.
  */
-internal fun turnRecoveryNotice(event: LiveSessionEvent.TurnEnd): TurnRecoveryNotice? =
-    turnRecoveryNotice(event.isError, event.outcome, event.stopReason, event.terminalReason, event.errorCategory)
-
 internal fun turnRecoveryNotice(event: LiveRootTurnEnd): TurnRecoveryNotice? =
     turnRecoveryNotice(event.isError, event.outcome, event.stopReason, event.terminalReason, event.errorCategory)
 

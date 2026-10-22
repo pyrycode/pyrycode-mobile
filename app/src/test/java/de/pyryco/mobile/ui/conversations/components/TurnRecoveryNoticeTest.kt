@@ -1,6 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
-import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.repository.LiveRootTurnEnd
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice.AuthenticationFailed
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice.BillingError
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice.ContextTooLong
@@ -14,7 +14,7 @@ import org.junit.Test
 class TurnRecoveryNoticeTest {
     private data class Case(
         val name: String,
-        val event: LiveSessionEvent.TurnEnd,
+        val event: LiveRootTurnEnd,
         val expected: TurnRecoveryNotice?,
     )
 
@@ -64,5 +64,5 @@ class TurnRecoveryNoticeTest {
         isError: Boolean = false,
         terminalReason: String = "",
         errorCategory: String = "",
-    ) = LiveSessionEvent.TurnEnd("c1", "t1", stopReason, outcome, isError, terminalReason, errorCategory)
+    ) = LiveRootTurnEnd(isError, outcome, stopReason, terminalReason, errorCategory, { true }, Any())
 }

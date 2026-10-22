@@ -2,9 +2,11 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.SessionProvenance
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
@@ -22,6 +24,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -94,7 +97,12 @@ class ThreadViewModelTurnPhaseTest {
     ) {
         private val pump = FakeSessionPump()
         private val repo =
-            RemoteConversationRepository(pump, scope.backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            RemoteConversationRepository(
+                pump,
+                scope.backgroundScope,
+                negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
+                authoritativeHostId = "host",
+            )
         private val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("conversationId" to CONV)),
@@ -104,6 +112,10 @@ class ThreadViewModelTurnPhaseTest {
                 repo.liveSessionEvents,
             )
         private val collectors = mutableListOf<Job>()
+
+        init {
+            pump.push(probe("turn_state", "{}").copy(sessionStateCleared = JsonPrimitive(true)))
+        }
 
         fun subscribe() {
             collectors += scope.backgroundScope.launch { vm.isThinking.collect {} }
@@ -128,12 +140,21 @@ class ThreadViewModelTurnPhaseTest {
 
     private fun turnState(state: String): Envelope = probe("turn_state", """{"conversation_id":"$CONV","state":"$state"}""")
 
-    private fun turnEnd(): Envelope = probe("turn_end", """{"conversation_id":"$CONV","turn_id":"t1","stop_reason":"end_turn"}""")
+    private fun turnEnd(): Envelope = turnState("idle")
 
     private fun probe(
         type: String,
         payload: String,
-    ): Envelope = Envelope(id = 1L, type = type, ts = TS, payload = MobileJson.parseToJsonElement(payload))
+    ): Envelope =
+        Envelope(
+            id = 1L,
+            type = type,
+            ts = TS,
+            payload = MobileJson.parseToJsonElement(payload),
+            conversationId = JsonPrimitive(CONV),
+            sessionProvenance = SessionProvenance(JsonPrimitive("session")),
+            sessionStateCleared = JsonPrimitive(false),
+        )
 
     /** Channel-backed fake of the inbound surface: unlimited buffer so pushes pre-subscription survive. */
     private class FakeSessionPump : SessionPump {

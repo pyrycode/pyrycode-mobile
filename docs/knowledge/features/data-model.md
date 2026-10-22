@@ -161,7 +161,7 @@ and queued folds use logical ids while emitting renderer keys for rows, blocks a
 Read evidence also matches logical identity independently of renderer-only metadata, retaining
 content, role, attachment, parent and tool-state checks; alias equality cannot certify a changed
 content version. `HistoryAliasCorrelationTest` covers these consumers and a changed-content
-negative control. See [renderer allocation](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+negative control. See [renderer allocation](remote-conversation-repository-assistant-reply-segments.md)
 and [disk replay identity](conversation-cache-layout.md#layout). This field is cache-local domain
 metadata, with no wire DTO change.
 
@@ -172,7 +172,7 @@ stays on `ToolCall.parentToolUseId`. It belongs on the message so legacy whole-t
 `AssistantSegment` can also be enriched. It is conversation-local inert grouping data: never authority,
 a path, a command or a log field. It does not define row keys, lane identity or sequence ordering.
 See [assistant payload decoding](mobile-protocol-v2-wire-layer-application-payloads.md#assistant-parent-attribution-1826)
-for absent-versus-null handling and [segment reconciliation](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for absent-versus-null handling and [segment reconciliation](remote-conversation-repository-assistant-reply-segments.md)
 for retention through append, replay and history/cache joins.
 
 `isStreaming = true` while assistant output is still arriving over the wire (Phase 4+). Phase 0/1 fake data is `isStreaming = false` for every message except one demo seed (the last assistant message of `seed-channel-pyrycode-mobile`'s current session, added in #184) so the [streaming reveal animation](./message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184) can be observed end-to-end without a real WS feed.
@@ -217,7 +217,7 @@ member is above the signed range. These views cannot certify omitted content as 
 restored or seen. Coverage/cache migration belongs to #1910, gap anchors to #1911 and foreground
 acknowledgement to #1912. Until those consumers migrate, sticky `HistoryCoverage.unsignedIncomplete`
 keeps both coverage and saved walk completeness conservative, including empty-cache reopen. See
-[history folding and compatibility](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645).
+[history folding and compatibility](remote-conversation-repository-reads-and-thread-store-history-paging.md).
 
 ## Why `kotlinx.datetime.Instant`
 

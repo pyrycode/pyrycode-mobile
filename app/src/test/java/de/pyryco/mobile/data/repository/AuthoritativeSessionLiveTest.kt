@@ -242,7 +242,7 @@ class AuthoritativeSessionLiveTest {
     @Test fun inactiveRetryAndCompactionRepairLostEdgesWithoutDurableRowsOrReadEvidence() =
         runTest {
             val (pump, repo) = repository()
-            val baseline = repo.observeThreadSnapshot("c").first()
+            val baseline = repo.observeAuthoritativeThread("c").first()
             for (type in listOf("api_retry", "compacting")) {
                 pump.push(frame(type, "s", clear = true))
                 pump.push(frame(type, "s", payload = payload("\"active\":true,\"current\":1,\"total\":3")))
@@ -253,7 +253,7 @@ class AuthoritativeSessionLiveTest {
             runCurrent()
             assertEquals(ApiRetryStatus.NotRetrying, repo.observeApiRetry("c").first())
             assertFalse(repo.observeCompacting("c").first())
-            assertEquals(baseline, repo.observeThreadSnapshot("c").first())
+            assertEquals(baseline, repo.observeAuthoritativeThread("c").first())
         }
 
     @Test fun replacementPreservesItemsQueuePendingAndAccountRate() =
@@ -281,7 +281,11 @@ class AuthoritativeSessionLiveTest {
                 ),
             )
             runCurrent()
-            val queue = repo.observeQueue("c").first()
+            val queue =
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .filter { it.status == "queued" }
             val rate = repo.observeUsageLimit("c").first()
             val durable = repo.authoritativeThreads.current("host", "c")
             assertEquals(1, queue.size)
@@ -290,7 +294,13 @@ class AuthoritativeSessionLiveTest {
             pump.push(frame("stall", "new", clear = true))
             pump.push(frame("rate_limited", "new", clear = true))
             runCurrent()
-            assertEquals(queue, repo.observeQueue("c").first())
+            assertEquals(
+                queue,
+                repo.authoritativeThreads
+                    .current("host", "c")
+                    .items
+                    .filter { it.status == "queued" },
+            )
             assertEquals(rate, repo.observeUsageLimit("c").first())
             assertEquals(durable, repo.authoritativeThreads.current("host", "c"))
         }
@@ -615,7 +625,7 @@ class AuthoritativeSessionLiveTest {
                     .tasks["task"]
                     ?.description,
             )
-            val durable = repo.observeThreadSnapshot("c").first()
+            val durable = repo.observeAuthoritativeThread("c").first()
             pump.push(frame("background_task_progress", "s", clear = true))
             runCurrent()
             assertEquals(
@@ -636,7 +646,7 @@ class AuthoritativeSessionLiveTest {
                     .tasks
                     .isEmpty(),
             )
-            assertEquals(durable, repo.observeThreadSnapshot("c").first())
+            assertEquals(durable, repo.observeAuthoritativeThread("c").first())
 
             val c = "00000000-0000-4000-8000-000000000001"
             val s = "00000000-0000-4000-8000-000000000002"
@@ -655,13 +665,13 @@ class AuthoritativeSessionLiveTest {
     @Test fun liveMetadataCannotBecomeReplayOrReadEvidenceAndLogsContainNoContent() =
         runTest {
             val (pump, repo) = repository()
-            val before = repo.observeThreadSnapshot("c").first()
+            val before = repo.observeAuthoritativeThread("c").first()
             pump.push(frame("session_error", "s", clear = true))
             pump.push(frame("session_error", "s", payload = payload("\"code\":\"secret-code\",\"message\":\"secret-body\"")))
             pump.push(frame("session_error", "s", payload = payload("\"code\":\"new\",\"message\":\"secret-body\"")).copy(eventId = 8))
             runCurrent()
             assertEquals("secret-code", repo.observeSessionError("c").first())
-            assertEquals(before, repo.observeThreadSnapshot("c").first())
+            assertEquals(before, repo.observeAuthoritativeThread("c").first())
             assertTrue(logs.none { "secret" in it || "sensitive" in it || "old-request" in it })
         }
 

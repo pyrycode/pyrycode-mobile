@@ -41,13 +41,6 @@ class ContextUsageProjectionTest {
             assertEquals(listOf(ContextMemoryFile("same.md", "second", 3), ContextMemoryFile("same.md", "first", 7)), held.memoryFiles)
             assertEquals(8L, held.droppedMemoryFiles)
             assertEquals(2L, held.droppedCategories)
-            assertEquals(
-                true,
-                understoodNonvisualEntry(
-                    HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z")),
-                    true,
-                ),
-            )
             projection.apply(frame(valid))
             runCurrent()
             assertEquals(emptyList<ContextMemoryFile>(), readings.last()?.memoryFiles)
@@ -108,8 +101,6 @@ class ContextUsageProjectionTest {
                 projection.apply(frame(payload))
                 runCurrent()
                 assertEquals("invalid memory shape", held, readings.last())
-                val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
-                assertEquals(null, understoodNonvisualEntry(entry, true))
             }
         }
 
@@ -146,8 +137,6 @@ class ContextUsageProjectionTest {
             )
             assertEquals(Long.MAX_VALUE, fresh.droppedMcpTools)
             assertEquals(2L, fresh.droppedCategories)
-            val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
-            assertEquals(true, understoodNonvisualEntry(entry, true))
             projection.apply(frame(JsonObject(valid + ("dropped_mcp_tools" to JsonPrimitive(3)))))
             runCurrent()
             assertEquals(emptyList<ContextMcpTool>(), readings.last()?.mcpTools)
@@ -227,8 +216,6 @@ class ContextUsageProjectionTest {
                 projection.apply(frame(changed))
                 runCurrent()
                 assertEquals("invalid MCP inventory must preserve held reading", previous, held)
-                val entry = HistoryEntry(1L, "context_usage", changed, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
-                assertEquals(null, understoodNonvisualEntry(entry, true))
             }
         }
 
@@ -264,8 +251,6 @@ class ContextUsageProjectionTest {
                 projection.apply(frame(payload))
                 runCurrent()
                 assertEquals("invalid category shape", held, readings.last())
-                val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
-                assertEquals(null, understoodNonvisualEntry(entry, true))
             }
         }
 
@@ -332,8 +317,6 @@ class ContextUsageProjectionTest {
             assertEquals("claude", fresh.model)
             assertEquals(listOf(ContextCategory("second", 3), ContextCategory("first", 7)), fresh.categories)
             assertEquals(Long.MAX_VALUE, fresh.droppedCategories)
-            val entry = HistoryEntry(1L, "context_usage", payload, kotlinx.datetime.Instant.parse("2026-10-19T00:00:00Z"))
-            assertEquals(true, understoodNonvisualEntry(entry, true))
             val remembered =
                 JsonObject(
                     payload +

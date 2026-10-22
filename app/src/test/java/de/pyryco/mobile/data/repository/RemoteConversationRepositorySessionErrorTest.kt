@@ -146,7 +146,13 @@ class RemoteConversationRepositorySessionErrorTest {
             pump.push(frame("session_error", payload.toString()))
             runCurrent()
             assertEquals(code, remote.observeSessionError("c1").first())
-            assertEquals(emptyList<ThreadItem>(), remote.observeMessages("c1").first())
+            assertTrue(
+                remote
+                    .observeAuthoritativeThread("c1")
+                    .first()
+                    .items
+                    .isEmpty(),
+            )
             assertNull(remote.observeLastMessage("c1").first())
             assertTrue(logs.none { prose in it || code in it || "secret" in it || "c1" in it })
             assertTrue(logs.any { "event=session_error" in it })

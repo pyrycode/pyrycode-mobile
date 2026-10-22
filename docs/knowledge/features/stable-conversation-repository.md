@@ -25,6 +25,13 @@ with a `true` default. `-PuseRelayRepository=false` selects the fake for a demo;
 previews can explicitly inject fake independently of that flag. See
 [dependency injection](dependency-injection.md) and [build commands](../../../README.md#build).
 
+
+Content is forwarded through the exact host's `NegotiatedThread`; reconnect keeps
+the host-owned authoritative store while replacing connection-owned queries and
+live readings. Legacy message/queue/snapshot/history APIs are removed in #2367.
+No disconnected empty raw stream is used as content. Held settings are display-only,
+accepted from current producers and cleared on replacement.
+
 ## Where it sits in the Phase 4 stack
 
 ```
@@ -79,29 +86,28 @@ the held value is a placeholder the reply replaces, not a reason to skip asking.
 both keep the pre-#1320 switched `null` in the gap.
 
 It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
+`observeLastMessage`, `observeStall` (#395),
 `observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
 `observeUsageLimit` (#802), **and** `recentWorkspaces`), the 16
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage` (both overloads — the plain send and the
 attachment-naming one, #830 — follow the identical snapshot-or-throw shape below), `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
-deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
+deliberately deferred), `requestSystemPrompt`/`setSystemPrompt` (#823),
 `setMuted` (#1000), `setPinned` (#2214), **and**
 `requestHostSystemPrompt`/`setHostSystemPrompt` (#1774, snapshot-or-result), and
 `uploadAttachment` (#829, another one-shot that does **not** follow the snapshot-or-throw shape below —
 see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and** the one capability property
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
 (`recentWorkspaces`, `createWorkspaceFolder`, `delete`, `requestScreenSnapshot` (#375),
-`observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
+`observeStall` (#395),  `observeApiRetry` (#593), `observeCompacting` (#596),
 `observeThinkingProgress` (#801), `observeUsageLimit` (#802),
-`setSessionSettings` (#543), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
+`setSessionSettings` (#543), `requestSystemPrompt`/`setSystemPrompt` (#823),
 `setMuted` (#1000), `setPinned` (#2214), **and** `mutationsSupported` (#507)), so
-delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`,
+delegation is faithful and nothing silently falls back to a default. `setSessionSettings`,
 `requestSystemPrompt`/`setSystemPrompt`, `setMuted` and `setPinned` all follow the
 plain one-shot snapshot-or-throw shape below — none introduces a new
-delegation posture; `requestHistory` forwards its `cursor`/`limit` verbatim, the same pass-through the
-shape already gives every other multi-arg one-shot, `setSystemPrompt` forwards its `systemPrompt`
+delegation posture; `setSystemPrompt` forwards its `systemPrompt`
 verbatim including a `null` clear — the facade neither pre-checks the 8192-byte limit nor short-circuits
 an over-limit value; that stays the live repository's `require(...)` — and `setMuted`/`setPinned` both
 forward their `Boolean` verbatim, `true` and `false` alike, the same one-line hand-off `createChannel` uses.
@@ -118,7 +124,7 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
     currentRepository.flatMapLatest { repo -> repo?.let(select) ?: flowOf(whenAbsent) }
 ```
 
-- `observeConversations(filter)` / `observeMessages(id)` / `recentWorkspaces()` → `switchToLive(emptyList()) { … }`
+- `observeConversations(filter)` / `recentWorkspaces()` → `switchToLive(emptyList()) { … }`
 - `observeLastMessage(id)` → `switchToLive<Message?>(null) { … }`
 - `observeSessionError(id)` (#1677) → `switchToLive<String?>(null) { … }` — forwards
   the live current code and emits null while disconnected, even with `heldReadings`
@@ -135,8 +141,7 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   `flatMapLatest` cancel-old-on-switch means a stall from a prior connection never leaks across a
   reconnect (each connection's remote repo starts with an empty stall set, #351). See
   [Stall state](stall-state.md).
-- `observeQueue(id)` (#460) → `switchToLive(emptyList()) { … }` — no live connection reports an empty
-  backlog; same cancel-old-on-switch isolation. See [Queued backlog](queued-backlog.md).
+
 - `observeApiRetry(id)` (#593) → `switchToLive(ApiRetryStatus.NotRetrying) { … }` — no live connection
   reports "not retrying"; a retry state from a prior connection never leaks across a reconnect (each
   connection's remote repo starts with an empty `apiRetryByConversation` map, #351). See
@@ -446,8 +451,7 @@ for offer/echo/clear, plus session selection on an unchanged connection. See the
 - Delegated observable: [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the `observeStall`
   read this facade forwards with `whenAbsent = false`, the reachability path that lets the thread
   ViewModel observe the live repo's stall state through this facade.
-- Delegated observable: [Queued backlog](queued-backlog.md) ([#460](../codebase/460.md)) — the
-  `observeQueue` read forwarded with `whenAbsent = emptyList()`.
+
 - Delegated observable: [API-retry status](api-retry-status.md) ([#593](../codebase/593.md)) — the
   `observeApiRetry` read forwarded with `whenAbsent = ApiRetryStatus.NotRetrying`, the reachability path
   that will let the thread ViewModel observe the live repo's API-retry state once sibling #594 renders it.
@@ -479,9 +483,7 @@ for offer/echo/clear, plus session selection on an unchanged connection. See the
   still asks for its own. Consumer: [`ThreadRunConfig.settingsHeld`](thread-composer-footer-effort-recall.md#remembered-effort-recall-686).
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
-- Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with
-  the plain snapshot-or-throw shape; no new delegation posture. See [Remote conversation repository —
-  screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md#requesthistoryconversationid-cursor-limit--the-on-disk-history-page-read-623).
+
 - Delegated one-shots: `requestSystemPrompt` / `setSystemPrompt` (#823) — the conversation-scoped
   system-prompt read and write, both forwarded verbatim with the plain snapshot-or-throw shape; the
   facade performs no interactive gating and no byte-limit check of its own, both of which stay on the
