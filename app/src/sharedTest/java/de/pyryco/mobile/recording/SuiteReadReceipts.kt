@@ -29,6 +29,7 @@ internal class SuiteReadReceipts(
         val required: ULong,
         val maxRequested: ULong,
         val snapshot: Envelope,
+        val precedingQueries: Set<Long>,
         var confirmed: ULong = 0u,
         var lastRequested: ULong = 0u,
     )
@@ -100,7 +101,22 @@ internal class SuiteReadReceipts(
                 require(previous == null || target > previous.maxRequested && stored >= previous.required) {
                     "Recorded read progress is not monotonic"
                 }
-                groups[key] = Group(stored, target, response)
+                val precedingQueries =
+                    source
+                        .take(index)
+                        .filter { prior ->
+                            val query = prior.message
+                            prior.owner == step.owner &&
+                                prior.direction == "client" &&
+                                prior.accepted &&
+                                (
+                                    query?.type == "list_conversations" ||
+                                        query?.type in setOf("thread_catch_up", "thread_page") &&
+                                        query?.payload?.jsonObject?.get("conversation_id") == JsonPrimitive(conversation)
+                                )
+                        }.map { checkNotNull(it.message).id }
+                        .toSet()
+                groups[key] = Group(stored, target, response, precedingQueries)
                 normalizedRequests += step.owner to frame.id
                 snapshots.getOrPut(step.owner) { mutableSetOf() } += response.payload
                 guardedSnapshots += Triple(host(step.owner), response.payload, stored)
@@ -185,6 +201,25 @@ internal class SuiteReadReceipts(
             groups.keys.any {
                 it.owner == owner && resolve(JsonPrimitive(it.conversation)).jsonPrimitive.content == conversation
             }
+    }
+
+    /** A coalesced reply retains the query prerequisites of its captured snapshot. */
+    fun precedingQueries(
+        owner: String,
+        frame: Envelope,
+    ): Set<Long> {
+        val conversation =
+            frame.payload.jsonObject
+                .getValue("conversation_id")
+                .jsonPrimitive.content
+        return groups.entries
+            .singleOrNull {
+                it.key.owner == owner &&
+                    it.key.action == action &&
+                    resolve(JsonPrimitive(it.key.conversation)).jsonPrimitive.content == conversation
+            }?.value
+            ?.precedingQueries
+            .orEmpty()
     }
 
     fun send(

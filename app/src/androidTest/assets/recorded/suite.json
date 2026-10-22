@@ -1670,7 +1670,7 @@
         },
         "contractReview": {
           "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
-          "sha256": "f34efa31e16968e332987d98854d755f3a18f0ef7c32aaff860a5f27669e1853",
+          "sha256": "79474537ad5e284e3f4749c8c895b9e2fca554e563879bac983d476d97eca125",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
         }
@@ -1724,7 +1724,7 @@
         },
         "contractReview": {
           "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
-          "sha256": "f34efa31e16968e332987d98854d755f3a18f0ef7c32aaff860a5f27669e1853",
+          "sha256": "79474537ad5e284e3f4749c8c895b9e2fca554e563879bac983d476d97eca125",
           "decision": "accepted-identical-contract",
           "strictComparison": "identical"
         }
@@ -1941,7 +1941,7 @@
         },
         "contractReview": {
           "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
-          "sha256": "f34efa31e16968e332987d98854d755f3a18f0ef7c32aaff860a5f27669e1853",
+          "sha256": "79474537ad5e284e3f4749c8c895b9e2fca554e563879bac983d476d97eca125",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
         }
@@ -2319,7 +2319,7 @@
         },
         "contractReview": {
           "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
-          "sha256": "f34efa31e16968e332987d98854d755f3a18f0ef7c32aaff860a5f27669e1853",
+          "sha256": "79474537ad5e284e3f4749c8c895b9e2fca554e563879bac983d476d97eca125",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
         }
@@ -3797,7 +3797,7 @@
         },
         "contractReview": {
           "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
-          "sha256": "f34efa31e16968e332987d98854d755f3a18f0ef7c32aaff860a5f27669e1853",
+          "sha256": "79474537ad5e284e3f4749c8c895b9e2fca554e563879bac983d476d97eca125",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
         }
