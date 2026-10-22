@@ -60,6 +60,12 @@ If the actual-harness red confirms the edge, change only the test helper's negot
 
 Security review of the narrower plan: PASS. The store is the same host-scoped authoritative store behind the already selected negotiated route; connection identity and Missing handling remain in the same support combine. This removes a test-owned reader side effect without bypassing production validation or admitting a retired owner. Existing connection replacement, reused epoch/generation, Missing, retirement, raw-fact and settlement tests remain mandatory. Diagnostics contain no payloads or credentials. Recheck the actual diff after the red before handoff.
 
+## Actual-harness red and Retry fixture correction
+
+Unchanged-helper042d3954230f18b5a83cc835fdc74078ff51d83f executed3/1passed/2failed/0errors/skips. The actual-harness live-addition case fails the intended original-ViewModel publication assertion, while the no-observer control passes. The Retry case instead fails its evidence.admitted setup assertion before reaching the Retry-preservation assertion: its saved high-water1000/checkpoint900 intentionally describes uncertified history, so admission rejection is correct. Preserve that failure as a fixture mistake, not proof of the Retry edge. Full archive2470/manual-20261022/harness-red-042d has manifest30622bec8fb30a85bc62c721b4752134c0c4ead203440d8dd26a3f44fd5c6bee.
+
+Correct only this new Retry fixture to a healthy pre-existing saved high-water/checkpoint1000/1000, then rerun only that method against the still-unchanged helper. Keep admission, settled Retry, original action, exact400facts/two attempts/no extra remote request/no full read assertions. This must reach the intended Retry-preservation failure before the helper repair. The already confirmed actual-harness live-addition red and passing control remain original counted evidence; no production or evidence-helper implementation changes have occurred.
+
 ## Preserved acceptance and documentation contract
 
 Normal Room opening loads about200 display contributions plus required parents/active facts. Keep1000ms product/2000ms SwiftShader bounds for DB opening/demand/Retry/cold reopen, actual consumed-DB3000ms controls and every content/read/query/request/viewport/ownership assertion. Direct-file compatibility keeps36000facts/18000islands/18000visiblemessages and correctness checks; positive file timing stays opt-in under independent non-blocking #2456. Actual import latency is distinct. Do not revive retired projection/read APIs or delay an unused dispatcher.

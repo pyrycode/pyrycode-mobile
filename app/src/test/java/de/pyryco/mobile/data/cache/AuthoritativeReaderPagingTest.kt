@@ -228,7 +228,7 @@ class AuthoritativeReaderPagingTest {
         runTest {
             val facts = (1..600).map { fact(it) }
             val disk = disk()
-            disk.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 900)).getOrThrow()
+            disk.writeAuthoritativeThread("host", "c", SavedAuthoritativeThread("e", facts, 1000, 1000)).getOrThrow()
             var attempts = 0
             val cache =
                 object : ConversationCache by disk, AuthoritativeWindowCache by disk, AuthoritativeUpsertCache by disk {
