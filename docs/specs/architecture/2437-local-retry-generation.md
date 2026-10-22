@@ -72,3 +72,29 @@ Main `4cf670c96` was subsequently merged normally through the parent branch, ret
 catalog entries; its changes are unrelated test helpers/probes and documentation. Final
 pre-verification and independent complete configured acceptance remain required on the final
 candidate. The security verdict and bounded ownership design are unchanged by that integration.
+
+## Application-boundary rework after independent review
+
+Independent run `450817178f` rejected `d81339fd3`: a validated local page blocked
+on the store monitor could apply after replacement cancelled its hydration. The probe
+retained 200 initial facts and observed 400 without replacement demand. The complete
+configured gates were green and remain historical evidence, not acceptance of this repair.
+
+The remaining causal fix serializes reader registration and owned cleanup with the store
+monitor already used for restore. Under that same monitor, restore must check captured
+reader identity and coroutine cancellation before changing either store or persisted
+baseline. This covers a synchronous monitor wait after the final cancellable suspension;
+a cancellation check after mutation is insufficient. Keep validation and disk IO outside
+the monitor. Preserve the existing history-writes-before-store lock order and do not add
+suspending work under the store monitor. Apply the same reader guard to observation-owned
+supplement restores and serialize the local cursor completion against replacement.
+
+Retain the independent monitor-boundary regression in the production paging test class,
+using the blocked restore symbol rather than a source line number. Assert no retired-page
+facts, opening rows or baseline escape, and that replacement demand still applies its page.
+Keep all earlier retry/reset/ownership/generation tests. The duplicate reopen timing event
+will be named for its distinct completed assertions.
+
+Security review for this delta: **PENDING** until the failing boundary regression passes.
+The existing status-ownership review did not prove application ownership. No schema, wire,
+network, payload-read bound, timing target or native fixture changes are intended.
