@@ -268,11 +268,19 @@ private fun projectThread(
             },
         )
     }
+
+    // Admitted root prose is always open. Share its full model with demand/read checks
+    // instead of retaining an empty summary and repeatedly allocating another model.
+    fun admittedRoot(item: ThreadItemDto) =
+        (item.parent == null || item.parent == 0L) &&
+            item.kind in setOf("user_message", "assistant_message") &&
+            snapshot.openingRows?.contains(item.id to false) != false
+
     val adapted =
         visible.associate { item ->
             val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
             val row =
-                if (deferred) {
+                if (deferred && !admittedRoot(item)) {
                     item.summaryRow(identity(item.id), block, item.parent?.let(::identity).orEmpty(), progress)
                 } else {
                     adapt(item)
@@ -405,8 +413,11 @@ private fun projectThread(
     val selectedRows = rows.filter(::selected)
     val resolver: ((String) -> ThreadRow.Delivered?)? =
         if (deferred) {
-            val byKey = visible.associateBy { "msg:${identity(it.id)}" }
-            val resolve: (String) -> ThreadRow.Delivered? = { key -> byKey[key]?.let(::adapt) }
+            // Partition the index: full roots replace their DTO entries, without a second
+            // whole-file cache. Neither index is shared with another presentation.
+            val roots = visible.filter(::admittedRoot).associate { "msg:${identity(it.id)}" to adapted.getValue(it.id) }
+            val byKey = visible.filterNot(::admittedRoot).associateBy { "msg:${identity(it.id)}" }
+            val resolve: (String) -> ThreadRow.Delivered? = { key -> roots[key] ?: byKey[key]?.let(::adapt) }
             resolve
         } else {
             null

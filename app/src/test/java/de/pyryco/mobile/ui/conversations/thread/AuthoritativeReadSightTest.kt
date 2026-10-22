@@ -437,12 +437,13 @@ class AuthoritativeReadSightTest {
                 val binding = Any()
                 val key = p.rows.single().listKey(0)
                 val full = p.demandRows(p.rows, setOf("${p.scope}:1")).filterIsInstance<ThreadRow.Delivered>().single()
+                val summary = (p.items.single() as ThreadItem.MessageItem).let { it.copy(message = it.message.copy(content = "")) }
                 val event = ThreadEvent.NewestContentPresented(full.item, 8u, p, binding, key, p.shownRowRevisions)
                 try {
                     vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(p, binding))
                     for (invalid in listOf(
                         event.copy(binding = Any()),
-                        event.copy(row = p.items.single()),
+                        event.copy(row = summary),
                         event.copy(seenRowRevisions = mapOf(key to 7L)),
                         event.copy(rowKey = "retired:$key"),
                     )) {

@@ -96,6 +96,60 @@ class DeferredAuthoritativePresentationTest {
         assertTrue(converted.isEmpty())
     }
 
+    @Test fun admittedRootProseSharesOneFullModelAcrossDemandAndReadChecks() {
+        val converted = mutableListOf<Long>()
+        val snapshot =
+            authoritativeSnapshot(
+                authoritativeItem(1, "user_message", content = """{"text":"root user"}"""),
+                authoritativeItem(2, "assistant_message", parent = 0, content = """{"text":"root assistant"}"""),
+                authoritativeItem(3, "assistant_message", content = """{"text":"outside window"}"""),
+                authoritativeAgent(4),
+                authoritativeItem(5, parent = 4, content = """{"text":"closed descendant"}"""),
+            ).copy(openingRows = setOf(1L to false, 2L to false, 4L to false, 5L to false))
+        val p = projectDeferredAuthoritativeThread("host", "conversation", snapshot, onFullConversion = { converted += it })
+        assertEquals(listOf(1L, 2L), converted)
+        val roots = p.rows.filterIsInstance<ThreadRow.Delivered>().take(2)
+        assertEquals(listOf("root user", "root assistant"), roots.map { (it.item as ThreadItem.MessageItem).message.content })
+        repeat(3) {
+            val demanded = p.demandRows(roots, emptySet())
+            assertEquals(roots.size, demanded.size)
+            roots.zip(demanded).forEach { (root, full) ->
+                assertSame(root, full)
+                assertTrue(p.matchesReadContents(root.listKey(0), root.item, p.shownRowRevisions[root.listKey(0)]))
+            }
+        }
+        assertEquals(listOf(1L, 2L), converted)
+        assertSame(snapshot, p.sourceSnapshot)
+    }
+
+    @Test fun sharedRootContentsCannotSurviveRevisionScopeOrParentReplacement() {
+        val snapshot = authoritativeSnapshot(authoritativeItem(1, content = """{"text":"old"}"""))
+        val old = projectDeferredAuthoritativeThread("host", "conversation", snapshot)
+        val oldRow = old.demandRows(old.rows, emptySet()).filterIsInstance<ThreadRow.Delivered>().single()
+        val revised = snapshot.copy(items = listOf(authoritativeItem(1, rev = 8, content = """{"text":"new"}""")))
+        for ((host, conversation, facts) in listOf(
+            Triple("host", "conversation", revised),
+            Triple("other", "conversation", snapshot),
+            Triple("host", "other", snapshot),
+            Triple("host", "conversation", snapshot.copy(epoch = "new epoch")),
+            Triple("host", "conversation", snapshot.copy(generation = snapshot.generation + 1)),
+        )) {
+            val p = projectDeferredAuthoritativeThread(host, conversation, facts)
+            assertTrue(!p.matchesReadContents(oldRow.listKey(0), oldRow.item, 1))
+        }
+        val converted = mutableListOf<Long>()
+        val moved = snapshot.copy(items = listOf(authoritativeAgent(2), authoritativeItem(1, parent = 2, rev = 8)))
+        val p = projectDeferredAuthoritativeThread("host", "conversation", moved, onFullConversion = { converted += it })
+        assertTrue(converted.isEmpty())
+        val childOnly = p.rows.filterIsInstance<ThreadRow.Delivered>().filter { it.listKey(0) == oldRow.listKey(0) }
+        assertTrue(p.demandRows(childOnly, setOf("${p.scope}:2")).isEmpty())
+        assertTrue(converted.isEmpty())
+        val opened = p.demandRows(p.rows, setOf("${p.scope}:2")).filterIsInstance<ThreadRow.Delivered>()
+        assertEquals(listOf(2L, 1L), converted)
+        assertTrue(!p.matchesReadContents(oldRow.listKey(0), oldRow.item, 1))
+        assertTrue(opened.any { p.matchesReadContents(it.listKey(0), it.item, p.shownRowRevisions[it.listKey(0)]) })
+    }
+
     private fun ThreadRow.Delivered.messageId() = (item as ThreadItem.MessageItem).message.id
 
     @Test fun groupedAncestorInvariantSeparatelyPlacedNestedAgentCannotEscapeOuterClosure() {
