@@ -6,9 +6,12 @@
 `NegotiatedThread` with authoritative restore, observation and older demand. Offline
 facts never negotiate support. Runtime snapshot/list observers, raw row merging,
 legacy coverage/cursors and read/write-history-position APIs were removed in #2367.
-No active consumer reads or writes the legacy cached-row family. Serialized storage
-and its backend remain detached until #2364; their tests are storage history, not a
-runtime compatibility contract.
+Only supported authoritative facts can be stored/restored. #2385 retired legacy-file import,
+\#2386 discarded legacy Room tables, and #2387 removed the remaining storage methods, codecs
+and exclusive models. See the [supported cache contract](conversation-cache-contract.md#the-contract),
+[#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
+and [#2386 upgrade evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
+\#2364 retains final integrated acceptance.
 
 ## Restore and ownership
 
@@ -27,7 +30,7 @@ override suspend fun retrieveAttachment(conversationId: String, attachmentId: St
 ```
 
 This wrapper is the natural home for `retrieveAttachment` for the same reason it already holds the
-thread-row cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
+authoritative thread cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
 [`AttachmentStore`](attachment-retrieval.md) does the actual work — single-flighting concurrent
 retrievals of the same file, checking for a kept file first, and writing verified bytes temp-then-rename
 — this wrapper only supplies the host identity and the fetch function. With no store (`attachments ==
@@ -95,7 +98,7 @@ reader-owned full authoritative hydration. Generation and cache lifetime guard
 the restored facts and their placement witnesses. If local work cannot accept the
 demand, it forwards to the owning daemon route. Opening, reconnect and page arrival
 create no reader pull. File caches/doubles retain full authoritative restoration;
-this is not a bridge to legacy rows. See [older paging](remote-conversation-repository-reads-and-thread-store-history-paging.md).
+see [older paging](remote-conversation-repository-reads-and-thread-store-history-paging.md).
 
 
 ## What is written, and when
@@ -150,6 +153,13 @@ that tombstone under the write lock; deletion waits for admitted work and remove
 cached conversation data. Refusal preserves it, and another host's identical id is
 unaffected. Archive/unarchive remain delegation. Attachment retrieval continues
 through the exact host's `AttachmentStore`; content removal creates no new fetch.
+
+Mixed fixtures and e2e setup must seed, clear and inspect `SavedAuthoritativeThread` through
+supported cache operations and production projection. A successful-empty retired method could
+otherwise claim a clear while leaving real saved facts intact. Retained nesting tests must
+still prove parent attribution/rendering; attachment replay must still prove the restored row
+and open/save bytes, and stream probes must inspect authoritative persistence. See the
+[#2387 preservation evidence](conversation-cache-contract.md#retirement-and-preservation-evidence-2387).
 
 The destination wraps the stable delegate before decorators and forwards negotiated
 ownership through each wrapper. See [wiring](caching-conversation-repository-wiring.md)
