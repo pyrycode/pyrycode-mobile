@@ -77,6 +77,113 @@ and replays both the committed and fresh recordings. It never replaces the commi
 recording. Changed requests, choices or recovery steps require a reviewed replacement.
 Missing login, setup failure and a run with no executed tests fail these explicit commands.
 
+### Unavailable-summary recording integration (#2467)
+
+The [availability repair](knowledge/features/remote-conversation-repository-reads-and-thread-store.md#recovering-unavailable-shown-metadata-2467)
+can add a summary request after certified recovery when the original live summary
+omits shown metadata. Five old recordings failed strict request matching on the
+candidate and passed on main. Their genuine replacements retain the original
+native scenario bodies, deadlines, full payload matching and connection ownership.
+Commands and complete normalized command payloads, lifecycle owners and lifecycle
+sequences are identical in all five reviewed comparisons.
+
+On Linux, Mobile `0b93815f1088c28c513aad4f4d83899c3520fea2` produced five
+genuine captures and five fresh strict replays: each group executed/passed 5,
+with zero failures/errors/skips. The four-method managed capture exited 0.
+The separate negative-control managed verification exited 1: capture 1/1 and
+fresh replay 1/1 passed, old replay failed and comparison was CHANGED. Its old
+replay report records failure without executed-test counts; it supplies no counted
+old-replay pass. The four-method command captured/replayed fresh candidates and
+compared contracts; it did not supply four new old-replay passes.
+
+| `RecordedMobileSuiteTest` method | Strict comparison | Reviewed difference |
+| --- | --- | --- |
+| `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` | IDENTICAL | Genuine terminal summary supplies shown/read 11/0; no follow-up needed. |
+| `interactiveTurn_markdownReply_rendersFormattedBody` | CHANGED | Extra empty-payload summary and catch-up at checkpoint 16; push registration moves before phone-send. Original response 14 omits shown; same-owner follow-up response 15 supplies shown/read 13/0. |
+| `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` | CHANGED | Extra catch-up at checkpoint 14 and opposite epoch-alias allocation order; six replacements and commands stay exact. Live summary supplies shown/read 11/0. |
+| `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` | CHANGED | Extra catch-ups at checkpoints 15 and 24; list counts and host-2/other-conversation ownership stay exact. Genuine summaries supply shown/read 18/14, then 34/14. |
+| `negativeControl_wordClaudeNeverSays_isNeverDisplayed` | CHANGED | Extra catch-up at checkpoint 14; original absence wait retained (92.588 native seconds). |
+
+These are one IDENTICAL and four reviewed CHANGED contracts, not five successful
+compatibility verifications. All five committed assets match their genuine capture
+bytes. Producer: Core `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, daemon SHA-256
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`,
+Claude Code 2.1.280, Android API 33. Capture app/test APK SHA-256 values are
+`3963f6873c5d48aaec3ecfc8f892967d988462185bfeae36992d187d36a63eb1` /
+`ddecd0e0e1200f468440b293185f03ae698c57c1047af660cb3eb440f4aecfcb`.
+Private originals, capture/replay traces, comparisons and receipts were retained at
+agents `logs/evidence/2467/four-flow-capture-0b93815f1-complete/` and
+`negative-compat-0b93815f1/`. See the [contract review](specs/architecture/2467-list-unread-after-reconnect.md#genuine-contract-review)
+for the response/request review.
+
+Preserve `permission-first-compat-a59096aa4/` as failed compatibility: its genuine
+capture and fresh replay passed once each, but old replay failed and comparison
+remained CHANGED because an extra summary preceded the pending original response.
+The later five-method runs `five-replay-red-07be0baaf/` and
+`five-replay-red-0b2895f66/` each executed five: four passed, permission routing
+failed, zero errors/skips. A lone replay pass did not establish stable causal
+delivery. [Intermediate snapshots and query prerequisites](#captured-read-snapshot-prerequisites-2467)
+address that integration failure without relaxing requests. Selection refusals and
+the cancelled pre-capture attempt executed no tests and provide no acceptance.
+
+Corrected causal probes each executed once and failed at the intended boundary:
+`unit-red-corrected/` (missing summary request), `receipt-prerequisite-red/`
+(premature acknowledgement), and `intermediate-receipt-causal-red/` (missing
+intermediate acknowledgement). Earlier `unit-red/`, `intermediate-receipt-red/`
+and `intermediate-receipt-red-corrected/` used defective fixtures and are diagnostic
+failures, not causal proof. Final post-merge JVM reports passed 23 repository,
+49 tape, 12 document and 17 receipt tests (101 executed/passed, zero failures/errors/skips).
+
+On final Mobile `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`, focused native replay
+executed/passed all five methods above, zero failures/errors/skips, exit 0.
+`python3 scripts/android-test-gate.py scripted ping` separately ran
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+and `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` together:
+2 executed/passed, zero failures/errors/skips, exit 0. The final reply proof retained
+current ownership, exact reply, checkpoint 12 and shown/confirmed 9/9, retired
+confirmed 0. After thread release and post admission, the terminal list sample had
+one current-owned source/rendered row, shown/read 13/9, projected/rendered Unread
+and no competing prompt/running/busy state. Peer read then cleared attention
+without reopening. Controlled reconnect, original 90000 ms unread deadline and
+teardown remain intact. Bounded samples plus a terminal sample distinguish row
+presence, current read/shown availability, projection and rendered semantics;
+host/conversation attribution uses SHA-256, connections process-local identity,
+with fixed labels, booleans and numeric facts rather than content or routing strings.
+
+Private raw XML, phone/fixture/control/daemon/relay traces, exits and cleanup receipts
+were retained at agents `logs/evidence/2467/final-five-replay-cfcb4083f/` and
+`final-ping-cfcb4083f/`. Core is the capture revision above, relay
+`9939bc1ff8afec5021c09862e6f14dadba33ad42`, agents
+`2ffd702a09190fc1e6d4e4d8cbe89e0e35bf6cfe`. Final effective SHA-256 values:
+
+| Input | SHA-256 |
+| --- | --- |
+| App APK | `c9f4a8955413676634ff5c56e6402d8bd4685b39090150fe8d8cc4899c099b70` |
+| Test APK | `100ea29c1610d764bdf1dbbf23b70390c693657fa58877b0b8c25a8c6e639e85` |
+| Daemon | `d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac` |
+| Relay | `27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10` |
+
+The accepted verifier record `49d8bcba4a25f3d28ea03920a6bbde795f40a2569b00d39c97c94155053c0b77`
+for that final candidate records Linux JVM 5323/5323 and scripted-all 24/24,
+zero failures/errors/skips; both named ping methods passed in scripted-all.
+Initial UI executed 333: 331 passed, two failed, zero errors, plus one skipped.
+Both failures passed the dispatcher's same-tree rerun (2/2, zero failures/errors/skips):
+`interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+(tracked by #2476) and `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+(recorded first sighting). `RenameDialogCaptureTest.renameAtFigmaViewport` stayed
+skipped. All five replacement methods passed in the initial UI invocation.
+The dispatcher accepted these gates and the verifier returned PASS; this does not
+turn the initial failures or skip into clean first-attempt passes.
+
+Historical macOS #2462 results stay unchanged: `15be1fe05` executed/passed 2;
+`df4cc71fd` executed 2, passed 1, failed 1; both had zero errors/skips. Their
+original manifests are preserved under agents `logs/evidence/2467/historical-2462/`.
+Each publication substitutes tails for two full durable-gap logs and differs in
+two protobuf files. Original byte completeness, post-summary numeric values and
+historical cause/classification remain unproved. New macOS execution is outside
+this Linux ticket's verification scope. Evidence paths describe retention at the
+time of review; raw captures are subject to pruning.
+
 ## What replay proves
 
 Every outgoing request must match its complete recorded type and payload. Generated
@@ -1061,6 +1168,26 @@ Failed runs can export separately named private application traces. Their format
 be loaded as a successful recording. Compressed diagnostic archives are excluded from
 failed exports. Successful archive captures undergo bounded decompression and credential
 inspection before promotion. Private host logs and failed traces are never fixtures.
+
+### Captured read snapshot prerequisites (#2467)
+
+Coalescing qualified phone reads must retain each captured `conversation_updated`
+snapshot. Selecting only the latest can expose future shown metadata before its
+causal query, or withhold the intermediate acknowledgement that originally caused
+that query. `SuiteReadReceipts` selects the earliest covering captured mark from
+the current or preceding action on the same connection/conversation. Its existing
+normalization changes only `read_up_to`; shown metadata comes from that captured
+snapshot.
+
+`RecordedSuiteTape` holds the acknowledgement until every accepted same-connection
+list request and same-conversation thread request preceding its captured read has
+strictly matched. Another connection or conversation cannot supply a prerequisite.
+Matching later requests releases pending acknowledgements; close still requires
+all mandatory requests and read progress. Full payloads, response correlation and
+duplicate rejection stay strict. `coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery`,
+`anIntermediateCapturedReadMustNotWaitForTheQueryItCauses` and
+`aForeignConnectionOrConversationCannotHoldAQualifiedRead` in `SuiteReadReceiptsTest`
+protect the two query kinds, intermediate response and owner isolation.
 
 ### Read acknowledgements and temporary prompts
 

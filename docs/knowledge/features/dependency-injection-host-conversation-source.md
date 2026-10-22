@@ -132,6 +132,24 @@ the existing host/conversation ledger without a request or extra fold; summary a
 peer updates recompute attention without establishing sight. Updates carry confirmed
 read and shown availability while preserving held legacy latest.
 
+After a list-only post, row presence and a first list emission do not establish
+usable shown metadata (#2467). A valid temporarily unavailable summary leaves the
+unread verdict unknown; absent competing activity, the row therefore resolves to
+Idle. Waiting still precedes Running (including busy), which precedes Unread.
+The [connection-owned response/certification join](remote-conversation-repository-reads-and-thread-store.md#recovering-unavailable-shown-metadata-2467)
+can request one fresh summary after recovery, but only its daemon response can
+restore the watermark. With shown/read 13/9 the row is Unread; peer read 13 makes
+it Idle without reopening the phone thread or sending a phone read.
+
+Keep that list projection proof separate from #2462's final rendered-reply proof.
+The latter requires the exact reply, certified current-owner content and an
+authoritative confirmation on the replacement connection. The retained native
+sample has checkpoint 12 and shown/confirmed 9/9 while the retired repository
+remains confirmed 0. It proves the reply was read, not that a later post was
+admitted or that its row is unread. Cached content, pending writes and retired
+owners cannot establish either current confirmation or shown availability.
+See [counted paired evidence](../../recorded-tests.md#unavailable-summary-recording-integration-2467).
+
 Viewing, local rows and completion cannot override shared read. Completion still
 updates bounded once-per-turn alert bookkeeping; only daemon confirmation advances
 the mark. Equal conversation ids on different hosts remain independent. Notification
