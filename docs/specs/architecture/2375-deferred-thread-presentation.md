@@ -162,3 +162,18 @@ and their descendants remain summaries. New probes cover identity reuse,
 revision/scope/parent replacement and opening-window exclusions. Run them red
 before the fix, then all affected read/closure classes, fresh configured JVM/build,
 the saved-thread and deferred native classes, complete UI and scripted acceptance.
+
+2026-10-22 scripted caller repair #2479: complete scripted acceptance executed 24,
+passed 23 and failed only send-now's final held-order proof with `unadmitted`.
+The exact candidate repeat fails once; the exact merged-main selection passes.
+The method captures the raw current connection, so its evidence can read that
+connection's retired/unadmitted thread store rather than the host route displayed
+by the UI. Obtain the same repository through existing `harnessHostRepository`.
+It delegates ordinary operations to the captured connection while exposing the
+owning host's negotiated route for passive evidence. Keep every native queue,
+send-now, visible marker, single echo, admitted/completed fact and strict
+tool-before-user-before-reply order assertion. No shared helper, production,
+deadline, polling or admission change. Security audit: PASS; the existing source
+ownership boundary is used rather than bypassed, and evidence opens no query.
+Retain complete/candidate/main reds and rerun the exact method, then complete
+configured acceptance on the committed repair before documentation.
