@@ -161,9 +161,45 @@ verified original #2467 failure/rerun bundle. Only rule ownership changes for gr
 
 After ownership repair, the unchanged causal test and both existing consumption tests
 passed: 3 executed/passed, zero failures/errors/skips, exit 0. Evidence is retained in
-`logs/evidence/2476/builder-lifetime-repair/regression-green/` (12 verified files),
+`logs/evidence/2476/builder-lifetime-repair/regression-green/` (11 verified files),
 including the exact source patch and raw XML. The cancelled-collector negative still
 times out under its original bound; terminal consumption is still required before close.
+
+### 2026-10-22 — repaired focused Linux evidence
+
+Pushed implementation `a3bfa8ad7629c75e86c20db9484700e8a237d6c7` passed the exact
+recorded method in three separate fresh native invocations. Every invocation rebuilt or
+validated its APKs, launched a fresh scenario, and completed the unchanged tape and all
+original assertions. No recording, matching policy, retry, skip or deadline changed.
+
+| Attempt | Gate directory | Executed / passed / failed / errors / skipped | Private evidence |
+| --- | --- | --- | --- |
+| Native 1 | `ui-pjkxu39n` | 1 / 1 / 0 / 0 / 0 | `native-1` |
+| Native 2 | `ui-o90tw8ks` | 1 / 1 / 0 / 0 / 0 | `native-2` |
+| Native 3 | `ui-6453ivcl` | 1 / 1 / 0 / 0 / 0 | `native-3` |
+
+All commands exited zero. Each attempt has nine verified retained files under agents
+`logs/evidence/2476/builder-lifetime-repair/`: raw native XML and phone log, normalized
+counts, image/phase diagnostics, revision/APK receipt and manifest. The source revision
+above is identical in all three receipts. The app APK SHA-256 is
+`6bed26813c48fea169637680df9ad4332dc91e52df19396ae37fae9249e1904f`; test APK SHA-256
+is `812ed44f5ac31bc66f6c18ff75beb1a037bd02e00fb04a95d677d54720a1a05a`.
+
+Seven separately selected JVM classes passed 113 tests, zero failures/errors/skips:
+`SuiteCloseConsumptionTest` 3, `LiveSessionCleanupRuleTest` 5, `SuiteConnectionsTest`
+28, `RecordedSuiteTapeTest` 49, `RecordedActivityRuleTest` 2,
+`PassiveAuthoritativeThreadObservationTest` 3, and `AuthoritativeThreadQueriesTest` 23.
+The latter six ran at the pushed implementation above and have eleven verified retained
+files each in `focused-<class>`; the consumption class's exact pre-commit source patch
+is in `regression-green`. Its causal method is unchanged from the retained red run;
+only the extracted owner's lexical close changed to rule ownership.
+
+The historical host load and preceding non-recorded classes remain unestablished.
+Recovered first-failure evidence plus the controlled query delay resolve the repair
+without a wider diagnostic: they demonstrate this lifetime gap without a suite prefix.
+The earlier pending recovery assessment supplied the missing stderr rather than a
+new native execution. Complete configured acceptance, including counted execution of
+the named method in the dispatcher UI gate, and independent review remain pending.
 
 ## Documentation handoff
 
