@@ -218,6 +218,19 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 }.maxByOrNull { requireNotNull(it.order) },
         ) { "release message must anchor the Agent between launch and finish" }
 
+    fun assertFamily(restored: ThreadEvidence) {
+        for (old in baseline) {
+            val fact = requireNotNull(old.fact)
+            val current = requireNotNull(restored.records.single { it.fact?.id == fact.id }.fact)
+            assertStableFact(fact, current)
+            assertEquals("complete content across restart", fact.content, current.content)
+        }
+        val anchor = requireNotNull(restored.records.single { it.fact?.id == beforeAnchor.id }.fact)
+        assertStableFact(beforeAnchor, anchor)
+        assertEquals("complete chronological anchor content", beforeAnchor.content, anchor.content)
+        assertTrue("canonical finished placement is preserved", restored.retainsFinishedAgentPlacement(placementRoot, beforeAnchor))
+    }
+
     var placementProbe = 0
     var screenObservation: PassiveThreadObservation? = null
 
@@ -225,21 +238,36 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         reading: ThreadEvidence,
         after: ThreadEvidenceRecord? = null,
     ) {
-        val root = reading.records.single { it.fact?.id == rootId }
-        val before = reading.records.single { it.fact?.id == beforeAnchor.id }
+        val observation = requireNotNull(screenObservation)
+        val afterFact = after?.fact
         val probe = ++placementProbe
         var previousProbe: List<Any?>? = null
         var indexes = emptyList<Int>()
         waitUntil(120_000) {
-            val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
-            indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
-                after?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+            val screenReading = observation.reading(host, conversation)
+            val screenEvidence = screenReading?.let(observation::evidence)
+            val screen = screenEvidence?.sourceSnapshot
+            if (screenEvidence != null) {
+                assertEquals("historical family epoch is retained", reading.owner.epoch, screenEvidence.owner.epoch)
+                assertFamily(screenEvidence)
+                val root = screenEvidence.records.single { it.fact?.id == rootId }
+                val before = screenEvidence.records.single { it.fact?.id == beforeAnchor.id }
+                val currentAfter = afterFact?.let { fact -> screenEvidence.records.single { it.fact?.id == fact.id } }
+                if (currentAfter != null) {
+                    assertStableFact(requireNotNull(afterFact), requireNotNull(currentAfter.fact))
+                    assertEquals("recovered send body is retained", requireNotNull(after).fullText, currentAfter.fullText)
+                    assertTrue(
+                        "finished Agent stays before the recovered send after reset",
+                        screenEvidence.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(currentAfter.fact)),
+                    )
+                }
+                val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
+                    currentAfter?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+            } else {
+                indexes = List(if (after == null) 2 else 3) { -1 }
+            }
             val current = requireNotNull(source().negotiatedThread).store.current(host, conversation)
-            val screen =
-                screenObservation
-                    ?.let { observation ->
-                        observation.reading(host, conversation)?.let(observation::evidence)
-                    }?.sourceSnapshot
             val mark =
                 indexes +
                     listOf(
@@ -250,6 +278,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         screen?.checkpoint,
                         screen?.openingRows?.size,
                         screen?.items?.size,
+                    current.generation,
+                    screen?.generation,
                     )
             if (mark != previousProbe) {
                 previousProbe = mark
@@ -266,28 +296,20 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         "screen_facts=${screen?.items?.size} screen_version=${screen?.completedVersion} " +
                         "screen_checkpoint=${screen?.checkpoint} screen_opening=${screen?.openingRows?.size} " +
                         "screen_root=${screen?.items?.any { it.id == rootId }} " +
-                        "screen_before=${screen?.items?.any { it.id == beforeAnchor.id }} screen_current=${screen === current}",
+                        "screen_before=${screen?.items?.any { it.id == beforeAnchor.id }} screen_current=${screen === current} " +
+                        "captured_generation=${reading.owner.generation} current_generation=${current.generation} " +
+                        "screen_generation=${screen?.generation}",
                 )
             }
-            indexes.all { it >= 0 }
+            // A reset or connection switch during key lookup cannot certify the retired reading.
+            screenReading != null && screenEvidence != null && indexes.all { it >= 0 } &&
+                observation.evidence(screenReading) === screenEvidence
         }
         // The lazy list is reversed: a newer row has a smaller index.
         assertTrue("finished Agent stays after the pre-finish phone message", indexes[0] < indexes[1])
         if (after != null) assertTrue("new-session send stays after the finished Agent", indexes[2] < indexes[0])
     }
 
-    fun assertFamily(restored: ThreadEvidence) {
-        for (old in baseline) {
-            val fact = requireNotNull(old.fact)
-            val current = requireNotNull(restored.records.single { it.fact?.id == fact.id }.fact)
-            assertStableFact(fact, current)
-            assertEquals("complete content across restart", fact.content, current.content)
-        }
-        val anchor = requireNotNull(restored.records.single { it.fact?.id == beforeAnchor.id }.fact)
-        assertStableFact(beforeAnchor, anchor)
-        assertEquals("complete chronological anchor content", beforeAnchor.content, anchor.content)
-        assertTrue("canonical finished placement is preserved", restored.retainsFinishedAgentPlacement(placementRoot, beforeAnchor))
-    }
     Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
     restart {
         assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
