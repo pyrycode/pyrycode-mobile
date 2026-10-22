@@ -34,7 +34,7 @@ No new jobs, scopes, dispatchers or flows. Room upgrades execute transactionally
 | Event | Regression |
 | --- | --- |
 | Every historical source version upgrades, then opens twice again with colliding case-sensitive owners | `LegacyDiscardMigrationTest.preservationInvariant_allShippedSchemasUpgradeAndReopen` |
-| Oldest authoritative and latest schema upgrade on native SQLite; fresh database creation | `LegacyDiscardDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen` |
+| Oldest authoritative and latest schema upgrade on native SQLite; fresh database creation | `LegacyDiscardMigrationTest.preservationInvariant_productionUpgradeAndFreshReopen` |
 | Fresh creation and repeated reopen | `LegacyDiscardMigrationTest.preservationInvariant_freshCreationAndReopen` |
 | Conversation/host removal after upgrade and restart; leftover source files | migration matrix plus retained `MigratingConversationCacheTest` retirement/inert-file probes |
 | Retired item replay, raw order/revisions/certification and supported save/read | migration matrix plus authoritative storage/owned-removal probes |
@@ -76,3 +76,9 @@ Pending documentation stage: update `docs/knowledge/features/conversation-cache-
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-22
+
+## Revisions
+
+### 2026-10-22: share the exact disk contract with native execution
+
+Use one `AndroidJUnit4` class in `sharedTest` for the matrix and focused native method, with historical schemas supplied as JVM resources and test-APK assets. This avoids duplicating the preservation oracle. Seed nested agents as well as unknown raw facts so authoritative placement backfills have nontrivial parent/witness work. The matrix also exercises leftover known/unknown-owner legacy files, authoritative one-time import, newer saves, durable host/conversation fences and pending feedback across restoration. Retirement snapshots intentionally have zero checkpoint/no coverage; certified sibling conversations retain nonzero evidence. No runtime contract changed.

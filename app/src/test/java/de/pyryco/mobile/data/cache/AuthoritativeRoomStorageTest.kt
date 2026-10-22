@@ -3,22 +3,12 @@ package de.pyryco.mobile.data.cache
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
-import de.pyryco.mobile.data.repository.HistoryCoverage
-import de.pyryco.mobile.data.repository.HistoryPosition
-import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.UnsignedHistoryGap
-import de.pyryco.mobile.data.repository.UnsignedHistorySpan
-import de.pyryco.mobile.data.repository.historyKeys
-import de.pyryco.mobile.data.repository.historyRowProofs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
-import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -516,15 +506,11 @@ class AuthoritativeRoomStorageTest {
             }
         }
 
-    @Test fun atomicInvariant_failedMutationsPreserveBothFamilies() =
+    @Test fun atomicInvariant_failedMutationsPreserveAuthoritativeState() =
         runTest {
             val good = saved(listOf(raw(1), raw(2)))
             seed(open(), good)
             val token = requireNotNull(open().newestPage("Host", "thread", 1)?.continuation)
-            val legacy = LegacyRoomStorage(requireNotNull(database))
-            val row = ThreadItem.MessageItem(Message("held", "s", Role.User, "private", Instant.fromEpochSeconds(0), false))
-            legacy.writeThread("Host", "thread", listOf(row)).getOrThrow()
-            legacy.writeHistoryPosition("Host", "thread", HistoryPosition("secret-cursor", false)).getOrThrow()
             val failure =
                 open { throw IOException("sensitive-host") }
                     .writeAuthoritativeThread("Host", "thread", saved(listOf(raw(2))))
@@ -537,9 +523,6 @@ class AuthoritativeRoomStorageTest {
             } catch (_: CancellationException) {
             }
             assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
-            val restored = LegacyRoomStorage(requireNotNull(database))
-            assertEquals(listOf(row), restored.readThread("Host", "thread"))
-            assertEquals(HistoryPosition("secret-cursor", false), restored.readHistoryPosition("Host", "thread"))
             assertTrue(open { throw IOException() }.removeConversation("Host", "thread").isFailure)
             assertEquals(good, open().readAuthoritativeThread("Host", "thread"))
             val denied =
@@ -571,112 +554,24 @@ class AuthoritativeRoomStorageTest {
             assertNull(restored.coverage)
         }
 
-    @Test fun ownershipInvariant_familiesAndRemovalStayIsolated() =
+    @Test fun ownershipInvariant_removalStaysIsolated() =
         runTest {
             val value = saved(listOf(raw(1), raw(2)))
             val store = open()
-            val legacy = LegacyRoomStorage(requireNotNull(database))
-            val row = ThreadItem.MessageItem(Message("held", "s", Role.User, "private", Instant.fromEpochSeconds(0), false))
-            val newer = ThreadItem.MessageItem(row.message.copy(id = "held-newer"))
-            val rows = listOf(row, newer)
-            val position =
-                HistoryPosition(
-                    "cursor",
-                    false,
-                    HistoryCoverage(
-                        unsignedSpans = listOf(UnsignedHistorySpan(1u, 1u), UnsignedHistorySpan(3u, 3u)),
-                        unsignedGaps = listOf(UnsignedHistoryGap(1u, 3u)),
-                        unsignedRowOrder = mapOf(row.historyKeys().first() to 1uL, newer.historyKeys().first() to 3uL),
-                        unsignedRowEntries = mapOf(row.historyKeys().first() to setOf(1uL), newer.historyKeys().first() to setOf(3uL)),
-                        proofs = historyRowProofs(rows),
-                    ),
-                )
-            val owners = listOf("Host" to "thread", "host" to "thread", "Host" to "other")
-            for ((host, thread) in owners) {
-                legacy.writeThread(host, thread, rows).getOrThrow()
-                legacy.writeHistoryPosition(host, thread, position).getOrThrow()
+            for ((host, thread) in listOf("Host" to "thread", "host" to "thread", "Host" to "other")) {
                 assertNull(store.readAuthoritativeThread(host, thread))
                 seed(store, value, host, thread)
-                assertEquals(rows, legacy.readThread(host, thread))
-                assertEquals(position, legacy.readHistoryPosition(host, thread))
-                legacy.writeThread(host, thread, rows).getOrThrow()
-                legacy.writeHistoryPosition(host, thread, position).getOrThrow()
                 assertEquals(value, store.readAuthoritativeThread(host, thread))
             }
             val token = requireNotNull(store.newestPage("Host", "thread", 1)?.continuation)
-            legacy.removeConversation("Host", "thread").getOrThrow()
+            store.removeConversation("Host", "thread").getOrThrow()
             assertNull(store.readAuthoritativeThread("Host", "thread"))
-            assertTrue(legacy.readThread("Host", "thread").isEmpty())
-            assertNull(legacy.readHistoryPosition("Host", "thread"))
-            assertTrue(requireNotNull(database).legacy().allEvidence("Host", "thread").isEmpty())
             seed(store, value)
             assertNull(store.beforePage("Host", "thread", token, 1))
-            assertTrue(legacy.readThread("Host", "thread").isEmpty())
             assertEquals(value, store.readAuthoritativeThread("Host", "other"))
             store.removeHost("Host").getOrThrow()
             assertNull(store.readAuthoritativeThread("Host", "other"))
-            assertTrue(legacy.readThread("Host", "other").isEmpty())
-            assertTrue(requireNotNull(database).legacy().allEvidence("Host", "other").isEmpty())
-            assertEquals(value, store.readAuthoritativeThread("host", "thread"))
-            assertEquals(rows, legacy.readThread("host", "thread"))
-            assertEquals(position, legacy.readHistoryPosition("host", "thread"))
-        }
-
-    @Test fun migrationInvariant_preservesLegacyContentAndEvidence() =
-        runTest {
-            val schemaFile = File("src/main/roomSchemas", "de.pyryco.mobile.data.cache.ConversationCacheDatabase/1.json")
-            val schema =
-                MobileJson
-                    .parseToJsonElement(schemaFile.readText())
-                    .jsonObject
-                    .getValue("database")
-                    .jsonObject
-            SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
-                for (entry in schema.getValue("entities").jsonArray) {
-                    val entity = entry.jsonObject
-                    val table = entity.getValue("tableName").jsonPrimitive.content
-                    db.execSQL(
-                        entity
-                            .getValue("createSql")
-                            .jsonPrimitive.content
-                            .replace("\${TABLE_NAME}", table),
-                    )
-                    entity["indices"]?.jsonArray?.forEach {
-                        db.execSQL(
-                            it.jsonObject
-                                .getValue("createSql")
-                                .jsonPrimitive.content
-                                .replace("\${TABLE_NAME}", table),
-                        )
-                    }
-                }
-                schema.getValue("setupQueries").jsonArray.forEach { db.execSQL(it.jsonPrimitive.content) }
-                db.execSQL("INSERT INTO legacy_headers VALUES ('Host','thread','generation','cursor',0,NULL)")
-                db.execSQL("INSERT INTO legacy_rows VALUES ('Host','thread',0,'held-payload')")
-                db.execSQL("INSERT INTO legacy_evidence VALUES ('Host','thread','proofs','key',0,0,'0','0','proof-payload')")
-                db.version = 1
-            }
-            val store = open()
-            assertNull(store.readAuthoritativeThread("Host", "thread"))
-            assertEquals("cursor", requireNotNull(database).legacy().header("Host", "thread")?.cursor)
-            assertEquals(
-                "held-payload",
-                requireNotNull(database)
-                    .legacy()
-                    .rows("Host", "thread", Long.MAX_VALUE, 1)
-                    .single()
-                    .payload,
-            )
-            assertEquals(
-                "proof-payload",
-                requireNotNull(database)
-                    .legacy()
-                    .allEvidence("Host", "thread")
-                    .single()
-                    .payload,
-            )
-            seed(store, saved(listOf(raw(1))))
-            assertEquals(saved(listOf(raw(1))), open().readAuthoritativeThread("Host", "thread"))
+            assertEquals(value, open().readAuthoritativeThread("host", "thread"))
         }
 
     @Test fun diagnosticsInvariant_resultsRedactAndCorruptReadsNeverRepair() =

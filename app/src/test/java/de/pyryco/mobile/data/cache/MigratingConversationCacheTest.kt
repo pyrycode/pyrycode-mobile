@@ -184,27 +184,20 @@ class MigratingConversationCacheTest {
             val readPositions = mapOf("thread" to ReadPosition("completed", "read"))
             files.writeReadPositions("Host", readPositions).getOrThrow()
             open()
-            val stored = LegacyRoomStorage(requireNotNull(database))
-            stored.writeThread("Host", "thread", allKinds).getOrThrow()
-            stored.writeHistoryPosition("Host", "thread", HistoryPosition("room-cursor", false)).getOrThrow()
-            val header = requireNotNull(database).legacy().header("Host", "thread")
-
             repeat(2) {
                 val cache = open()
                 assertEquals(listOf(conversation("thread")), cache.readConversations("Host"))
                 assertEquals(readPositions, cache.readReadPositions("Host"))
                 assertTrue(cache.readReadPositions("host").isEmpty())
                 owners.forEachIndexed { index, (host, thread) ->
-                    assertEquals(if (index == 0) allKinds else emptyList<ThreadItem>(), cache.readThread(host, thread))
-                    assertEquals(if (index == 0) HistoryPosition("room-cursor", false) else null, cache.readHistoryPosition(host, thread))
+                    assertTrue(cache.readThread(host, thread).isEmpty())
+                    assertNull(cache.readHistoryPosition(host, thread))
                     assertEquals(saved("epoch-$index", listOf(index + 1)).retained(), cache.readAuthoritativeThread(host, thread))
                     assertTrue(requireNotNull(database).imports().settled(host, thread, "legacy").isEmpty())
                     assertEquals("imported", outcome(host, thread, "authoritative"))
                 }
-                assertEquals(header, requireNotNull(database).legacy().header("Host", "thread"))
                 assertEquals(emptyList<ThreadItem>(), cache.readThread("unknown-owner", "unknown-thread"))
                 assertNull(cache.readAuthoritativeThread("unknown-owner", "unknown-thread"))
-                assertEquals(emptyList<ThreadItem>(), requireNotNull(cache.newestLegacyPage("host", "thread", 2)).rows)
                 sources.zip(originalBytes).forEach { (file, bytes) -> assertArrayEquals(bytes, file.readBytes()) }
             }
         }
