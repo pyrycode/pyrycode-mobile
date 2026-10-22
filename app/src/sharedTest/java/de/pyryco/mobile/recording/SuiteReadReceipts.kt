@@ -25,11 +25,16 @@ internal class SuiteReadReceipts(
         val action: Int,
     )
 
+    private data class CapturedRead(
+        val readUpTo: ULong,
+        val snapshot: Envelope,
+        val precedingQueries: Set<Long>,
+    )
+
     private data class Group(
         val required: ULong,
         val maxRequested: ULong,
-        val snapshot: Envelope,
-        val precedingQueries: Set<Long>,
+        val snapshots: List<CapturedRead>,
         var confirmed: ULong = 0u,
         var lastRequested: ULong = 0u,
     )
@@ -116,7 +121,7 @@ internal class SuiteReadReceipts(
                                 )
                         }.map { checkNotNull(it.message).id }
                         .toSet()
-                groups[key] = Group(stored, target, response, precedingQueries)
+                groups[key] = Group(stored, target, previous?.snapshots.orEmpty() + CapturedRead(stored, response, precedingQueries))
                 normalizedRequests += step.owner to frame.id
                 snapshots.getOrPut(step.owner) { mutableSetOf() } += response.payload
                 guardedSnapshots += Triple(host(step.owner), response.payload, stored)
@@ -203,29 +208,10 @@ internal class SuiteReadReceipts(
             }
     }
 
-    /** A coalesced reply retains the query prerequisites of its captured snapshot. */
-    fun precedingQueries(
-        owner: String,
-        frame: Envelope,
-    ): Set<Long> {
-        val conversation =
-            frame.payload.jsonObject
-                .getValue("conversation_id")
-                .jsonPrimitive.content
-        return groups.entries
-            .singleOrNull {
-                it.key.owner == owner &&
-                    it.key.action == action &&
-                    resolve(JsonPrimitive(it.key.conversation)).jsonPrimitive.content == conversation
-            }?.value
-            ?.precedingQueries
-            .orEmpty()
-    }
-
     fun send(
         owner: String,
         frame: Envelope,
-    ): SuiteStep {
+    ): Pair<SuiteStep, Set<Long>> {
         val payload = frame.payload.jsonObject
         require(payload.keys == setOf("conversation_id", "up_to") && frame.inReplyTo == null) { "Read receipt payload changed" }
         val conversation = payload.getValue("conversation_id").jsonPrimitive.content
@@ -259,7 +245,20 @@ internal class SuiteReadReceipts(
         val stored = maxOf(confirmed[server] ?: 0u, minOf(target, ceiling))
         confirmed[server] = stored
         group?.confirmed = stored
-        val original = group?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))
+        // A late qualified read can belong to an earlier action. Its acknowledgement must
+        // retain the captured metadata that triggers later queries, rather than borrow theirs.
+        val captured =
+            groups.entries
+                .filter {
+                    it.key.owner == owner &&
+                        it.key.action <= action &&
+                        resolve(JsonPrimitive(it.key.conversation)).jsonPrimitive.content == conversation
+                }.sortedByDescending { it.key.action }
+                .flatMap { it.value.snapshots }
+                .filter { it.readUpTo >= stored }
+                .minByOrNull { it.readUpTo }
+                ?: group?.snapshots?.last()
+        val original = captured?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))
         val allowed =
             setOf("id", "is_promoted", "is_archived", "is_muted", "read_up_to", "name", "cwd", "workspace_label", "last_used_at", "agent")
         val snapshot = metadata[server]?.filterKeys { it in allowed }.orEmpty()
@@ -269,7 +268,7 @@ internal class SuiteReadReceipts(
                 "is_archived" to JsonPrimitive(false),
                 "is_muted" to JsonPrimitive(false),
             )
-        val response = if (group != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
+        val response = if (captured != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
         val id = allocateId?.invoke(owner) ?: nextIds[owner] ?: 1L
         nextIds[owner] = id + 1
         return SuiteStep(
@@ -287,7 +286,7 @@ internal class SuiteReadReceipts(
                         ),
                     ),
             ),
-        )
+        ) to captured?.precedingQueries.orEmpty()
     }
 
     fun progress() =

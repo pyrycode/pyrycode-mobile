@@ -602,7 +602,7 @@ internal class RecordedSuiteTape(
             return try {
                 val response = readReceipts!!.send(owner, actual)
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
-                pendingReadReplies += response to readReceipts!!.precedingQueries(owner, actual)
+                pendingReadReplies += response
                 SuiteOutcome(drain(), true)
             } catch (error: Exception) {
                 val detail = error.message?.takeIf { it.startsWith("Read receipt checkpoint rejected:") }.orEmpty()
