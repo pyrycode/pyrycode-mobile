@@ -1048,7 +1048,7 @@ class AuthoritativeReaderPagingTest {
                         val thread = workerThread.get()
                         val stack = thread?.stackTrace.orEmpty()
                         blockedAtApply = thread?.state == Thread.State.BLOCKED && stack.any {
-                            it.className.startsWith("de.pyryco.mobile.data.repository.CachingConversationRepository\$applyAuthoritativeRestore") &&
+                            it.className.contains("CachingConversationRepository\$applyAuthoritativeRestore") &&
                                 it.methodName == "invokeSuspend"
                         }
                         if (blockedAtApply) break
