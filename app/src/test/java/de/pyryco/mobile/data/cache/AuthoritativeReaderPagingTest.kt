@@ -175,10 +175,13 @@ class AuthoritativeReaderPagingTest {
         }
 
     @Test fun establishedReaderPublishesStructuralLiveFactsWithoutSecondaryObservation() =
-        runTest { readerSurvivesSecondaryObservation(false) }
+        runTest {
+            readerSurvivesSecondaryObservation(
+                false,
+            )
+        }
 
-    @Test fun completedSecondaryObservationCannotRetireTheEstablishedReader() =
-        runTest { readerSurvivesSecondaryObservation(true) }
+    @Test fun completedSecondaryObservationCannotRetireTheEstablishedReader() = runTest { readerSurvivesSecondaryObservation(true) }
 
     private suspend fun TestScope.readerSurvivesSecondaryObservation(secondary: Boolean) {
         val original = SavedAuthoritativeThread("e", listOf(fact(1)), 100, 100)
