@@ -1,0 +1,5 @@
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 2m 39s
+33 actionable tasks: 4 executed, 29 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html
