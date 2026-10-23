@@ -592,6 +592,8 @@ class NegotiatedThreadActivationTest {
 
     @Test fun recertificationCannotReviveWithdrawnOpeningAuthority() = reconnectReadSummary(true, probe = "recertified")
 
+    @Test fun intermediateQueryWithdrawalCannotReviveOpeningAuthority() = reconnectReadSummary(true, probe = "intermediateWithdrawal")
+
     @Test fun retiredOpeningOwnerCannotAuthorizeReplacementRecovery() = reconnectReadSummary(true, probe = "retired")
 
     private fun reconnectReadSummary(
@@ -701,17 +703,34 @@ class NegotiatedThreadActivationTest {
                 pump.push(window(fresh, 12, 9, 13, false))
                 runCurrent()
             }
-            if (probe in setOf("withdrawn", "recertified")) {
+            if (probe in setOf("withdrawn", "recertified", "intermediateWithdrawal")) {
                 repo.openAuthoritativeThread("c")
                 val withdrawn = pump.queries().last()
-                pump.push(batch(withdrawn, 13, listOf(item(12, 13, 12, kind = "turn_end", status = "running"))))
+                pump.push(
+                    batch(
+                        withdrawn,
+                        if (probe ==
+                            "intermediateWithdrawal"
+                        ) {
+                            14
+                        } else {
+                            13
+                        },
+                        listOf(item(12, 13, 12, kind = "turn_end", status = "running")),
+                    ),
+                )
+                if (probe == "intermediateWithdrawal") {
+                    runCurrent()
+                    val renewed = ThreadItemDto.decodeReplacement(JsonObject(terminal.raw + ("rev" to JsonPrimitive(14))))
+                    pump.push(batch(withdrawn, 14, listOf(renewed)))
+                }
                 pump.push(
                     reply(
                         withdrawn,
                         buildJsonObject {
                             put("conversation_id", "c")
                             put("epoch", "e")
-                            put("version", 13)
+                            put("version", if (probe == "intermediateWithdrawal") 14 else 13)
                             put("from_version", 12)
                             put("items", JsonArray(emptyList()))
                             put("final", true)
@@ -774,7 +793,16 @@ class NegotiatedThreadActivationTest {
             assertEquals("certification cannot invent shown metadata", shown?.toULong(), repo.currentReadMarks("c")?.lastShownVersion)
             val refresh = pump.sent.filter { it.type == "list_conversations" }.drop(openingCount)
             if (shown != null ||
-                probe in setOf("unsolicited", "foreignRequest", "foreignConversation", "reset", "withdrawn", "recertified")
+                probe in
+                setOf(
+                    "unsolicited",
+                    "foreignRequest",
+                    "foreignConversation",
+                    "reset",
+                    "withdrawn",
+                    "recertified",
+                    "intermediateWithdrawal",
+                )
             ) {
                 assertTrue("nonqualifying observations must not refresh", refresh.isEmpty())
                 if (probe == "recertified") {

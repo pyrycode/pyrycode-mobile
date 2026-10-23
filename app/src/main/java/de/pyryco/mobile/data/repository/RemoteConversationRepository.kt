@@ -785,9 +785,11 @@ class RemoteConversationRepository internal constructor(
     }
 
     private fun invalidateWithdrawnReadSummary(conversation: String) {
-        if (certifiedReadGenerations[conversation] != authoritativeThreads.current(authoritativeHostId, conversation).generation) return
+        val generation = certifiedReadGenerations[conversation] ?: return
+        if (generation != authoritativeThreads.current(authoritativeHostId, conversation).generation) return
         val completions = completionFacts.value.filter { it.conversation == conversation }
         if (completions.isEmpty() || completions.any(::completionIsCurrent)) return
+        if (!certifiedReadGenerations.remove(conversation, generation)) return
         liveReadSummaryRequests.remove(conversation)
         openingReadSummaryRequests.replaceAll { _, owner -> owner.copy(withdrawn = owner.withdrawn + conversation) }
         RelayLog.d { "event=thread_summary_refresh code=withdrawn" }
@@ -981,6 +983,13 @@ class RemoteConversationRepository internal constructor(
             envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
         ) {
+            val conversation =
+                (
+                    (envelope.payload as? JsonObject)?.get(
+                        "conversation_id",
+                    ) as? JsonPrimitive
+                )?.takeIf { it.isString }?.content
+            conversation?.let(::invalidateWithdrawnReadSummary)
             return
         }
         if (authoritativeLiveEnabled() && SessionLiveAdmission.family(envelope.type) != null) {

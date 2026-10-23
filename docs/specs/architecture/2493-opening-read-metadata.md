@@ -52,6 +52,7 @@ The existing inbound collector serializes replies and certification. Scope-owned
 | Held content without certification, foreign response/owner/conversation | opening-summary isolation probes |
 | Reset with reused epoch, retirement/replacement, withdrawn certification | opening-summary invalidation probes |
 | Fresh opening observation after reset, before fresh certification | `newOpeningObservationAfterResetWaitsForFreshCertification` |
+| Intermediate query batch withdraws completion before final recertification | `intermediateQueryWithdrawalCannotReviveOpeningAuthority` |
 | Real metadata response and daemon-confirmed coverage | opening-summary read-facts/attention assertions; no `mark_conversation_read` |
 | Captured query ordering and intermediate receipts | `coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery`, `anIntermediateCapturedReadMustNotWaitForTheQueryItCauses` |
 | Prerequisite readiness before owner termination | `readyReadAcknowledgementsPrecedeTheirOwnersInboundEnd` |
@@ -86,6 +87,10 @@ None. If native replay exposes a changed request absent from genuine assets, cap
 The invalidation remembers only the generation in which this repository actually published certification, and clears that private map on retirement. Old-generation completion facts cannot poison an opening request dispatched after reset; live callbacks check their captured generation before invalidating observations.
 
 2026-10-23: `newOpeningObservationAfterResetWaitsForFreshCertification` executed once and failed at the missing recovery follow-up. The response-side withdrawal guard also needs the generation-aware invalidation path: old completion facts must leave a fresh-generation observation waiting for its own certificate. Reuse that path, then verify the observation still owns its slot before attempting recovery.
+
+2026-10-23: the first `intermediateQueryWithdrawalCannotReviveOpeningAuthority` attempt executed once and failed before certification because its batches changed captured version. Retain it as fixture-defective diagnostics. The corrected probe holds version 14 throughout while revising the supplied terminal item from 13 to 14.
+
+The corrected constant-version probe executed once and failed at `nonqualifying observations must not refresh`. Detect withdrawal after each accepted authoritative query frame, before a later batch can restore the terminal and certify it. Consume the generation marker once when invalidating, so a newly dispatched observation is not repeatedly invalidated by the same withdrawn certificate.
 
 ## Documentation handoff
 
