@@ -358,6 +358,7 @@ internal class SuiteConnections private constructor(
     suspend fun beforeSettingsObservation(owner: String) {
         check(tape != null) { "Settings observation requires replay" }
         val pump = synchronized(this) { checkNotNull(pumps[owner]) { "Settings observation phone missing" } }
+
         fun checkOwner() {
             check(pumps[owner] === pump && !pump.connection.localClose.get() && pump.state.value is PumpState.Open) {
                 "Settings observation phone changed or closed"
@@ -368,10 +369,11 @@ internal class SuiteConnections private constructor(
                 awaitIdle()
                 synchronized(this@SuiteConnections) { checkOwner() }
                 pump.awaitConsumedPrefix()
-                val settled = synchronized(this@SuiteConnections) {
-                    checkOwner()
-                    pending.get() == 0 && pump.consumptionCaughtUp()
-                }
+                val settled =
+                    synchronized(this@SuiteConnections) {
+                        checkOwner()
+                        pending.get() == 0 && pump.consumptionCaughtUp()
+                    }
                 if (settled) return@withTimeout
             }
         }
