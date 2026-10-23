@@ -77,14 +77,20 @@ class AgentChildrenQueriesTest {
             child: Int = 50,
             request: Envelope = sent.last(),
             version: Int = 41,
+            owner: Int = 17,
+            ownerRev: Int = 23,
+            childRev: Int = 7,
+            kind: String = "agent",
+            order: Int = 0,
+            headline: String = "child",
         ): Envelope {
             val data =
                 if (final) {
                     ""
                 } else {
                     """
-                {"id":$child,"rev":7,"order":0,"parent":17,"kind":"agent","status":"done",
-                "shown":true,"active":false,"headline":"child","detail_omitted":true}
+                {"id":$child,"rev":$childRev,"order":$order,"parent":$owner,"kind":"$kind","status":"done",
+                "shown":true,"active":false,"headline":"$headline","detail_omitted":true}
             """
                 }
             val cursor =
@@ -93,7 +99,7 @@ class AgentChildrenQueriesTest {
                 } else {
                     """
                 , "cursor":{"conversation_id":"c","epoch":"e","version":$version,
-                "item_id":17,"rev":23,"order":0,"id":$child}
+                "item_id":$owner,"rev":$ownerRev,"order":$order,"id":$child}
             """
                 }
             val completion = if (!final) "" else """, "more":$more$cursor"""
@@ -102,7 +108,7 @@ class AgentChildrenQueriesTest {
                 "thread_children",
                 "now",
                 MobileJson.parseToJsonElement(
-                    """{"conversation_id":"c","epoch":"e","version":$version,"item_id":17,"rev":23,"children":[$data],"final":$final$completion}""",
+                    """{"conversation_id":"c","epoch":"e","version":$version,"item_id":$owner,"rev":$ownerRev,"children":[$data],"final":$final$completion}""",
                 ),
                 inReplyTo = request.id,
             )
@@ -396,6 +402,166 @@ class AgentChildrenQueriesTest {
             assertNull(f.page())
             assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
             assertSame(saved, f.snapshot().expansionItems.first { it.id == 50L })
+            assertEquals(before.checkpoint, f.snapshot().checkpoint)
+            assertEquals(before.coverage, f.snapshot().coverage)
+        }
+
+    @Test fun revisionInvariantRestartRejectsDowngradeAndKeepsFirstEqualSummary() =
+        runTest {
+            for ((revision, order) in listOf(60 to 0, 70 to 0, 70 to 1, 71 to 0)) {
+                val f = fixture()
+                val before = f.snapshot()
+                f.demand()
+                f.lane.accept(f.reply(version = 80, childRev = 70, headline = "first"))
+                f.lane.accept(f.reply(true, true, version = 80))
+                val held = requireNotNull(f.page())
+                f.demand(more = 17)
+                f.error()
+                f.demand(retry = 17)
+                assertFalse("cursor" in (f.sent.last().payload as JsonObject))
+                f.lane.accept(f.reply(version = 81, childRev = revision, order = order, headline = "replacement"))
+                assertSame(held, f.page())
+                f.lane.accept(f.reply(true, version = 81))
+                if (revision < 70 || order != 0) {
+                    assertSame(held, f.page())
+                    assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+                    repeat(2) { f.demand() }
+                    assertEquals(3, f.sent.size)
+                } else {
+                    assertEquals(81uL, f.page()?.version)
+                    assertNull(f.page()?.cursor)
+                    assertNull(f.snapshot().childLoads[17L to 23L])
+                }
+                val winner = f.snapshot().expansionItems.single { it.id == 50L }
+                assertEquals(maxOf(70, revision).toLong(), winner.rev)
+                if (revision <= 70) assertSame(held.items.single(), winner)
+                assertEquals(listOf(50L), f.page()?.items?.map { it.id })
+                assertEquals(before.checkpoint, f.snapshot().checkpoint)
+                assertEquals(before.coverage, f.snapshot().coverage)
+                assertEquals(before.completedVersion, f.snapshot().completedVersion)
+            }
+        }
+
+    @Test fun ownershipInvariantFinalParentRevisionFencesBothPageOrders() =
+        runTest {
+            val f = fixture()
+            val full = ThreadItemDto.decode(JsonObject(parent(60, 50).raw + ("parent" to kotlinx.serialization.json.JsonPrimitive(17))))
+            f.store.applyBatch("h", "c", "e", 60, listOf(full), 0)
+            f.demand()
+            f.lane.accept(f.reply(version = 80, childRev = 60))
+            f.lane.accept(f.reply(true, true, version = 80))
+            f.lane.children("c", Any(), f.snapshot(), setOf(50))
+            f.lane.accept(f.reply(version = 80, owner = 50, ownerRev = 60, child = 51, childRev = 61, order = 7))
+            f.lane.accept(f.reply(true, version = 80, owner = 50, ownerRev = 60))
+            assertTrue(f.snapshot().expansionItems.any { it.id == 51L })
+            f.demand(more = 17)
+            f.error()
+            f.demand(retry = 17)
+            f.lane.accept(f.reply(version = 100, childRev = 90))
+            f.lane.accept(f.reply(true, version = 100))
+            val snapshot = f.snapshot()
+            assertEquals(listOf(50L to 60L, 17L to 23L), snapshot.childPages.keys.toList())
+            val reversed =
+                snapshot.copy(
+                    childPages =
+                        snapshot.childPages.entries
+                            .reversed()
+                            .associate { it.toPair() },
+                )
+            for (ordered in listOf(snapshot, reversed)) {
+                assertEquals(90L, ordered.expansionItems.single { it.id == 50L }.rev)
+                assertFalse(ordered.expansionItems.any { it.id == 51L })
+                val converted = mutableListOf<Long>()
+                val p = projectDeferredAuthoritativeThread("h", "c", ordered, onFullConversion = { converted += it })
+                val rows = p.demandRows(p.rows, setOf("${p.scope}:17", "${p.scope}:50", "${p.scope}:51"))
+                assertEquals(listOf("msg:${p.scope}:17", "msg:${p.scope}:50"), rows.map { it.listKey(0) })
+                assertNull(p.bodyItem("msg:${p.scope}:51"))
+                assertFalse(51L in converted)
+            }
+            val requests = f.sent.size
+            f.lane.children("c", Any(), snapshot, setOf(51))
+            f.lane.bodies("c", Any(), f.snapshot(), setOf(51))
+            assertEquals(requests, f.sent.size)
+            assertSame(full, snapshot.items.single { it.id == 50L })
+        }
+
+    @Test fun identityInvariantSummaryCannotChangeFullOrSummaryKind() =
+        runTest {
+            for (summary in listOf(false, true)) {
+                for ((heldKind, incomingKind) in listOf("tool_call" to "agent", "agent" to "tool_call")) {
+                    val f = fixture()
+                    if (summary) {
+                        f.demand()
+                        f.lane.accept(f.reply(version = 80, childRev = 70, kind = heldKind))
+                        f.lane.accept(f.reply(true, true, version = 80))
+                        f.demand(more = 17)
+                        f.error()
+                    } else {
+                        val full =
+                            ThreadItemDto.decode(
+                                json(
+                                    """{"id":50,"rev":70,"order":6,"parent":17,"kind":"$heldKind","status":"done","shown":true,"active":false,"summary":"saved","content":{"name":"Tool"}}""",
+                                ),
+                            )
+                        f.store.applyBatch("h", "c", "e", 70, listOf(full), 0)
+                    }
+                    val before = f.snapshot()
+                    val held = before.expansionItems.single { it.id == 50L }
+                    f.demand(retry = if (summary) 17 else null)
+                    f.lane.accept(f.reply(version = 81, childRev = 71, kind = incomingKind))
+                    assertSame(before.childPages, f.snapshot().childPages)
+                    f.lane.accept(f.reply(true, version = 81))
+                    assertSame(before.childPages, f.snapshot().childPages)
+                    assertSame(held, f.snapshot().expansionItems.single { it.id == 50L })
+                    assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+                    assertEquals(before.checkpoint, f.snapshot().checkpoint)
+                    assertEquals(before.coverage, f.snapshot().coverage)
+                    assertEquals(before.completedVersion, f.snapshot().completedVersion)
+                    if (heldKind == "tool_call") {
+                        val requests = f.sent.size
+                        f.lane.children("c", Any(), f.snapshot(), setOf(50))
+                        assertEquals(requests, f.sent.size)
+                    }
+                }
+            }
+        }
+
+    @Test fun identityInvariantFullReplyCannotChangeRetainedSummaryKind() =
+        runTest {
+            val f = fixture()
+            f.demand()
+            f.lane.accept(f.reply(version = 80, childRev = 70, kind = "tool_call"))
+            f.lane.accept(f.reply(true, version = 80))
+            val before = f.snapshot()
+            val held = before.expansionItems.single { it.id == 50L }
+            f.lane.open("c")
+            val request = f.sent.last()
+            f.lane.accept(
+                Envelope(
+                    90,
+                    "thread_items",
+                    "now",
+                    json(
+                        """{"conversation_id":"c","epoch":"e","version":81,"items":[{"id":50,"rev":71,"order":6,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"full","content":{"name":"Agent"}}],"final":false}""",
+                    ),
+                    inReplyTo = request.id,
+                ),
+            )
+            assertSame(held, f.snapshot().expansionItems.single { it.id == 50L })
+            assertSame(before.items, f.snapshot().items)
+            assertSame(before.childPages, f.snapshot().childPages)
+            assertTrue(f.snapshot().repairNeeded)
+            f.lane.accept(
+                Envelope(
+                    91,
+                    "thread_items",
+                    "now",
+                    json("""{"conversation_id":"c","epoch":"e","version":81,"items":[],"final":true,"from_version":23}"""),
+                    inReplyTo = request.id,
+                ),
+            )
+            assertSame(held, f.snapshot().expansionItems.single { it.id == 50L })
+            assertTrue(f.snapshot().repairNeeded)
             assertEquals(before.checkpoint, f.snapshot().checkpoint)
             assertEquals(before.coverage, f.snapshot().coverage)
         }
