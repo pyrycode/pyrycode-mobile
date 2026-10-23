@@ -4305,7 +4305,11 @@ class InteractiveStreamE2ETest {
             )
         val bypass = PermissionModeOption.Bypass
         val manual = PermissionModeOption.Default
-        try {
+        withOperatorBypassCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
             pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
             val name = BYPASS_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
@@ -4420,9 +4424,6 @@ class InteractiveStreamE2ETest {
                     e,
                 )
             }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
