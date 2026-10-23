@@ -47,6 +47,13 @@ class QueuedReplyRecoveryEvidenceTest {
 
     private fun finished(vararg extra: ThreadItemDto) = initial.copy(items = listOf(initial.items[0], done, queued) + extra)
 
+    @Test fun aLaterQueuedTurnDoesNotSplitTheCapturedReply() {
+        val started = evidence(initial, connection = original)
+        val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))
+        val current = evidence(finished(scenarioItem(4, text = "bye", turn = "queued-turn")))
+        assertNotNull(current.settledQueuedReplyAfterRecovery(started, held, queued, REPLY, replacement))
+    }
+
     @Test fun recoveryRejectsRetiredForeignReplacedAndUnadmittedDocuments() {
         val started = evidence(initial, connection = original)
         val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))

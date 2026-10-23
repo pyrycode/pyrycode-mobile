@@ -84,7 +84,7 @@ internal fun ThreadEvidence.settledQueuedReplyAfterRecovery(
         return null
     }
     val captured = held.fact ?: return null
-    val reply = records.singleOrNull { it.message.role == Role.Assistant } ?: return null
+    val reply = records.singleOrNull { it.message.role == Role.Assistant && it.fact?.id == captured.id } ?: return null
     val fact = reply.fact ?: return null
     if (captured.kind != "assistant_message" ||
         fact.kind != captured.kind ||
@@ -100,6 +100,7 @@ internal fun ThreadEvidence.settledQueuedReplyAfterRecovery(
         !reply.isComplete ||
         reply.fullText != text ||
         !reply.fullText.startsWith(held.fullText) ||
+        records.count { it.message.role == Role.Assistant && it.fullText == text } != 1 ||
         settledReply(owner, captured.session, captured.turn) != listOf(reply)
     ) {
         return null
