@@ -259,6 +259,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Caching conversation repository — state and concurrency](features/caching-conversation-repository-concurrency.md): restore generations, successful writer baselines, retirement, cancellation and final-flush custody; split for #2333.
 
 - [Authoritative saved-history reader paging](features/authoritative-reader-paging.md): bounded authoritative demand/retry, changed-placement recovery, fragmented-range traversal and counted Linux paging/reopen evidence; #2334.
+- [Authoritative native benchmarks](features/authoritative-reader-native-benchmarks.md): DB/file acceptance separation, retained native validation, current compatibility timings and the opt-in latency assertion; #2456.
 - [Early authoritative paging evidence](features/authoritative-reader-paging-early-evidence.md): original #2334 paging failures, committed-bound repair and manual JVM/native/runtime receipts, retained verbatim from the owning paging topic.
 - [Thread screen — Agent navigation evidence](features/thread-screen-agent-navigation-evidence.md) — proof-entry readiness and finished-marker generation/geometry controls, split from subagent tool-row nesting for #2373; counted Linux source/recording acceptance.
 - [Development verification — Agent reveal evidence](features/development-verification-agent-reveal-evidence.md) — Agent geometry, lazy disposal, readiness and atomic current-key scroll; split from Compose evidence for #2373.
