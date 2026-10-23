@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -14,12 +16,16 @@ spec.loader.exec_module(scenarios)
 
 
 class AgentScenarioReportsTest(unittest.TestCase):
-    def run_cases(self, outcomes, admission=None, report_mtimes=(3_000_000_000, 3_000_000_000), preexisting=False):
+    def run_cases(self, outcomes, admission=None, report_mtimes=(3_000_000_000, 3_000_000_000), preexisting=False, artifacts=False):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         reports = root / 'app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd'
         reports.mkdir(parents=True)
+        apk = root / 'app/build/outputs/apk/debug/app-debug.apk'
+        if artifacts:
+            apk.parent.mkdir(parents=True)
+            apk.write_bytes(b'effective-test-apk')
         calls = []
         originals = []
 
@@ -42,10 +48,22 @@ class AgentScenarioReportsTest(unittest.TestCase):
         if preexisting:
             write_report('retained', 0, 9_000_000_000)
 
-        def launch(command, cwd, env, pass_fds=()):
+        def launch(command, cwd=None, env=None, pass_fds=(), **kwargs):
+            if command[0] == 'git':
+                return subprocess.CompletedProcess(command, 0, stdout='a' * 40 + '\n')
             if admission is not None:
                 self.assertIn(admission, pass_fds)
             case = env['E2E_BACKGROUND_AGENT_CASE']
+            if artifacts:
+                # Model the managed task replacing the exact same phone/UTP paths each arm.
+                for name in ('logcat.txt', 'test-result.pb', 'utp/run.log'):
+                    path = reports / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(f'{case}:{name}'.encode())
+                harness = Path(env.get('E2E_FAULT_EVIDENCE_DIR', root / 'lost-harness'))
+                harness.mkdir(parents=True, exist_ok=True)
+                (harness / 'daemon.log').write_text(f'{case}:daemon')
+                (harness / 'relay.log').write_text(f'{case}:relay')
             calls.append(case)
             outcome = outcomes[len(calls) - 1]
             if isinstance(outcome, Exception):
@@ -66,7 +84,33 @@ class AgentScenarioReportsTest(unittest.TestCase):
         self.assertEqual(len(originals), len(paths))
         self.assertCountEqual(originals, [path.read_bytes() for path in paths])
         cases = [case for path in paths for case in ET.parse(path).getroot().iter('testcase')]
+        if artifacts:
+            bundles = list((root / 'build/background-agent-evidence').glob('*/retained'))
+            self.assertEqual(1, len(bundles), 'the first arm must survive managed output replacement')
+            for case in scenarios.METHODS:
+                bundle = bundles[0].parent / case
+                for name in ('logcat.txt', 'test-result.pb', 'utp/run.log'):
+                    self.assertEqual(f'{case}:{name}'.encode(), (bundle / 'phone' / name).read_bytes())
+                for name in ('daemon.log', 'relay.log'):
+                    self.assertEqual(f'{case}:{name.removesuffix(".log")}', (bundle / 'harness' / name).read_text())
+                metadata = json.loads((bundle / 'result.json').read_text())
+                self.assertEqual(outcomes[list(scenarios.METHODS).index(case)], metadata['exit_code'])
+                self.assertEqual(scenarios.CLASS + '#' + scenarios.METHODS[case], metadata['method'])
+                self.assertEqual('a' * 40, metadata['provenance']['mobile'])
+                self.assertEqual(hashlib.sha256(apk.read_bytes()).hexdigest(),
+                                 metadata['apk_sha256']['app/build/outputs/apk/debug/app-debug.apk'])
+                for line in (bundle / 'SHA256SUMS').read_text().splitlines():
+                    expected, name = line.split('  ', 1)
+                    self.assertEqual(expected, hashlib.sha256((bundle / name).read_bytes()).hexdigest())
         return status, calls, cases
+
+    def test_each_arm_keeps_phone_utp_and_correlated_harness_even_on_failure(self):
+        for outcomes in ([1, 0], [0, 1], [0, 0]):
+            with self.subTest(outcomes=outcomes):
+                status, calls, cases = self.run_cases(outcomes, artifacts=True)
+                self.assertEqual(int(any(outcomes)), status)
+                self.assertEqual(['retained', 'restart'], calls)
+                self.assertEqual(2, len(cases))
 
     def test_two_independent_outcomes_keep_the_first_failure(self):
         rglob = Path.rglob
