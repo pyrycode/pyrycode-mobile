@@ -393,6 +393,24 @@ class RelayRepositoryCoordinator(
                 override fun cancel(conversationId: String) {
                     (activeConnection.value?.repo)?.cancelAuthoritativeThread(conversationId)
                 }
+
+                override fun children(
+                    conversationId: String,
+                    connection: Any,
+                    consumer: Any,
+                    snapshot: AuthoritativeThreadSnapshot,
+                    ids: Set<Long>,
+                    retry: Long?,
+                    more: Long?,
+                ): java.io.Closeable? =
+                    verifiedRepository()?.takeIf { it === connection }?.demandAgentChildren(
+                        conversationId,
+                        consumer,
+                        snapshot,
+                        ids,
+                        retry,
+                        more,
+                    )
             }
         }
 
