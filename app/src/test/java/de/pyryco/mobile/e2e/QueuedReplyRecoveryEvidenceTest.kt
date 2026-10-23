@@ -47,6 +47,17 @@ class QueuedReplyRecoveryEvidenceTest {
 
     private fun finished(vararg extra: ThreadItemDto) = initial.copy(items = listOf(initial.items[0], done, queued) + extra)
 
+    @Test fun initialMemoryDocumentSurvivesReplacementButNeverAReset() {
+        val document = initial.copy(incarnation = "", generation = 0)
+        val started = evidence(document, connection = original)
+        val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))
+        val completed = finished().copy(incarnation = "", generation = 0)
+        assertNotNull(evidence(completed).settledQueuedReplyAfterRecovery(started, held, queued, REPLY, replacement))
+        for (reset in listOf(completed.copy(generation = 1), completed.copy(incarnation = "reset"), completed.copy(epoch = "reset"))) {
+            assertNull(evidence(reset).settledQueuedReplyAfterRecovery(started, held, queued, REPLY, replacement))
+        }
+    }
+
     @Test fun aLaterQueuedTurnDoesNotSplitTheCapturedReply() {
         val started = evidence(initial, connection = original)
         val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))

@@ -77,8 +77,9 @@ internal fun ThreadEvidence.settledQueuedReplyAfterRecovery(
         !isCurrentReplay(host, started.owner.conversation, currentConnection, snapshot) ||
         before.epoch.isNullOrBlank() ||
         before.epoch != snapshot.epoch ||
-        before.incarnation.isBlank() ||
         before.incarnation != snapshot.incarnation ||
+        // The initial memory document has no incarnation; reset assigns one and advances generation.
+        (before.incarnation.isEmpty() && (before.generation != 0L || snapshot.generation != 0L)) ||
         snapshot.generation < before.generation
     ) {
         return null
