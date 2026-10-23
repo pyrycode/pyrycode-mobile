@@ -15,6 +15,31 @@ action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
 
+For reconnect assertions, synchronize rendered text before projecting fresh evidence
+from the tested host's current supported, authenticated source. Compose synchronization
+can publish a newer snapshot of the same document; snapshot reference identity would
+misclassify that progress as source retirement. Check connection, host, conversation,
+epoch, generation and document incarnation against current state, rejecting reset or
+repair state. Then run completion, identity, order and echo assertions on the fresh
+facts without another Compose synchronization. Correct captured text cannot excuse a
+duplicate echo in those newer facts. The paired
+`replayRefreshAcceptsSameDocumentAdvanceDuringRender` and
+`replayRefreshRejectsNewDuplicateEchoDespiteCorrectOldFactsAndRender` screen probes
+exercise both sides of this boundary (#2486).
+
+When recovery intentionally replaces the authenticated connection, observe the tested
+host's negotiated route and reconcile the held reply's durable identity on that current
+source. Keep ordinary `ThreadEvidenceOwner.matches` strict. In
+`settledQueuedReplyAfterRecovery`, main-family settlement alone cannot prove that the
+held reply is the only assistant in its session/turn: an Agent-owned suffix belongs to
+another rendered family and escapes that check. Compare every assistant in the captured
+session/turn with the reconciled reply. A distinct later queued turn remains valid;
+counting every assistant in the conversation would reject it. The initial memory
+document's empty incarnation is valid only while both captured and current generations
+are zero and the epoch still matches. The recovery controls retain these success cases
+alongside retired-source, replaced-document, duplicate and changed-identity negatives.
+See the runbook's [replay and queued recovery contract and counted evidence](../../e2e-interactive-stream.md#replay-and-queued-recovery-evidence-2486).
+
 For history proofs requiring exactly one request, control the pointer movement as
 well as the response. A `swipeDown` contains repeated movements and can leave a
 fling running after a fast page completes; either can legitimately demand another
