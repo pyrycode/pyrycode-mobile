@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -22,10 +23,13 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
+import de.pyryco.mobile.ui.conversations.thread.authoritativeAgent
+import de.pyryco.mobile.ui.conversations.thread.authoritativeItem
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -41,6 +45,105 @@ class AgentReplyEvidenceScreenTest {
     @Test fun heldRunRebindsAfterResetBetweenReadinessAndReveal() = resetDuringReveal(1)
 
     @Test fun heldRunRebindsAfterTwoConsecutiveResets() = resetDuringReveal(2)
+
+    @Test fun heldRunRejectsMissingProjectedKey() = rejectUnavailableOwnedRun(keepOwnedTool = false)
+
+    @Test fun heldRunRejectsUnrelatedClickableRunWithOwnedKeyPresent() = rejectUnavailableOwnedRun(keepOwnedTool = true)
+
+    private fun rejectUnavailableOwnedRun(keepOwnedTool: Boolean) {
+        val original = agentReplySnapshot()
+        val admitted =
+            original.copy(
+                items =
+                    original.items +
+                        listOf(
+                            authoritativeAgent(6, task = "other-task", toolUse = "other-agent"),
+                            authoritativeItem(7, parent = 6, turn = "other-child"),
+                            authoritativeItem(8, "tool_call", parent = 6, content = """{"name":"Bash"}""", turn = "other-child"),
+                            authoritativeItem(9, "tool_call", parent = 6, content = """{"name":"Bash"}""", turn = "other-child"),
+                        ),
+            )
+        val evidence = authoritativeThreadEvidence("host", "conversation", Any(), admitted)
+        val owned = requireNotNull(evidence.heldAgentReplyEvidence(evidence.owner, "raw-task", "raw-agent", "child", "main"))
+        val unrelated = requireNotNull(evidence.heldAgentReplyEvidence(evidence.owner, "other-task", "other-agent", "other-child", "main"))
+        assertNotEquals(owned.runId, unrelated.runId)
+        // Keep the actual first tool's key, but remove the rest of its run from the screen.
+        // Evidence readiness must never substitute for the real screen's key and exact header.
+        val rendered = admitted.copy(items = admitted.items.filterNot { it.id == 2L || it.id == 4L || (!keepOwnedTool && it.id == 3L) })
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    ThreadUiState(
+                        "conversation",
+                        "Channel",
+                        authoritativeThread = projectAuthoritativeThread("host", "conversation", rendered),
+                    ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    collapseToolUses = true,
+                )
+            }
+        }
+        val list = compose.onNode(hasScrollToIndexAction())
+        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+        assertEquals("the negative must exercise its intended key boundary", keepOwnedTool, index("msg:${owned.runId}") >= 0)
+        assertTrue("the unrelated run must be projected", index("msg:${unrelated.runId}") >= 0)
+        val header = hasText("Using tools:", substring = true) and hasClickAction()
+        val ownedHeader = header and hasAnyAncestor(hasTestTag("tool-run:${owned.runId}"))
+        val unrelatedHeader = header and hasAnyAncestor(hasTestTag("tool-run:${unrelated.runId}"))
+        val closedUnrelated =
+            unrelatedHeader and
+                SemanticsMatcher("Show tool uses") { it.config.getOrNull(SemanticsActions.OnClick)?.label == "Show tool uses" }
+        compose.onAllNodes(ownedHeader).assertCountEquals(0)
+        list.performScrollToNode(unrelatedHeader)
+        compose.onNode(closedUnrelated).assertIsDisplayed()
+        val stages = mutableListOf<String>()
+        var resolutions = 0
+        val started = System.nanoTime()
+        assertThrows(ComposeTimeoutException::class.java) {
+            compose.revealHeldAgentRun(
+                timeoutMillis = 1_000,
+                resolve = { remaining ->
+                    assertTrue("resolution must share the bounded original deadline", remaining in 1..1_000)
+                    resolutions++
+                    owned
+                },
+                evidence = stages::add,
+            )
+        }
+        assertTrue("the helper must actually resolve admitted owned evidence", resolutions > 0)
+        assertTrue("rejection must stay bounded", (System.nanoTime() - started) / 1_000_000 < 5_000)
+        assertEquals(
+            "only a projected owned key may reach scroll readiness",
+            keepOwnedTool,
+            stages.any {
+                it ==
+                    "event=held_agent_run stage=ready"
+            },
+        )
+        assertTrue(
+            "an unrelated header must never complete the owned reveal",
+            stages.none {
+                it ==
+                    "event=held_agent_run stage=revealed owned=1"
+            },
+        )
+        compose.onAllNodes(ownedHeader).assertCountEquals(0)
+        compose.onAllNodes(hasTestTag("assistant-reply:${unrelated.heldReply.message.id}"), useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(unrelatedHeader)
+        compose.onNode(closedUnrelated).assertIsDisplayed().performClick()
+        val unrelatedReply = hasTestTag("assistant-reply:${unrelated.heldReply.message.id}")
+        list.performScrollToNode(unrelatedReply)
+        compose
+            .onNode(
+                unrelatedReply and hasAnyAncestor(hasTestTag("background-agent-child:${unrelated.agent.block}")),
+                useUnmergedTree = true,
+            ).assertIsDisplayed()
+        compose.onAllNodes(unrelatedReply, useUnmergedTree = true).assertCountEquals(1)
+        compose.onAllNodes(hasTestTag("assistant-reply:${owned.heldReply.message.id}"), useUnmergedTree = true).assertCountEquals(0)
+    }
 
     private fun resetDuringReveal(resets: Int) {
         var snapshot by mutableStateOf(agentReplySnapshot())
