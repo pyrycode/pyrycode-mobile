@@ -26,8 +26,12 @@ internal data class ExpansionDetailKey(
         epoch == snapshot.epoch && generation == snapshot.generation && incarnation == snapshot.incarnation && !snapshot.resetNeeded
 
     fun replaces(other: ExpansionDetailKey): Boolean =
-        host == other.host && conversation == other.conversation && epoch == other.epoch &&
-            generation == other.generation && incarnation == other.incarnation && children == other.children &&
+        host == other.host &&
+            conversation == other.conversation &&
+            epoch == other.epoch &&
+            generation == other.generation &&
+            incarnation == other.incarnation &&
+            children == other.children &&
             item.first == other.item.first
 
     override fun toString() = "ExpansionDetailKey(redacted)"

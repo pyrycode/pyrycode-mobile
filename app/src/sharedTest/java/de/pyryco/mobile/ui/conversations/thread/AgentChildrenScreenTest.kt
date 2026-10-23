@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -297,11 +298,12 @@ class AgentChildrenScreenTest {
             if (capacity) {
                 reply(17, child(50))
                 compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn’t load agent children").fetchSemanticsNodes().isNotEmpty() }
-                compose.onNodeWithText("Retry").assertExists()
+                val childRetry = hasText("Retry") and hasAnySibling(hasText("Couldn’t load agent children"))
+                compose.onNode(childRetry).assertExists()
                 compose.mainClock.advanceTimeBy(500)
                 assertEquals(1, reads().size)
                 pressure?.close()
-                compose.onNodeWithText("Retry").performClick()
+                compose.onNode(childRetry).performClick()
                 compose.waitUntil(5000) { reads().size == 2 }
                 reply(17, child(50))
                 compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 50").fetchSemanticsNodes().isNotEmpty() }
