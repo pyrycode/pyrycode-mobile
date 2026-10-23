@@ -44,7 +44,7 @@ class InitialAttentionQueryTest {
     @Test fun destinationGateAllowsMetadataBeforeInitialQueryAndDefersOnlyAcquisition() =
         runTest {
             val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use { gate ->
+            ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use { gate ->
                 val source =
                     object : ConversationRepository by FakeConversationRepository() {
                         override val negotiatedThread = replay.thread
@@ -77,8 +77,8 @@ class InitialAttentionQueryTest {
     @Test fun unarmedOrDifferentTargetAcquisitionKeepsProviderAdmission() =
         runTest {
             val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "other", 30_000).use {
-                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+            ThreadAcquisitionGate.arm(replay.thread, "other", 30_000).use {
+                val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                 val lease = checkNotNull(destination.acquire("b", replay.connection))
                 assertEquals(1, replay.sent.size)
                 replay.deliverBatch()
@@ -86,7 +86,7 @@ class InitialAttentionQueryTest {
                 lease.close()
             }
             val after = Replay()
-            val lease = checkNotNull(InitialAttentionQueryGate.negotiated(after.thread).acquire("b", after.connection))
+            val lease = checkNotNull(ThreadAcquisitionGate.negotiated(after.thread).acquire("b", after.connection))
             assertEquals(1, after.sent.size)
             after.deliverBatch()
             after.deliverTerminal()
@@ -97,10 +97,10 @@ class InitialAttentionQueryTest {
         runTest {
             for (condition in listOf("connection", "scope")) {
                 val replay = Replay()
-                val gate = InitialAttentionQueryGate.arm(replay.thread, "b", 30_000)
+                val gate = ThreadAcquisitionGate.arm(replay.thread, "b", 30_000)
                 try {
                     replay.queries.open("b")
-                    val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+                    val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                     val navigation = async { destination.acquire("b", replay.connection) }
                     runCurrent()
                     assertFalse(navigation.isCompleted)
@@ -120,8 +120,8 @@ class InitialAttentionQueryTest {
     @Test fun acquisitionGateCannotSpendAReplacementGenerationsCertificate() =
         runTest {
             val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
-                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+            ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use {
+                val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                 val navigation = async { destination.acquire("b", replay.connection) }
                 runCurrent()
                 replay.store.reset("host", "b", "e")
@@ -179,8 +179,8 @@ class InitialAttentionQueryTest {
             replay.deliverTerminal()
             awaitInitialAttentionQuery(replay.store.observe("host", "b"))
             val lease =
-                InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
-                    checkNotNull(InitialAttentionQueryGate.negotiated(replay.thread).acquire("b", replay.connection))
+                ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use {
+                    checkNotNull(ThreadAcquisitionGate.negotiated(replay.thread).acquire("b", replay.connection))
                 }
             replay.assertExactQueriesAndComplete()
             lease.close()

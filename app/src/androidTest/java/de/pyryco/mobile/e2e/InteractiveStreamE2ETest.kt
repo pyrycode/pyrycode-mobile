@@ -3980,7 +3980,7 @@ class InteractiveStreamE2ETest {
             assertSaved(chatY.id, rowB.value, effortY)
 
             leaveThread()
-            openChatRow(nameX)
+            openChatRowAfterCurrentQuery(nameX, twoHostArg(ARG_SERVER_ID), chatX.id)
             assertEquals("X's model on a fresh settings reply", target.value, freshSettings(chatX.id).model)
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             leaveThread()
@@ -4838,7 +4838,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
-        var acquisitionGate: InitialAttentionQueryGate? = null
+        var acquisitionGate: ThreadAcquisitionGate? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4904,7 +4904,7 @@ class InteractiveStreamE2ETest {
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
                     // Destination metadata starts the attention query; fence only the subsequent acquisition.
-                    val gate = InitialAttentionQueryGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
+                    val gate = ThreadAcquisitionGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
                     acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
@@ -8845,6 +8845,21 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNodeWithContentDescription(statusExpandDescription).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText("Run configuration").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Keep acquisition separate from the current query without adding a reader or a request. */
+    private fun openChatRowAfterCurrentQuery(
+        name: String,
+        host: String,
+        conversation: String,
+    ) {
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val thread = checkNotNull(checkNotNull(registry.connectionFor(host)).coordinator.negotiatedThread)
+        ThreadAcquisitionGate.arm(thread, conversation, THREAD_TIMEOUT_MS).use { gate ->
+            openChatRow(name)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+            runBlocking { gate.awaitAcquired() }
         }
     }
 

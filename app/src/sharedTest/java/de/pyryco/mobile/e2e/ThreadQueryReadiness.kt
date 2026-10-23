@@ -84,7 +84,9 @@ internal class ThreadQueryProgress(
     val host: String,
     private val isOpen: () -> Boolean,
 ) {
-    private class Query(val decoder: ThreadQueryDecoder) {
+    private class Query(
+        val decoder: ThreadQueryDecoder,
+    ) {
         var accepted: Boolean? = null
         var terminal: Boolean? = null
     }
@@ -115,7 +117,10 @@ internal class ThreadQueryProgress(
         changed()
     }
 
-    @Synchronized fun sent(id: Long, accepted: Boolean) {
+    @Synchronized fun sent(
+        id: Long,
+        accepted: Boolean,
+    ) {
         val query = pending[id] ?: return
         query.accepted = accepted
         finish(id, query)
@@ -129,14 +134,22 @@ internal class ThreadQueryProgress(
             when (outcome) {
                 is ThreadDecodeOutcome.Pending -> Unit
                 is ThreadDecodeOutcome.Repair -> query.terminal = false
-                is ThreadDecodeOutcome.Complete -> query.terminal = outcome.value is ThreadQueryReply.Success
+                is ThreadDecodeOutcome.Complete ->
+                    when (outcome.value) {
+                        is ThreadQueryReply.Batch -> Unit
+                        is ThreadQueryReply.Success -> query.terminal = true
+                        else -> query.terminal = false
+                    }
             }
         }
         finish(id, query)
         changed()
     }
 
-    private fun finish(id: Long, query: Query) {
+    private fun finish(
+        id: Long,
+        query: Query,
+    ) {
         if (query.accepted == null || query.accepted == true && query.terminal == null) return
         val conversation = query.decoder.request.conversationId
         if (query.accepted == true && query.terminal == true) completed[conversation] = id else completed.remove(conversation)

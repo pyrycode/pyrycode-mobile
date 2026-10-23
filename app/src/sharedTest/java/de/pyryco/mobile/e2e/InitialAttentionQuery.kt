@@ -4,6 +4,12 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -18,7 +24,7 @@ internal suspend fun awaitInitialAttentionQuery(snapshots: Flow<AuthoritativeThr
 }
 
 /** Only the armed scenario delays acquisition; destination setup and all provider admission stay real. */
-internal class InitialAttentionQueryGate private constructor(
+internal class ThreadAcquisitionGate private constructor(
     private val host: String,
     private val conversation: String,
     private val connection: Any,
@@ -26,12 +32,14 @@ internal class InitialAttentionQueryGate private constructor(
     private val timeoutMillis: Long,
 ) : Closeable {
     private val acquired = CompletableDeferred<Unit>()
+    private val closed = MutableStateFlow(false)
 
     val finished get() = acquired.isCompleted
 
     suspend fun awaitAcquired() = acquired.await()
 
     override fun close() {
+        closed.value = true
         synchronized(Companion) {
             if (active === this) active = null
         }
@@ -39,16 +47,16 @@ internal class InitialAttentionQueryGate private constructor(
     }
 
     companion object {
-        private var active: InitialAttentionQueryGate? = null
+        private var active: ThreadAcquisitionGate? = null
 
         @Synchronized fun arm(
             thread: NegotiatedThread,
             conversation: String,
             timeoutMillis: Long,
-        ): InitialAttentionQueryGate {
-            check(active == null) { "attention acquisition already armed" }
+        ): ThreadAcquisitionGate {
+            check(active == null) { "thread acquisition already armed" }
             val connection = checkNotNull((thread.support.value as? ThreadSupport.Supported)?.connection)
-            return InitialAttentionQueryGate(
+            return ThreadAcquisitionGate(
                 thread.host,
                 conversation,
                 connection,
@@ -88,12 +96,30 @@ internal class InitialAttentionQueryGate private constructor(
                         }
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
-                        withTimeout(gate.timeoutMillis) {
-                            val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
-                            awaitInitialAttentionQuery(store.observe(host, conversationId).filter { it.generation == gate.generation })
-                            check(receipt.isCurrent()) { "Thread acquisition query owner changed" }
+                        val ready = withTimeout(gate.timeoutMillis) {
+                            coroutineScope {
+                                val observation = async(start = CoroutineStart.UNDISPATCHED) {
+                                    val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
+                                    awaitInitialAttentionQuery(store.observe(host, conversationId).filter { it.generation == gate.generation })
+                                    receipt.isCurrent()
+                                }
+                                val retired = async(start = CoroutineStart.UNDISPATCHED) {
+                                    combine(support, gate.closed) { verdict, closed ->
+                                        closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
+                                    }.first { it }
+                                }
+                                try {
+                                    select<Boolean> {
+                                        observation.onAwait { it }
+                                        retired.onAwait { false }
+                                    }
+                                } finally {
+                                    observation.cancel()
+                                    retired.cancel()
+                                }
+                            }
                         }
-                        if (synchronized(Companion) { active !== gate } ||
+                        if (!ready || synchronized(Companion) { active !== gate } ||
                             (support.value as? ThreadSupport.Supported)?.connection !== connection ||
                             store.current(host, conversationId).generation != gate.generation
                         ) {

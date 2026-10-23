@@ -2,13 +2,19 @@ package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AuthoritativeThreadQueries
 import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ManagedSessionPump
 import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,8 +70,8 @@ class ThreadQueryReadinessTest {
             assertEquals(13L, store.current(HOST, CHAT).checkpoint)
             queries.open(CHAT)
             assertEquals(2, sent.size)
-            InitialAttentionQueryGate.arm(thread, CHAT, 30000).use { gate ->
-                val acquisition = async { InitialAttentionQueryGate.negotiated(thread).acquire(CHAT, connection) }
+            ThreadAcquisitionGate.arm(thread, CHAT, 30000).use { gate ->
+                val acquisition = async { ThreadAcquisitionGate.negotiated(thread).acquire(CHAT, connection) }
                 runCurrent()
                 assertFalse("old certified content must not release a newer active query", acquisition.isCompleted)
                 assertFalse(gate.finished)
@@ -155,6 +161,49 @@ class ThreadQueryReadinessTest {
         source.close()
     }
 
+    @Test fun aQueuedTerminalNeedsSuccessfulDownstreamConsumption() = runTest {
+        for (cancelled in listOf(false, true)) {
+            val raw = Pump()
+            val source = ThreadQueryReadiness.wrap(HOST, raw)
+            val received = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val collector = backgroundScope.launch {
+                source.inbound.collect {
+                    received.complete(Unit)
+                    release.await()
+                }
+            }
+            val reading = async { ThreadQueryReadiness.awaitCurrent(HOST, CHAT) }
+            runCurrent()
+            assertTrue(source.send(query(1)))
+            raw.frames.send(terminal(1))
+            runCurrent()
+            assertTrue(received.isCompleted)
+            assertFalse("queued terminal must not certify an unfinished collector", reading.isCompleted)
+            if (cancelled) {
+                collector.cancelAndJoin()
+                runCurrent()
+                assertFalse("cancelled downstream work cannot certify readiness", reading.isCompleted)
+                reading.cancelAndJoin()
+            } else {
+                release.complete(Unit)
+                runCurrent()
+                assertTrue(reading.await().isCurrent())
+                collector.cancelAndJoin()
+            }
+            source.close()
+        }
+    }
+
+    private class Pump : ManagedSessionPump {
+        val frames = Channel<Envelope>(Channel.UNLIMITED)
+        override val inbound = frames.receiveAsFlow()
+        override val state = MutableStateFlow<PumpState>(PumpState.Open("phone", setOf("thread", "interactive")))
+        override fun send(envelope: Envelope) = true
+        override fun start() = Unit
+        override fun close() { frames.close() }
+    }
+
     private fun send(source: ThreadQueryProgress, id: Long, conversation: String = CHAT) {
         source.sending(query(id, conversation))
         source.sent(id, true)
@@ -164,8 +213,18 @@ class ThreadQueryReadinessTest {
         frame(id, "thread_catch_up", """{"conversation_id":"$conversation","epoch":"e","version":13}""")
 
     private fun terminal(id: Long, initial: Boolean = false, conversation: String = CHAT): Envelope {
-        val coverage = if (initial) "\"lower_order\":0,\"upper_order\":14,\"continuation\":0,\"older_exists\":false" else "\"from_version\":13"
-        return frame(id + 10, "thread_items", """{"conversation_id":"$conversation","epoch":"e","version":13,"items":[],"final":true,$coverage}""", id)
+        val coverage =
+            if (initial) {
+                "\"lower_order\":0,\"upper_order\":14,\"continuation\":0,\"older_exists\":false"
+            } else {
+                "\"from_version\":13"
+            }
+        return frame(
+            id + 10,
+            "thread_items",
+            """{"conversation_id":"$conversation","epoch":"e","version":13,"items":[],"final":true,$coverage}""",
+            id,
+        )
     }
 
     private fun frame(id: Long, type: String, payload: String, reply: Long? = null) =

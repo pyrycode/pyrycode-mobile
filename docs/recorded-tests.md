@@ -261,7 +261,7 @@ when the independent peer has already observed dismissal. Peer progress alone do
 not establish a product completion or expiry defect.
 
 `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`,
-also called by `RecordedMobileSuiteTest`, arms the test-only `InitialAttentionQueryGate`
+also called by `RecordedMobileSuiteTest`, arms the test-only `ThreadAcquisitionGate`
 for freshly created B. The original Waiting-pill tap lets destination list/metadata
 setup proceed; only `NegotiatedThread.acquire` waits. Readiness observes
 `NegotiatedThread.store.observe(host, conversation)` directly: the cached provider's
@@ -502,6 +502,32 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Shared current-query acquisition
+
+The same test-only acquisition gate also protects reopening X in the model-isolation
+scenario. A positive saved checkpoint alone is insufficient: X can still have a newer
+catch-up query in flight. Acquiring at that point can coalesce the destination's request
+into the active query and leave its separately captured request unmatched.
+
+`ThreadQueryReadiness` observes the existing phone pump. It records actual accepted
+history requests and decodes their actual replies with the production query decoder.
+A partial batch is not completion. A terminal qualifies only after its downstream
+repository collector returns successfully. A queued frame, refused send, malformed
+reply, cancelled collector or another conversation cannot qualify. The observer issues
+no request and supplies no reply.
+
+The gate requires that receipt on the current host connection as well as the existing
+same-generation store certificate. Connection retirement or scope closure cancels the
+acquisition. Destination metadata may still run before the query completes. Only the
+armed host and conversation wait; all other acquisition keeps its existing behaviour.
+The model scenario uses `openChatRowAfterCurrentQuery` before its original fresh X
+settings and final Y model assertions. Their payloads, wording and deadlines remain.
+
+The controlled regression seeds an older valid checkpoint, holds a newer query, then
+attempts acquisition. The original snapshot-only wait acquires early and fails. The
+shared wait requires the newer terminal to be consumed before acquisition can issue
+its own real query. Retired-owner and incomplete-consumption checks remain separate.
+
 ### Downstream consumption before close (#2348)
 
 Keep the selected connection's repository collector alive through `beforeClose`, then
@@ -524,6 +550,22 @@ reply correlation and collector lifetime before physical close. Preserve missing
 changed-payload/epoch/owner and complete-consumption negatives. No recording or
 production request contract changed for this repair. See the
 [diagnosis and counted macOS evidence](knowledge/features/development-verification-test-scheduling.md#background-permission-replay-consumption-2348).
+
+### Foreground terminal cleanup
+
+Recorded native tests retain the Activity through required phone work on both sides
+of `test-end`. Foreground preparation first waits for captured pre-end requests and
+queued delivery. It does not send the end control or consume a physical close. The
+session cleanup rule then sends its original end action exactly once while the Activity
+is alive. Terminal preparation follows the recording's actual placement of
+`scenario-complete` and phone close, rather than assuming one order for every capture.
+
+The same rule owns replacement Activities through this sequence. Restart preparation
+still selects only existing phones; terminal teardown can await recorded replacements.
+Every original request, observation boundary and complete-tape check remains binding.
+The original test failure stays primary when Activity destruction also fails. Required
+work that never arrives still fails under the original bounds. The shared fixture
+combines the retained #2360 and #2491 repairs and their controlled regressions.
 
 ### Explicit graph-restart readiness (#2347)
 
