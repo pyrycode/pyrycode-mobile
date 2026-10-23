@@ -303,6 +303,7 @@ class InitialAttentionQueryTest {
         val store = AuthoritativeThreadStore()
         val connection = Any()
         val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(connection))
+        val progress = ThreadQueryReadiness.register("host") { (support.value as? ThreadSupport.Supported)?.connection === connection }
         val sent = mutableListOf<Envelope>()
         private val pending = mutableListOf<Envelope>()
         var peerDismissed = false
@@ -329,6 +330,7 @@ class InitialAttentionQueryTest {
                 { true },
                 { ++nextId },
                 { request ->
+                    progress.sending(request)
                     sent += request
                     for (step in tape.request(PHONE, request)) {
                         if (step.owner == PHONE) {
@@ -338,6 +340,7 @@ class InitialAttentionQueryTest {
                             peerDismissed = true
                         }
                     }
+                    progress.sent(request.id, true)
                     true
                 },
                 { 0L },
@@ -365,11 +368,15 @@ class InitialAttentionQueryTest {
             }
 
         fun deliverBatch() {
-            queries.accept(pending.removeAt(0))
+            val reply = pending.removeAt(0)
+            queries.accept(reply)
+            progress.consumed(reply)
         }
 
         fun deliverTerminal() {
-            queries.accept(pending.removeAt(0))
+            val reply = pending.removeAt(0)
+            queries.accept(reply)
+            progress.consumed(reply)
         }
 
         fun assertExactQueriesAndComplete() {

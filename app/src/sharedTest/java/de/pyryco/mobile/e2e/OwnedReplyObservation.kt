@@ -465,7 +465,7 @@ internal object OwnedReplyProbe {
 
         fun observers(): List<OwnedReplyObservation> =
             (sessionObservers.filter { it.host == host } + listOfNotNull(active?.takeIf { it.host == host })).distinct()
-        return object : ManagedSessionPump by delegate {
+        val observed = object : ManagedSessionPump by delegate {
             override val inbound =
                 flow {
                     try {
@@ -510,6 +510,7 @@ internal object OwnedReplyProbe {
                 delegate.close()
             }
         }
+        return ThreadQueryReadiness.wrap(host, observed)
     }
 
     fun <T> observing(

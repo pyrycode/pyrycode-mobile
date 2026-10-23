@@ -89,7 +89,9 @@ internal class InitialAttentionQueryGate private constructor(
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
                         withTimeout(gate.timeoutMillis) {
+                            val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
                             awaitInitialAttentionQuery(store.observe(host, conversationId).filter { it.generation == gate.generation })
+                            check(receipt.isCurrent()) { "Thread acquisition query owner changed" }
                         }
                         if (synchronized(Companion) { active !== gate } ||
                             (support.value as? ThreadSupport.Supported)?.connection !== connection ||
