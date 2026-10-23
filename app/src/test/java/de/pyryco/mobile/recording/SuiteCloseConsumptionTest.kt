@@ -21,6 +21,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -57,7 +58,12 @@ class SuiteCloseConsumptionTest {
             val divider =
                 """{"id":78,"kind":"session_divider","order":78,"rev":78,"session":"session-a","status":"done","active":false,"shown":true,"summary":"","content":{"cause":"operator_reset","previous_session_id":"session-a","new_session_id":"session-b"}}"""
             val rotationBatch =
-                frame(175, "thread_items", """{"conversation_id":"chat","epoch":"epoch","version":81,"items":[$divider],"final":false}""", 30)
+                frame(
+                    175,
+                    "thread_items",
+                    """{"conversation_id":"chat","epoch":"epoch","version":81,"items":[$divider],"final":false}""",
+                    30,
+                )
             val tape =
                 RecordedSuiteTape(
                     listOf(
@@ -87,15 +93,18 @@ class SuiteCloseConsumptionTest {
                 runCurrent()
                 val releaseTerminal = CompletableDeferred<Unit>()
                 val enteredTerminal = CompletableDeferred<Unit>()
+                val consumedTerminal = CompletableDeferred<Unit>()
                 val requests = mutableListOf<Envelope>()
                 val observed =
                     object : SessionPump by pump {
                         override val inbound =
-                            pump.inbound.onEach {
+                            pump.inbound.transform {
                                 if (it.id == 176L) {
                                     enteredTerminal.complete(Unit)
                                     releaseTerminal.await()
                                 }
+                                emit(it)
+                                if (it.id == 176L) consumedTerminal.complete(Unit)
                             }
 
                         override fun send(envelope: Envelope): Boolean {
@@ -115,15 +124,25 @@ class SuiteCloseConsumptionTest {
                 val partial = store.current("host", "chat")
                 assertEquals(81L, partial.completedVersion)
                 assertEquals(77L, partial.checkpoint)
-                assertTrue("the actual divider is already admitted", authoritativeThreadEvidence("host", "chat", repository, partial).admitted)
+                assertTrue(
+                    "the actual divider is already admitted",
+                    authoritativeThreadEvidence("host", "chat", repository, partial).admitted,
+                )
                 val reopening =
                     async {
                         store.observe("host", "chat").first {
-                            authoritativeThreadEvidence("host", "chat", repository, it).certifiedNextSession("session-a") == "session-b"
+                            val reading = authoritativeThreadEvidence("host", "chat", repository, it)
+                            val current = authoritativeThreadEvidence("host", "chat", repository, store.current("host", "chat"))
+                            reading.certifiedNextSession("session-a", current) == "session-b"
                         }
+                        assertTrue(
+                            "terminal retirement and downstream consumption precede destination acquisition",
+                            consumedTerminal.isCompleted,
+                        )
                         requireNotNull(repository.acquireAuthoritativeThread("chat"))
                     }
                 runCurrent()
+                assertFalse("partial divider facts cannot reopen the destination", reopening.isCompleted)
                 releaseTerminal.complete(Unit)
                 runCurrent()
                 val destination = reopening.await()

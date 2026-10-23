@@ -15,14 +15,12 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.matchesPending
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.components.TOOL_ROW_TAG
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
-import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -67,7 +65,8 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
             "NegotiatedAgentRestart",
             "event=restart_owner stage=$stage host_hash=${hash(host)} conversation_hash=${hash(conversation)} " +
                 "epoch_hash=${hash(reading.owner.epoch.orEmpty())} connection=${System.identityHashCode(reading.owner.connection)} " +
-                "generation=${reading.owner.generation} checkpoint=${reading.sourceSnapshot?.checkpoint} route=authoritative",
+                "generation=${reading.owner.generation} checkpoint=${reading.sourceSnapshot?.checkpoint} " +
+                "completed_version=${reading.sourceSnapshot?.completedVersion} route=authoritative",
         )
     }
 
@@ -145,14 +144,15 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     waitForIdle()
     runBlocking { source().startNewSession(conversation) }
 
-    fun boundaries(reading: ThreadEvidence) =
-        projectAuthoritativeThread(
-            host,
-            conversation,
-            requireNotNull(reading.sourceSnapshot),
-        ).items.filterIsInstance<ThreadItem.SessionBoundary>()
-    val rotated = evidence { reading -> boundaries(reading).any { it.previousSessionId == session && it.newSessionId != session } }
-    val nextSession = boundaries(rotated).single { it.previousSessionId == session }.newSessionId
+    fun rotatedSession(reading: ThreadEvidence): String? {
+        val route = requireNotNull(source().negotiatedThread)
+        val support = route.support.value as? ThreadSupport.Supported ?: return null
+        val current = authoritativeThreadEvidence(host, conversation, support.connection, route.store.current(host, conversation))
+        return reading.certifiedNextSession(session, current)
+    }
+    val rotated = evidence { reading -> rotatedSession(reading) != null }
+    val nextSession = requireNotNull(rotated.certifiedNextSession(session, rotated))
+    receipt("certified_rotation", rotated)
     openThread()
     awaitDisplayedSessionBoundary(120_000)
     receipt("rotated_session_b", rotated)

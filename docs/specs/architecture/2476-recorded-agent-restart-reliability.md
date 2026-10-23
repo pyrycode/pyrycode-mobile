@@ -347,7 +347,45 @@ The original phone logs, APK identities and cleanup receipts for `ui-q2ll4ly_`
 and `ui-7b4oc0t5` remain missing; preserve that limitation and emit bounded
 content-free rotation owner/checkpoint receipts in the three focused Linux runs.
 
+### 2026-10-23 — certified rotation wired; controlled green
+
+The guarded lookup is now wired before the original `openThread`. It compares
+the current owner and exact store snapshot, requires checkpoint coverage of its
+completed version, and retains exactly one boundary from the previous session
+to a different session. The accepted reading supplies the session identity;
+later updates cannot make a second lookup fail after readiness was established.
+The native owner receipt now includes completed version and a bounded
+`certified_rotation` stage. No production source or recording changed.
+
+At `c12e2c03a350df018f09799b12253c78f8edb9d3`, the unchanged pre-repair
+control executed once and failed on the missing checkpoint-81 payload. Its
+six-file manifest verifies in `logs/evidence/2476/builder-certified-rotation-20261023/rotation-red-current`.
+After the guard, `SuiteCloseConsumptionTest` passed 4/4 and
+`SessionRotationReadinessTest` passed 7/7, both with zero failures/errors/skips.
+Their exact dirty-source patches, raw XML, binary reports and input hashes are
+retained in `rotation-green` and `focused-SessionRotationReadinessTest` beneath
+that evidence root. The causal fixture preserves the original exact-payload
+assertion and adds a post-emission terminal-consumption receipt and an assertion
+that partial divider facts leave reopening pending. It then observes the real
+checkpoint-81 request, subsequent checkpoint-84 certification and complete tape
+consumption. The three existing consumption/ownership controls remain enabled.
+
+| Event | Focused regression |
+| --- | --- |
+| Partial rotation before its terminal | `rotationReopenWaitsForCertificationBeforeAcquiringItsQuery`, `visibleDividerCannotReplaceItsMissingTerminal` |
+| Current snapshot replaced, even within one generation | `aRetainedSnapshotCannotCertifyTheCurrentReading` |
+| Connection, host, conversation, epoch or generation changes | `foreignOwnersCannotCertifyRotation`, `receiptMustDescribeItsOwnSnapshotEpochAndGeneration` |
+| Reset, missing or unadmitted evidence | `resetRepairAndUnadmittedReadingsCannotCertifyRotation` |
+| Unrelated, duplicate or self-referential divider | `unrelatedSelfAndAmbiguousDividersCannotSupplyTheNextSession` |
+
+The historical first boundary is resolved; its precise coalescence/cancellation
+interleaving, original effective APK identities and cleanup receipts remain
+unestablished. The controlled interleaving establishes the readiness defect,
+without attributing historical host load or preceding tests. Native repaired
+acceptance and the remaining focused classes are still pending at this commit.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
 - Pending documentation stage: `docs/e2e-interactive-stream.md`, “Negotiated Agent restart and settlement (#2246)”: counted repaired Linux invocations and dispatcher acceptance status.
+- Pending documentation stage, both sections above: add the demonstrated partial-rotation/certification defect and its guarded reopen regression, together with the fresh counted Linux evidence. Preserve the original failure and separate rerun, missing historical phone/APK/cleanup artifacts, and accepted #2478 results; qualify each completion claim to the cause actually proved.
