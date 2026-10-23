@@ -320,6 +320,33 @@ diagnostic handoff. Historical host load and preceding non-recorded test effects
 remain unestablished; the retained XML names the same three preceding recorded
 methods as the earlier investigation, without proving their causality.
 
+### 2026-10-23 — resume certified rotation repair
+
+The preserved controlled red establishes a useful repair despite the unresolved
+historical coalescence/cancellation distinction. Require `certifiedNextSession`
+to match the current authoritative owner and exact current snapshot, reject
+repair/reset/incomplete evidence, and require its checkpoint to cover both the
+completed version and the projected rotation fact. Wire that lookup into
+`proveNegotiatedAgentRestart` before reopening the destination. Preserve all
+later graph, family, navigation, settlement and cleanup assertions.
+
+The repository serializes `accept` and `acquire` on the same query monitor.
+Certification publishes during `accept`, before retirement; the reopening
+destination must acquire after that terminal finishes, rather than recursively
+inside publication. Extend the controlled test to retain terminal consumption
+and query lifecycle ordering, and require the exact checkpoint-81 request and
+its subsequent checkpoint-84 certification. Readiness negatives cover partial,
+missing, stale, reset and foreign ownership, and an unrelated divider. No
+production synchronization or query coalescing changes are planned.
+
+One behavior and its causal regression remain the deliverable, under 650 new
+written lines (under 1600 total branch work), no production exports or API
+migration. Overlaps with #2462 are later placement sampling and process-stop
+fencing; #2483 changes the earlier tool-run lookup. Neither is a dependency.
+The original phone logs, APK identities and cleanup receipts for `ui-q2ll4ly_`
+and `ui-7b4oc0t5` remain missing; preserve that limitation and emit bounded
+content-free rotation owner/checkpoint receipts in the three focused Linux runs.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
