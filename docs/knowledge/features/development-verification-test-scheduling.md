@@ -559,3 +559,27 @@ outside this macOS ticket's verification scope.
 covers selected-directory cleanup, timestamp-independent collection, strict
 per-execution accounting, retained original XML and the counted causal evidence
 for #2455 and #2481.
+
+### Subprocess startup and chunk-scanner proofs
+
+Keep synthetic child startup outside a short scanner deadline. In #2500,
+`GenerationReadinessTest.test_registration_token_across_chunks` could spend its
+250 ms readiness budget before the child wrote anything. A controlled 750 ms
+startup delay reproduced HTTP 503 with `registration_timeout`, a living child
+and zero output bytes. A cold focused pass alone could not expose that race.
+
+Both that method and `test_registration_token_across_chunks_after_delayed_startup`
+now wait boundedly for exactly 4096 fixture bytes: 4090 padding bytes plus
+`relay:`. They require incomplete-token rejection before releasing the suffix,
+then wait for all 4113 bytes and require HTTP 200 with the same living PID and
+generation. Each output wait has a five-second monotonic bound; the controller's
+250 ms test deadline and owned-child cleanup remain intact. Do not replace this
+with a longer controller timeout or remove the padding: the scanner must still
+carry the token prefix across its real read boundary.
+
+Retain byte counts alongside controller phase, identity and liveness. Removing
+suffix carry in a temporary controller copy made the repaired proof fail with
+all 4113 bytes present, distinguishing scanner failure from the zero-byte startup
+failure. The [retained experiments](../../../scripts/e2e-fixtures/readiness-2500/evidence.json)
+include commands, revisions, raw exchanges, child output and hashes; see
+[counted acceptance and historical limits](../../e2e-interactive-stream.md#chunked-registration-proof-2500).

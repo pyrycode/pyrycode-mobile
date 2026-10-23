@@ -1,0 +1,16 @@
+test_registration_token_across_chunks (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks) ... {"action": "start", "status": 503, "payload": {"action": "start", "http_status": 503, "running": true, "pid": 726338, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}, "time": 740379.867114649, "child_bytes": 0}
+FAIL
+
+======================================================================
+FAIL: test_registration_token_across_chunks (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 376, in test_registration_token_across_chunks
+    self.assertEqual(200, request("start")[0])
+AssertionError: 200 != 503
+
+----------------------------------------------------------------------
+Ran 1 test in 0.373s
+
+FAILED (failures=1)
+{"executed": 1, "passed": 0, "failed": 1, "errors": 0, "skipped": 0}
