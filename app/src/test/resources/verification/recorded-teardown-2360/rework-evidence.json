@@ -1,0 +1,42 @@
+{
+  "evidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2360/rework-20261021",
+  "platform": "macOS; managed Android 13; Linux outside scope",
+  "reviewedRevision": "6395f15a190b5584e77cc9baaa9fbe3b2d6bbf39",
+  "repairRevision": "cfc5cb62e841474f15747cea169962fb7815cc2b",
+  "nativeRevision": "919810b07b2c3f2a68e0622a9bd6dca0d770a26b",
+  "unitCommand": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.recording.<class> --console=plain",
+  "unitSource": "Each folder retains revision.txt and source.patch; green source contents were committed in f790f5d9e and 919810b07.",
+  "unitRuns": [
+    {"folder": "red", "class": "RecordedPhoneTeardownTest", "executed": 7, "passed": 5, "failed": 2, "errors": 0, "skipped": 0, "revision": "6395f15a190b5584e77cc9baaa9fbe3b2d6bbf39", "sha256": "e14d8a432a79a748d6266b7537c0a9cbeaad9aa87f662589259d1bf71e76b2b7"},
+    {"folder": "intermediate-android-log", "class": "RecordedPhoneTeardownTest", "executed": 9, "passed": 7, "failed": 2, "errors": 0, "skipped": 0, "revision": "cfc5cb62e841474f15747cea169962fb7815cc2b", "sha256": "16fb674e09d5b9dfc25ceea82684817681f5b4e50ca5c0e80b37aba8573aaef3"},
+    {"folder": "intermediate-connection-log", "class": "SuiteConnectionsTest", "executed": 27, "passed": 26, "failed": 1, "errors": 0, "skipped": 0, "revision": "f790f5d9e92a4861a3db837336ac77a7dffc4393", "sha256": "bd292a75a39b04b187120347c6fccb3a287bc71ab1a0b8ae77004b5176f73240"},
+    {"folder": "phone-green", "class": "RecordedPhoneTeardownTest", "executed": 9, "passed": 9, "failed": 0, "errors": 0, "skipped": 0, "revision": "cfc5cb62e841474f15747cea169962fb7815cc2b", "sha256": "d4b47a4adff5033125b9ce62d028b4d03ab45754b6f306ebc3313ed1f4d2f6c6"},
+    {"folder": "connections-green", "class": "SuiteConnectionsTest", "executed": 27, "passed": 27, "failed": 0, "errors": 0, "skipped": 0, "revision": "f790f5d9e92a4861a3db837336ac77a7dffc4393", "sha256": "e285778b76a79db63f25cfdb4099b88a850311e4abef39f01b4b8e21e40f0751"},
+    {"folder": "tape-green", "class": "RecordedSuiteTapeTest", "executed": 44, "passed": 44, "failed": 0, "errors": 0, "skipped": 0, "revision": "f790f5d9e92a4861a3db837336ac77a7dffc4393", "sha256": "66cc2972aba7c72acf73ec43700606f04ea1b4c9eea1129acd3e8eeb8a50026d"},
+    {"folder": "rule-green", "class": "RecordedActivityRuleTest", "executed": 2, "passed": 2, "failed": 0, "errors": 0, "skipped": 0, "revision": "f790f5d9e92a4861a3db837336ac77a7dffc4393", "sha256": "5695470e3b8788b37b7488f354416967b1ac860f379abdb68482a6861bcf4e71"}
+  ],
+  "controlledFailures": [
+    "foregroundReadinessCannotPassTapeReleaseBeforeHubEnqueue: foreground passed an actual request paused after tape release and before hub enqueue",
+    "foregroundTeardownPermitsOnlyADeliveredDuplicateTail: foreground blocked permitted omission before terminal preparation"
+  ],
+  "intermediateFailures": "The two intermediate runs reached android.util.Log in pure JVM tests. Both classes now save, replace and restore RelayLog.sink, matching RecordedSuiteTapeTest; no admission assertion changed.",
+  "nativeSource": "Clean pushed nativeRevision throughout the reopen check and all five consecutive offscreen invocations; each folder retains revision.txt, empty source.patch, raw XML, phone log and phases.",
+  "nativeCommand": "python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#<method>",
+  "reopenMethod": "interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately",
+  "offscreenMethod": "interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk",
+  "nativeRuns": [
+    {"report": "native-reopen/ui-n2jz24ha/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "f412aec882788aecf4ade7ce8dca68263653e038c8fefc450c2e4eb55bfb558b"},
+    {"report": "native-offscreen-1/ui-gs7zb_a8/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "827fd89e80cf3fe11a127720687bc7d6505ad207c1c1834003bf2f3c8966c8bf"},
+    {"report": "native-offscreen-2/ui-debcndh_/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "8a244ceec9e2a05ccebe79ea0322f899d9f872477ce6007808a08e5bcecc7757"},
+    {"report": "native-offscreen-3/ui-hm9__blu/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "18ebd7705829641a43d0d66cb6645086f113ad1a6746d3730427c4f37c5ec912"},
+    {"report": "native-offscreen-4/ui-1fis_ccf/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "402fc80efb054c7dbfff73fba8f643c18dfb6b83a19f8af85eca20382f6c3cd5"},
+    {"report": "native-offscreen-5/ui-cq21ujpg/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "07dc623eb1f2435cedc561ff6723f93876e32972fec2415321a24585d23b1d6a"}
+  ],
+  "nativeApkSha256": {
+    "app/build/outputs/apk/debug/app-debug.apk": "251d3b624e142ca44ac1b3f6a74dabf13db94004c7419247b4f4aa7ffaef12e7",
+    "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk": "e486bf0e240b4baa14147d0a8365cbe987a58e7b5107c27c7f148b2df9db046d"
+  },
+  "verifierFailureEvidence": "verifier-failure retains the original configured gate, same-tree rerun and merged-main comparison logs; the accepted inherited model-change failure is separate from this ticket's reopen regression.",
+  "otherChecks": "spotlessApply, lint, assembleDebug and compileDebugAndroidTestKotlin passed; final merge checks are recorded in the PR.",
+  "remainingAcceptance": "Dispatcher configured UI gate must execute/pass the offscreen method; complete UI and scripted gates remain pending."
+}

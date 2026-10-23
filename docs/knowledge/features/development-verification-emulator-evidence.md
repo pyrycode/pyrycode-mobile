@@ -1,11 +1,10 @@
 # Development verification — JVM logging, emulator and real evidence
 
-Split out of [Development verification](development-verification.md) on 2026-10-02 to keep that
-document under the 50000-byte size cap the docs guard enforces. Every section below moved here
-verbatim and kept its heading, so its anchors are unchanged, except one inbound link retargeted to
-the sibling document its destination moved into. Part of
-[Development verification](development-verification.md); see that document for the other topics
-and its links.
+Part of [Development verification](development-verification.md), split out on
+2026-10-02 to keep topics under the 50000-byte size cap. This topic covers JVM
+logging, emulator evidence and recovery admission. Device-gate artifact retention,
+peer-turn reopen evidence and counted durable-gap receipt evidence have linked
+children below; their catalog entries and inbound anchors follow the split.
 
 ## JVM logging and formatting
 
@@ -46,6 +45,75 @@ A hostile-text test fixture (e.g. `StoppedTurnTest`, #1356) stays readable in th
 source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
+
+### Exact durable-gap recovery receipts (#2515)
+
+`DurableGapProof` must account for each accepted phone query by its own exact
+terminal receipt. `OwnedThreadQueryObservation` retains the request object, wire
+request identity, host/conversation, connection and captured epoch/generation in
+memory. Identical payloads do not make two requests interchangeable. A refused
+send is excluded; pending, partial, failed or abandoned accepted work blocks
+admission. Duplicate terminals cannot complete another request. The passive
+witness uses the actual decoder and store certification; producer observations
+never populate or certify phone state. Production query behavior and the wire
+contract are unchanged. See [source ownership and paging](authoritative-reader-paging.md).
+
+Reset and retirement preserve accepted accounting. A reset is the terminal for
+its own old request, abandons other pending work without successful receipts,
+and requires a new request's certification in the replacement generation.
+Closing observation also retains pending accepted records, including acceptance
+returning after close. Early inbound delivery is buffered within existing bounds
+until its own send acceptance is known. Observation fails closed on capacity or
+duplicate request identity. A single global readiness flag would let one success
+hide another request's unfinished work.
+
+Successful certification and current-source readiness are separate facts.
+`certifyQuery` returning `Applied` retains that request's receipt even when newer
+completed live facts leave `repairNeeded` true. An exact follow-up must repair
+the current source before admission. Historical certificates/resets stay in the
+ledger, while version comparisons use only certificates matching both the current
+epoch and generation. Retired version 100 cannot constrain replacement version 1,
+even when reset reuses the epoch text. Current repair/reset flags and actual store
+generation fence ownership; a current-generation certificate is required.
+
+Admission spans three observable boundaries:
+
+- `AuthoritativeHistoryProbe.snapshot()` captures an immutable, versioned ledger
+  under its monitor. `exactlyAccounted` matches every accepted request by reference
+  exactly once to a certificate or reset, in addition to checking totals. Read
+  repository evidence outside the monitor, then revalidate that exact revision
+  with `isCurrent`. A later send invalidates the token permanently, including if
+  its terminal arrives before revalidation; matching counts cannot revive it.
+- Passive observation runs before production consumes the frame. Require admitted
+  current-source evidence whose checkpoint covers every current-generation terminal
+  and its own completed version. A passive receipt alone cannot establish production
+  application. Both initial and final recovery use this coherent admission seam.
+- Repository publication can precede renderer collection. Within the existing final
+  30000 ms wait, resolve the newest recovered row through `projectAuthoritativeThread`
+  and require the real LazyColumn's `IndexForKey` to contain its production `listKey`.
+  This also finds offscreen rows without scrolling or demanding a page. Revalidate
+  the observation revision after the UI sample, then retain the original rendered
+  text, scroll, chronology, duplicate and inert-demand assertions.
+
+The baseline saved-tail assertion counts only the exact baseline epoch/version
+request. Legitimate same-source follow-ups remain in the ledger and certify their
+own requested interval; they are not another saved-tail request. The original
+held merge sides, saved cache facts, missed-ring recovery, paging boundaries,
+reply identity and reconnect ownership assertions remain, with unchanged 30000 ms
+recovery waits and 90000 ms scenario deadlines. There are no accepted-input resends
+or additional acceptance retries.
+
+Diagnostics expose observation-local ordinals, static lifecycle codes, numeric
+versions/generations and equality booleans. Wire IDs, connection objects, host,
+conversation and epoch strings stay in memory; payloads, message text, tokens,
+pairing data and cryptographic material stay out of logs. Receipt, certificate,
+reset and snapshot stringification is redacted. Keep raw captures private under
+the [artifact retention rules](development-verification-artifact-retention.md#device-gate-artifact-retention).
+
+See [diagnostic ordering, controlled red/green reports, composed identities and configured acceptance](development-verification-recovery-receipt-evidence.md)
+for the counted Linux evidence and its historical failure boundaries.
+
+### Host fixture readiness and isolation
 
 Tier-tag counts in the shared lazy channel list span every host and only composed rows. After
 archiving one host's fixtures, requiring global `TREE_CHANNEL_ROW_TEST_TAG` absence can time out
@@ -146,63 +214,7 @@ turning a passing diagnostic run into proof of historical causation.
 
 ### Peer-turn reopen sweep resolution (#2318)
 
-A focused pass after a sweep failure does not establish suite-order independence.
-For `RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone`,
-the separate post-repair main sweep supplies that ticket's complete-sweep evidence;
-one passing sweep still makes no universal ordering guarantee.
-
-The original 30000 ms reopened-user timeout matched #2317's failed baseline.
-Cold assertion collections sent backfill and consumed the strict recording's
-reopen request before the application reopened. An extra cold-read experiment
-also failed; scrolling alone could not repair request admission. Offscreen
-retained-data loss was not established. The merged repair observes the
-application's existing subscription, requires a new active subscription on reopen
-and preserves exact user uniqueness and the same completed reply's ownership,
-identities and content. Count the user while displayed before revealing each
-assistant row, then revalidate current evidence. See
-[passive assertion contracts](../../recorded-tests.md#passive-thread-assertion-evidence-2317)
-and [thread testing](thread-screen-testing.md#passive-reopen-evidence-2317).
-
-**Counted Linux evidence, 2026-10-19.** Documentation read the retained focused
-XML and the counted XML embedded in both sweep logs and this ticket's UI gate log.
-The [accepted verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2320#issuecomment-6276801534)
-confirms the revision mapping and phone diagnostics. All rows have zero errors;
-executed excludes skipped cases.
-
-| Run | Revision | Executed | Passed | Failed | Skipped |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Original main sweep | `d20e92cd4b5b58ef0ce6df1f87ca8b2c297b7699` | 1793 | 1792 | 1 | 2 |
-| #2317 baseline (plan-only; original product source) | `1b368c9f8` | 1 | 0 | 1 | 0 |
-| #2317 cold-read experiment | `2f36172fa47944defb6344127d47f784aad26705` | 1 | 0 | 1 | 0 |
-| Post-repair focused method | `e729ec077d0c0b7bfdaa0caaeafb77d12f52eaf2` | 1 | 1 | 0 | 0 |
-| Configured UI gate | `de7a5de794f2bbcfb6bb37a5005362978e7083bb` | 335 | 335 | 0 | 1 |
-| Dispatcher post-repair main sweep | `dde1b41a6fde1dd0e545f9ad0e357b6256092fc8` | 1793 | 1793 | 0 | 2 |
-
-The focused application/test source matches the merged repair in the table. Its command was
-`python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_peerStartedTurn_continuesOnPhone`.
-The configured gate used
-`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`;
-both main sweeps used
-`UI_GATE_FULL=1 UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui`.
-Each repaired run passed the named method once with zero skips. Focused and
-configured-gate phone diagnostics confirm initial completion, one retained reopened
-user and reopened reply display through the current subscription. The UI gate
-skipped only `RenameDialogCaptureTest.renameAtFigmaViewport`; both sweeps also
-skipped `ComposerPasteTest.pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`.
-
-The reported sweep regression is resolved with navigation, strict replay inputs,
-recording bytes, assertions and bounds preserved. Earlier failures remain failed.
-Other operating systems are outside scope; no fresh Claude capture ran.
-
-The [checked evidence summary](../../../app/src/androidTest/assets/peer-reopen-2318/evidence.txt)
-records diagnostics and hashes. Private raw evidence was retained under
-`/work/Projects/pyrycode-mobile-agents/logs/evidence/2318/builder-20261019-post-repair/`:
-`focused/dispatcher.xml`, `original-sweep/stdout.log` and
-`post-repair-main-sweep/stdout.log`, with accompanying stderr and source records.
-The accepted verifier bundle, run
-`7d3dc88d0f44ecfd77e0f642bef9963b4e309506cee0f7da07e3ee22a9b767a8`,
-retains counted UI XML in `logs/verifier-gate__2318_5.log` after gate-worktree
-removal. Paths describe evidence retained at review time.
+See [development verification — peer-turn reopen evidence](development-verification-peer-reopen-evidence.md#peer-turn-reopen-sweep-resolution-2318).
 
 ### Live assistant reply contract
 
@@ -496,105 +508,7 @@ ending apart.
 
 ### Device-gate artifact retention
 
-A counted stdout report proves method outcomes, but cannot replace per-test phone
-logcat and matching daemon diagnostics. Before gate worktree and daemon cleanup,
-retain fresh XML, phone logs, correlated daemon evidence, tested revisions and a
-verified SHA-256 manifest privately on the persistent agents volume, under
-`$AGENTS_REPO_PATH/logs/evidence/1896/<run>/` for this investigation. Keep directories
-owner-only (0700) and files owner-only (0600). Publish separately reviewed
-summaries containing only allowlisted method outcomes, counts, fixed stage labels,
-safe stack evidence, revisions, hashes and artifact availability. Exclude keys,
-tokens, pairing codes, credential homes and raw prompt/frame/clipboard content.
-Preserving an original exception as cause does not make its nested message safe
-to publish unreviewed.
-
-The standard managed launcher supplies `AGENTS_REPO_PATH`; `scripts/e2e-emulator.sh`
-uses the private retention helper introduced by #2137 and extended by #2145 on
-both success and failure. Numbered `feature/<ticket>` branches default to
-`$AGENTS_REPO_PATH/logs/evidence/<ticket>/harness/`; all other branches, including
-main and detached comparisons, default to `$AGENTS_REPO_PATH/logs/evidence/harness/`.
-Each capture creates a unique `fault-<random>` run directory. An explicit
-`E2E_FAULT_EVIDENCE_DIR` overrides the default. The configured agents root must
-already exist and be usable; retention does not create a substitute root. No
-custom process-inspection wrapper or new live-Claude run is needed for this
-cleanup facility.
-
-Only regular, non-symlink `daemon.log`, `daemon-fault.log`, `daemon-b.log`,
-`daemon-answer.log`, `daemon-bypass.log` and `relay.log` from the harness working
-directory are eligible. The helper opens directories/files without following
-caller-owned symlinks, checks regular-file status on opened descriptors and
-copies this constant allowlist rather than archiving the tree. macOS's root-owned
-top-level `/tmp` and `/var` aliases are resolved before pinning their canonical
-directories; caller-owned evidence symlinks remain rejected. New evidence
-ancestors, existing managed evidence-subtree directories and run directories are
-0700; retained logs and metadata are 0600 from creation. Access is restricted to
-the agents account on its trusted volume, not encrypted storage or protection
-against compromise of that account. Credential homes, keys, token files, pairing
-outputs and transcripts never enter this facility.
-
-`inputs.json` records the validated Mobile and daemon binary revisions, SHA-256
-of the frozen launch executable (including PATH selection), configured daemon
-source revision separately, and the original `harness_exit_code`. Unknown or
-invalid identities are explicitly `unavailable`; source HEAD is not a substitute
-for binary identity. Every allowlisted name has an `availability` value:
-`retained` after verified copying, `unavailable` for missing optional files,
-symlinks or non-regular entries, and `failed` for copy/hash errors. Unavailable
-optional logs do not fail retention. `SHA256SUMS` records verified log and metadata
-hashes; these establish copy integrity, not authenticity.
-
-Consumers must require `inputs.json`'s `retention_status=complete` before treating
-the manifest as a completed set. The authoritative metadata is first written,
-synced and verified as `partial`. The helper verifies `SHA256SUMS` against the
-intended final metadata, then writes, syncs and verifies `inputs.pending.json`
-before atomically replacing `inputs.json` as the completion commit. A partial
-record can therefore coexist with a manifest hashing intended final metadata;
-neither that manifest nor pending metadata establishes completion. Write,
-verification, publication failure or interruption before the commit leaves the
-authoritative claim partial. Safe failure output alone cannot prove durable
-completion.
-
-Cleanup captures the original exit result, terminates and waits/reaps owned
-children, then retains diagnostics synchronously before disposing of harness
-data. An original success still removes the temporary working directory even
-when retention fails; an original failure keeps it under the existing policy.
-Managed isolated credential homes are removed on every outcome, including
-retention failure, and managed cleanup skips the separate bypass-transcript
-copier. An original nonzero exit code is preserved exactly. Original success
-becomes nonzero if configured retention fails, including an absent/unusable
-agents root. Without `AGENTS_REPO_PATH` or an explicit destination, unmanaged
-runs retain their existing success/failure disposal policy, including failed-run
-isolated-home retention.
-
-The helper outputs only an escaped destination and fixed completion/availability
-fields; failed or partial retention is explicit, without raw logs or exception
-payloads. Inspect raw diagnostics privately and publish only separately reviewed
-safe summaries under the limits above; do not commit, post or echo raw content.
-This capture does not retain gate XML or phone logcat automatically, and a
-builder capture does not prove survival on the final dispatcher run. See
-[Offline Retry artifact availability](../../e2e-interactive-stream.md#offline-retry-registration-evidence-2137).
-The cleanup repair does not attribute the intermittent failures tracked by
-\#2138, #2139 or #2140.
-
-For [permission isolation](permission-modal-overlay-testing.md#held-per-conversation-diagnostics-1896),
-the committed
-[`permission-isolation-1896/`](../../../app/src/test/resources/e2e/permission-isolation-1896/)
-keeps historical counted XML and the scheduler-only 30-second stack, builder
-selections of **1/1, 3/3 and 2/2 passes** (each 0 failed/skipped), and
-`dispatcher-full-live-pass.{xml,txt}` from the earlier 2026-10-12 full dispatcher
-run (**65 executed/passed, 0 failed/errors/skipped**). The private source copies
-and `SHA256SUMS` survive under
-`$AGENTS_REPO_PATH/logs/evidence/1896/2026-10-12T20-20-20-895Z/`.
-Its temporary `real-claude-gate-1896/build/dispatcher-tests/live-ki7gd6v9`
-and `/tmp/pyry-e2e-ans.Z7u8UW` directories are gone; their paths are provenance,
-not retrievable captures. Per-test XML/phone logcat and matching answer-daemon
-evidence are unavailable, and surviving stderr has no permission-stage lines.
-Do not reconstruct them from a pass or from aggregate stdout.
-
-The renewed [full live acceptance](../../e2e-interactive-stream.md#permission-isolation-diagnostics-1896)
-also passed **65 executed/passed, 0 failed, 0 skipped**, including the named method.
-Its durable counted report is distinct from the committed earlier run. Neither
-pass establishes the historical cause or an artifact-retention implementation
-repair; this checkpoint documents the retention requirement and known limits.
+See [development verification — device-gate artifact retention](development-verification-artifact-retention.md#device-gate-artifact-retention).
 
 ## Share failure presentation (#1824)
 
