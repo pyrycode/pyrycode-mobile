@@ -8364,6 +8364,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   rung-4 scripted evidence with no real-Claude run required; the pre-ship live command remains
   `python3 scripts/android-test-gate.py live`.
 
+- **Replay release and queued recovery ownership (#2486):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
+  now releases only after deliberate sever and refreshes current-source facts after rendering.
+  `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply` forces authenticated replacement
+  after release and retains whole-turn exclusivity through durable reconciliation. Both passed in
+  the configured 24-test scripted-all run; see [counted evidence and historical limits](#replay-and-queued-recovery-evidence-2486).
+  No scenario-coverage follow-up remains. The source-confirmed shell failure-cleanup finding remains
+  recorded there. These are rung-4 checks with zero real-Claude turns; the pre-ship live command stays
+  `python3 scripts/android-test-gate.py live`.
+
 - **Background-agent newest-end placement (#1783):**
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed
   in the dispatcher full live suite; its `DeterministicInteractiveStreamE2ETest`
