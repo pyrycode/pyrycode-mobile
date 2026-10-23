@@ -1,0 +1,47 @@
+{
+  "ticket": 2490,
+  "finding": 1,
+  "operatingSystem": "macOS",
+  "selection": "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation",
+  "privateEvidenceRoot": "$AGENTS_REPO_PATH/logs/evidence/2490/",
+  "countFields": ["executed", "passed", "failed", "skipped"],
+  "attempts": [
+    {
+      "attempt": "rework-model-branch-1",
+      "revision": "5b66b8422a6c242877b86f31c43de1e99b221a60",
+      "counts": [1, 0, 1, 0],
+      "exit": 1,
+      "observed": "Strict teardown failed: close before final checkpoint. The final-Y selection timeout was not reproduced.",
+      "manifestSha256": "17febf598350286cb1f5f453d44197c52b0d01e178afbfb61c9a9c9f1e648fb7"
+    },
+    {
+      "attempt": "rework-model-main-control-1",
+      "revision": "235bd774a9963d4364dfa4a3312a3144ab9f251c",
+      "sourcePatchRetained": true,
+      "productionEqualsMain": "45b86ff05dd71c8904a006c8b8c8a7c6489616c7",
+      "counts": [1, 0, 1, 0],
+      "exit": 1,
+      "observed": "Strict teardown failed: close before test-end. The final-Y selection timeout was not reproduced.",
+      "manifestSha256": "c3d86a2f43f00fa9215475a9288c31e308c07472fcc2876204e0ec80a287fb6a"
+    },
+    {
+      "attempt": "rework-model-main-control-2",
+      "revision": "235bd774a9963d4364dfa4a3312a3144ab9f251c",
+      "sourcePatchRetained": true,
+      "productionEqualsMain": "45b86ff05dd71c8904a006c8b8c8a7c6489616c7",
+      "counts": [1, 1, 0, 0],
+      "exit": 0,
+      "observed": "Isolated pass; no repair or sequence-independence claim.",
+      "manifestSha256": "e98481972bcd2d3f87f36b5926ace15a9035a59d8ab51d6686e1cf5fd0574959"
+    }
+  ],
+  "historicalMainComparison": {
+    "attempt": "rework-historical-main-model",
+    "sourceTicket": 2375,
+    "revision": "ecad147dd8a21f4753f16cfc6b9f79dafed18058",
+    "namedMethodCounts": [1, 0, 1, 0],
+    "observed": "Same final-Y selection timeout in a historical complete-main gate. Original XML and phone log were verified against their source manifest before retention. Identical cause remains unproven.",
+    "manifestSha256": "9f21893e0a2669b5ff8321eb94e4d2db11fdaa915f23e671cb6fa67c62475d42"
+  },
+  "pending": "Finding 1 remains unresolved. Existing model diagnostic #2351 and repair #2356 retain ownership; request shared assessment of the dispatcher's original three-method sequence and branch/main attribution. Preserve all assertions, deadlines and strict tape consumption."
+}
