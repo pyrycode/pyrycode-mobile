@@ -139,6 +139,14 @@ Reading `InteractiveStreamE2ETest.restartApp`, `E2eTestApplication.rebuildGraph`
 
 Await process background before rebuilding, retaining the same background-before-relaunch control afterward. Both observe the existing lifecycle flow under `THREAD_TIMEOUT_MS`; no sleep, deadline extension, request omission, production driver change or ownership relaxation is added. Four restart callers keep their signatures and original assertions. The recorded Agent method is the native regression because this delayed real process lifecycle cannot be proved by the paused JVM clock. Security re-review: PASS; trusted lifecycle observation has bounded cancellation and no new job, credential, transport or storage surface. Final scope remains below 1600 written lines.
 
+### 2026-10-23 — Revalidate certification after read sampling
+
+Verifier finding 1 identifies a same-connection reset between authoritative evidence and read marks. Require `pingReadMarkConfirmed` to re-read the store after marks and accept only the identical immutable sampled snapshot; `readSample` repeats that fence alongside its final connection/support checks after diagnostics. A changed generation, epoch, repair flag, certification or exact reply therefore requires a fresh sample. Preserve all daemon-confirmation, ownership and deadline requirements.
+
+Controlled `PingReadProofTest` regressions use the real store: sample certified evidence, reset while sampling unchanged confirmed marks, reject the retired snapshot, then require fresh exact-reply certification. Cover reused and changed epochs, and repair without generation replacement. Run this class red then green, unchanged `ThreadEvidenceTest`, managed macOS ping, lint and final compile/format gates. No production changes or new jobs.
+
+Scope reassessment: the retained integrated diff is 1591 inserted/deleted lines; forecast about 1700 with this regression and repair. This is the same final-proof invariant and its sole native consumer, so the one-consumer floor in `builder/handoffs.md` keeps them together despite the line ceiling. Existing six caller symbols remain local to the native proof and its tests. Overlaps #1766, #2091, #2104 and #2175 remain in separate methods/setup. Security re-review: PASS; immutable store identity fences withdrawn certification without transferring sight or changing strict ownership. No new logs, transport, storage or credentials.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
