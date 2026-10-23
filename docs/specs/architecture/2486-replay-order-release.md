@@ -9,6 +9,7 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/ThreadEvidence.kt`: passive host route and authenticated connection ownership.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`: completion, order, segmentation and echo checks remain intact.
 - `app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`: source identity probes alongside ordered replay and echo controls.
+- `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: `applyBatch`, `certifyQuery` and document identity show why valid publications can replace a snapshot without retiring its source.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/AuthoritativeScenarioScreenTest.kt`: real rendered daemon-order assertion and its negative control.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ScriptedThreadRenderTest.kt`: split/unsplit rendering and missing, duplicate, reordered and late-echo controls.
 - Sibling `pyrycode/docs/protocol-mobile.md`, Security model: existing Noise trust boundaries remain unchanged by this test-only release repair.
@@ -40,6 +41,8 @@ The existing owned shell watcher waits for the release file; the existing fault 
 | Repeated automatic reconnect/unregister and enqueue | Same regression verifies the held fragment stays closed. |
 | Deliberate sever then explicit release | Regression verifies explicit release completes watcher; native replay-order checks thinking before sever and exact reply afterwards. |
 | Reconnect replaces authenticated source under same host/conversation | Final proof requires current route connection/snapshot; focused ownership probes reject retired connection, other host/conversation and changed document. |
+| Same document advances while Compose synchronizes rendered text | `sameDocumentPublicationDuringRenderDoesNotRetireReplayOwnership` and `replayRefreshAcceptsSameDocumentAdvanceDuringRender` accept ownership and validate refreshed facts. |
+| Fresh facts invalidate otherwise correct captured text/echo proof | `replayRefreshRejectsNewDuplicateEchoDespiteCorrectOldFactsAndRender` fails on a duplicate current echo despite the valid old facts and rendered reply. |
 | Duplicate, missing, reordered or segmented replay; duplicate/late echo | Existing `QueueRecoveryAgentEvidenceTest`, `AuthoritativeScenarioScreenTest` and `ScriptedThreadRenderTest` retain their negative and success probes. |
 
 ## Error handling
@@ -69,7 +72,7 @@ Write and run the real shell watcher regression before the repair; it must fail 
 - Cryptography: real Noise transport remains untouched; no changes to keys, nonces or algorithms.
 - Network/I/O: existing bounded control request and supervisor backoff remain; no timeout increase or new endpoint.
 - Logs: static phase names only; never message bodies, tokens, keys, transcripts or headers.
-- Concurrency: explicit action follows completed close and null repository; no additional job or lock; existing cleanup owns shell children.
+- Concurrency: explicit action follows completed close and null repository; no additional job or lock; existing cleanup owns shell children. After render synchronization, final proof refreshes current facts on the supported authenticated connection and matches host, conversation, epoch, generation and document incarnation. Same-document publication is allowed; a retired source or replaced document cannot certify success. Fresh facts must independently pass all replay checks.
 - Threat model: dropped/reordered traffic must still fail ordered evidence; no plaintext disclosure to relay. Rooted-disk theft and UI screenshot/keyboard exposure are outside this test-only repair, with existing production storage/UI boundaries unchanged.
 
 **Reviewer:** builder self-review. **Date:** 2026-10-23.

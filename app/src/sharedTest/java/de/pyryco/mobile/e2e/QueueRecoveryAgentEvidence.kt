@@ -85,7 +85,7 @@ internal fun ThreadEvidence.sendNowPlacementFailure(
 
 private fun ThreadEvidence.mainAssistants() = records.filter { it.message.role == Role.Assistant && it.agentId == null }
 
-/** A retained replay cannot certify a replacement connection or document, even with identical item IDs. */
+/** Ownership survives same-document progress, never a replacement connection or document. */
 internal fun ThreadEvidence.isCurrentReplay(
     host: String,
     conversation: String,
@@ -99,7 +99,13 @@ internal fun ThreadEvidence.isCurrentReplay(
         connection != null &&
         owner.connection === connection &&
         snapshot != null &&
-        sourceSnapshot === snapshot
+        sourceSnapshot != null &&
+        snapshot.epoch != null &&
+        owner.epoch == snapshot.epoch &&
+        owner.generation == snapshot.generation &&
+        sourceSnapshot.incarnation == snapshot.incarnation &&
+        !snapshot.resetNeeded &&
+        !snapshot.repairNeeded
 
 /** Legacy keeps the list check; daemon facts need every main assistant item settled, joined in order to [expected]. */
 internal fun ThreadEvidence.hasCompletedReplay(expected: String): Boolean =
@@ -137,12 +143,15 @@ internal fun ComposeContentTestRule.assertOrderedReplay(
     evidence: ThreadEvidence,
     expected: String,
     prompt: String,
+    refresh: (ThreadEvidence) -> ThreadEvidence? = { it },
 ) {
     when (evidence.owner.kind) {
         ThreadEvidenceKind.Legacy -> assertOrderedReplay(evidence.records.map { ThreadItem.MessageItem(it.message) }, expected, prompt)
         ThreadEvidenceKind.Authoritative -> {
             assertEquals(expected, renderedReplyText(expected))
-            assertNull("authoritative replay", evidence.authoritativeReplayFailure(expected, prompt))
+            // Render synchronization can publish turn-end/catch-up. Validate fresh facts afterwards.
+            val current = refresh(evidence) ?: throw AssertionError("replay evidence must belong to the current source")
+            assertNull("authoritative replay", current.authoritativeReplayFailure(expected, prompt))
         }
     }
 }

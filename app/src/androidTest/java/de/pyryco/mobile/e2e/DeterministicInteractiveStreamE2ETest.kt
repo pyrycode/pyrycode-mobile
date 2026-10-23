@@ -99,8 +99,8 @@ import org.koin.core.context.GlobalContext
  *  - `replay-order` (#477) — a sequence of events produced **entirely while the phone is offline**
  *    replays **in production order, each exactly once** after reconnect: the turn is held open, the
  *    link is severed, the ordered sequence accrues in the daemon's in-ring buffer during the outage
- *    (drop B fenced on the relay-logged phone-leg disconnect, not a 2nd send a severed phone cannot
- *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
+ *    (drop B released by the phone's explicit control after deliberate sever), then the link is
+ *    restored and the buffered sequence replays in order (see the method KDoc).
  *  - `refusal` (#1360) — a session-scoped `model_refusal_fallback` offers Switch back on its row; the tap
  *    writes the original model, the button goes, and a fresh settings reading names that model.
  *  - `mcp-failed` (#1457) — fakeclaude's first `mcp_status` answer names a `failed` server; the thread's
@@ -1793,10 +1793,17 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
 
-        fun currentSource(evidence: ThreadEvidence): Boolean {
+        fun currentSource(evidence: ThreadEvidence): ThreadEvidence? {
             val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
-            val current = coordinator.currentRepository.value?.takeIf { it === supported }
-            return evidence.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId))
+            val current = coordinator.currentRepository.value?.takeIf { it === supported } ?: return null
+            val snapshot = route.store.current(serverId, conversationId)
+            if (!evidence.isCurrentReplay(serverId, conversationId, current, snapshot)) return null
+            val fresh = authoritativeThreadEvidence(serverId, conversationId, current, snapshot)
+            return fresh.takeIf {
+                current === coordinator.currentRepository.value &&
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
+                    fresh.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId))
+            }
         }
 
         // Message #1 → drop A → turn_state(thinking), held open. The spinner proves the turn is open and
@@ -1832,14 +1839,13 @@ class DeterministicInteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         harnessThreadEvidence(hostRepository).observe(conversationId).first {
-                            currentSource(it) && it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING)
+                            currentSource(it)?.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) == true
                         }
                     }
                 }
             }
         phase("ordered_identity_and_echo") {
-            composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
-            assertTrue("replay evidence still belongs to the current source", currentSource(evidence))
+            composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT, refresh = ::currentSource)
         }
     }
 
