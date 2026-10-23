@@ -156,6 +156,14 @@ Repaired validation: `PingReadProofTest` passed 7/7 and unchanged `ThreadEvidenc
 
 Verified private evidence: agents `logs/evidence/2462/rework-reset-sampling-20261023/` retains the controlled red, both green JVM XML files, raw native XML/protobufs and phone/control/daemon/relay traces, pushed source and effective APK/binary identities, manager admission and cleanup receipts. All 31 enclosing manifest entries and the original harness manifest verify. Historical failures remain unchanged; complete configured acceptance remains dispatcher-owned.
 
+### 2026-10-23 — Residual unavailable shown metadata
+
+The latest verifier reports two final-proof failures on `4711539ab`: exact current-owner certification reaches checkpoint 12, but current shown metadata is unavailable. Keep both failures and every completed repair. Reproduce the original managed ping pair, then trace bounded numeric metadata/request ordering on the producing connection if existing evidence cannot distinguish the missing edge. Diagnostics must stay test-only, exclude payloads and arbitrary strings, and retain the original waits and teardown. A focused pass cannot replace complete dispatcher acceptance.
+
+Investigate the same final-proof invariant before choosing a repair: reconnect certification and the correlated summary can arrive in either order, and live-completion refresh ownership does not automatically imply a replacement connection owns a trigger. Add a controlled regression for the demonstrated missing edge before changing code. No inferred shown value, local write, transferred sight, polling request loop or relaxed ownership is acceptable. Reassess any independently useful product behaviour separately. The retained diff already exceeds 1600 written lines; sole-consumer final-proof diagnostics/regressions stay with their consumer under the existing floor, with the actual overage recorded before handoff. In-flight #1947, #2175, #2325, #2338 and #2389 edits are separate repository methods; keep any repair local.
+
+Security re-review: PASS for bounded test-only observation. Read metadata and request IDs are numeric diagnostics, raw text/frames/identifiers remain private and unlogged, and no network request or production authority changes during diagnosis. The manager confirms only this admitted builder for #2462, no retained pre-verification worker, and workflow revision 107 has no approval hold.
+
 ## Documentation handoff
 
 Pending documentation stage: update the #2462/#2467 evidence discussion in `docs/e2e-interactive-stream.md` and `docs/recorded-tests.md` with the integrated macOS outcome and durable evidence path. Preserve historical failed outcomes and their previously reviewed publication limitations; complete configured acceptance remains dispatcher-owned.
