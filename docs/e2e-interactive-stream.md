@@ -2524,7 +2524,7 @@ controller timeout with 250-ms dispatch lag; canned parser responses cannot catc
 that boundary. Static action, HTTP status, generation, phase and elapsed timing
 distinguish spawn failure, registration timeout, exit and client transport failure.
 Transport failures rethrow the original throwable; arbitrary response/daemon/error
-text stays out of published diagnostics. See [retention](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention)
+text stays out of published diagnostics. See [retention](knowledge/features/development-verification-artifact-retention.md#device-gate-artifact-retention)
 and [counted evidence and historical limits](#offline-retry-registration-evidence-2137).
 
 ### Phone read-mark proof (#1912)
@@ -3499,6 +3499,14 @@ It preserves both held sides, reset/page assertions, missed posts, exact reply a
 rendered order. Reader pulls drive older demand. Raw-history coverage, marker search
 and legacy cache branches are removed; independent producer diagnostics never supply
 phone content or certification. See [current acceptance](#authoritative-runtime-removal-2367).
+
+The [exact recovery receipt boundary (#2515)](knowledge/features/development-verification-emulator-evidence.md#exact-durable-gap-recovery-receipts-2515)
+keeps every accepted request through reset/retirement and requires its own terminal.
+Initial/final admission revalidates one observation revision against production
+certification; final admission also waits for the real lazy item provider. Current
+epoch/generation scopes checkpoint comparisons while historical receipts remain
+accounted for. The [Linux evidence](knowledge/features/development-verification-recovery-receipt-evidence.md)
+separates the successful composed producer pair from configured inherited failures.
 
 The following earlier fragmented-projection evidence describes the removed runtime.
 Its counts and outcomes remain historical.
@@ -5184,7 +5192,7 @@ the report has no daemon-revision annotation. This is full-suite acceptance,
 separate from the earlier 65-pass evidence handoff and builder selections of
 1, 3 and 2 passes. The committed `dispatcher-full-live-pass.{xml,txt}` describes
 the earlier run, not this renewed acceptance. See
-[retention limits](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention).
+[retention limits](knowledge/features/development-verification-artifact-retention.md#device-gate-artifact-retention).
 
 This closes the diagnostic live handoff without attributing or repairing the
 historical intermittent failure. #2047 remains maintainer-closed under its
@@ -8395,6 +8403,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **#2515:** the shared proof used by rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+  and rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+  requires exact receipts and coherent source/renderer admission. The
+  [counted evidence](knowledge/features/development-verification-recovery-receipt-evidence.md)
+  records the composed Linux pair's 2/2 pass and the separately accepted configured
+  failures. No new real-Claude run is claimed. Producer migration (#2513), failure
+  restoration (#2514) and ordinary-ping final-read work (#2494) remain separate.
+  Pre-ship remains `python3 scripts/android-test-gate.py live`.
 
 - **#2391:** [Expanded-detail validity evidence](#expanded-detail-validity-evidence-2391)
   completes this leaf's contribution to #2393's relocated handoff, including
