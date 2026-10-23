@@ -148,7 +148,7 @@ superseding the earlier keep-open requirement without proving historical causati
 Reopen/resume it only for a new failure retaining the named stage, original
 cause/deadline, counted XML, per-test phone logcat and matching daemon evidence,
 with tested revisions/provenance and safe published locations. See
-[device-gate artifact retention](development-verification-emulator-evidence.md#device-gate-artifact-retention)
+[device-gate artifact retention](development-verification-artifact-retention.md#device-gate-artifact-retention)
 for private captures, sanitized summaries and unavailable temporary paths.
 
 ## Related
