@@ -154,7 +154,11 @@ The effective test BuildConfig identifies `51738b973`. The focused replay record
 `terminal_preparation_finished early_checkpoint=true`. Scripted ping retained its
 test daemon/relay logs and source/binary metadata; no real provider turn ran.
 These are scoped author checks, not a new independent PASS or the full #2494 proof.
-Fresh complete configured acceptance and independent re-review remain required. Earlier causal
+Main subsequently merged cleanly as `a456e5b8e36670a3b17e9e405f11b999f785d3ee`;
+its affected activation class passed 41/41 and lint passed. The preceding native
+and scripted results retain source `51738b973`, rather than certifying the later
+integration. Fresh complete configured acceptance and independent re-review remain
+required. Earlier causal
 bundles and failed attempts remain separately identified; no new provider capture,
 Linux execution or IDENTICAL comparison is claimed here.
 
