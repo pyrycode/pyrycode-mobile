@@ -63,7 +63,7 @@ The controlled probe and focused native run must verify the boundary and whether
 
 ## Scope assessment
 
-One independently useful repair with its regressions; forecast about 650 written lines across test helpers, regressions and this plan, zero production exports, fewer than ten updated consumers, three acceptance criteria and fewer than ten new failure branches. This remains below the 1600-line ceiling. Recount after implementation.
+One independently useful lifecycle repair with its existing causal controls. The old line/file, consumer and failure-branch forecasts are obsolete; continuation is integration, acceptance and documentation without a new production change.
 
 ## Revisions
 
@@ -75,8 +75,28 @@ The explicit entry points are `LiveSessionCleanupRule.endWhileActivityAlive` and
 
 The final main merge includes #2483's independent owned-run reveal helper. Its original Agent ownership, collapsed/expanded visibility, uniqueness, and separate main-lane reply assertions remain in place; this ticket does not edit the scenario. The focused pass therefore covers their current main integration as well as terminal cleanup. The configured dispatcher UI gate must still execute and pass this method before verifier PASS; full suites remain pending for that stage. Linux is outside this ticket's verification scope.
 
-Final scope measurement before this evidence entry: 478 inserted + 13 deleted lines across nine files, including the plan, with no production edits and no new exported production type. The additional plan evidence stays below the forecast and numeric ceilings. No split or wider diagnostic is needed.
+Final scope measurement before this evidence entry: 478 inserted + 13 deleted lines across nine files, including the plan, with no production edits and no new exported production type. This is a historical size measurement, not a completion ceiling. No split or wider diagnostic is needed.
 
 The final failure probes also repeat the same Activity statement after a body failure, proving that the wrapper cannot reuse its previous primary error. This adds coverage for the wrapper's session-local state without changing implementation or native inputs.
 
 2026-10-23: Final deadline review found that composing individually bounded waits could restart the preparation budget after scenario-complete. The controlled probe delivers one response after 20 seconds and retains another 20-second delivery after the observation; it failed before the correction (5 executed, 4 passed, 1 failed, 0 skipped). `completeBeforePhoneTeardown` now shares one outer 30-second timeout across all its phases. The existing end/checkpoint/close deadlines and original scenario deadlines are unchanged; required later work is neither released early nor discarded to succeed.
+
+## Manual continuation — 2026-10-23
+
+Central revision 36 accepted exact-ticket manual custody. No active worker/support task or
+process using the clean retained verifier-2491 checkout remained. The old verifier found no
+implementation defect and a current-head native pass, but stopped after the independent
+scripts-gate readiness failure #2500. That ticket is now Done and its documentation commit
+`b319cc9e3` is an ancestor of clean main integration `33015f5e5b8d03eca56a09a4c92da94d95a87cb9`.
+The PR-relative lifecycle implementation and captured recording remain unchanged.
+
+Remove obsolete numeric size forecasts. Keep all replay, ownership, observation, deadline,
+cleanup and configured acceptance requirements. Reuse valid causal/95-JVM/native evidence
+with its original source identities; the integrated candidate still requires complete normal
+configured acceptance and independent re-review. No old focused pass is relabelled as that result.
+
+The retained diagnosis, early-end/captured-close ordering, shared terminal deadline and evidence
+limits are now written in `docs/recorded-tests.md` and the owning verification scheduling topic.
+The documentation records pending configured acceptance honestly. Release the obsolete manual
+hold after publishing so the normal verifier can collect the required gates and review; keep
+this ticket selected through its eventual documentation handoff. No merge/release is claimed.
