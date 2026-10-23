@@ -203,5 +203,15 @@ Focused macOS red/green: the exact buffered-order test executed once and failed
 on unfixed source, then the affected activation class executed/passed 41/41,
 zero failures/errors/skips, exit 0 after repair. The passing new case includes
 fresh-observation recovery after the stale queued send is rejected. Spotless
-application passed. Focused native/scripted validation and final checks remain
-pending; complete acceptance stays dispatcher-owned.
+application passed. On committed `51738b973b036c29ae9c9f302feb56f2c7286013`,
+focused recorded model-change passed 1/1 and scripted ping passed 2/2, zero
+failures/errors/skips and exit 0. The native and scripted gate phases finished;
+complete private evidence is at agents `logs/evidence/2493/manual-rework-20261023/`.
+Effective test BuildConfig identifies `51738b973`; built app/test APK SHA-256 values
+are `6f0306dcbbf23cb7f79bf49f802d388b63358223ea1b5cfa08f482966b36fdd5` /
+`ec7e21e988464bf68926d09864174bafc2baab5a8c5e4c6fc9a7cc6f1a716fed`.
+Scripted harness inputs identify daemon/source
+`fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe`, binary SHA-256
+`4d62d5ad4c5189315c46dd9c11232b6f8133759d17b483185aa8e5cbe15bc534`.
+Android lint passed, exit 0. Final pre-verification and normal independent
+re-review remain pending; complete configured acceptance stays dispatcher-owned.

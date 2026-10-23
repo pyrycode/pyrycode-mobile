@@ -141,7 +141,20 @@ receipts. Source review still returned FAIL for queued recovery authority surviv
 withdrawal; passing replay is not proof of that asynchronous ordering. The focused
 repair and its buffered-order probe require new independent review. Preserve both
 the accepted gate disposition and the source finding, rather than treating the
-old gates as acceptance of later source changes. Earlier causal
+old gates as acceptance of later source changes.
+
+The queued-authority repair at `51738b973b036c29ae9c9f302feb56f2c7286013`
+has focused macOS evidence: activation class 41/41, recorded model-change 1/1 and
+scripted ping 2/2, all with zero failures/errors/skips and command exit 0. The new
+buffered-order regression failed once before repair, then passed within the 41-case
+class, including fresh-observation recovery. Native and scripted phases finished;
+raw XML, phone logs, source binding, built APK hashes and isolated harness records
+are retained under agents `logs/evidence/2493/manual-rework-20261023/`.
+The effective test BuildConfig identifies `51738b973`. The focused replay records
+`terminal_preparation_finished early_checkpoint=true`. Scripted ping retained its
+test daemon/relay logs and source/binary metadata; no real provider turn ran.
+These are scoped author checks, not a new independent PASS or the full #2494 proof.
+Fresh complete configured acceptance and independent re-review remain required. Earlier causal
 bundles and failed attempts remain separately identified; no new provider capture,
 Linux execution or IDENTICAL comparison is claimed here.
 

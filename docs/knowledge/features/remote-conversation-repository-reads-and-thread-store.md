@@ -233,6 +233,10 @@ six required replays, but independent review found the queued-authority race abo
 A buffered-order regression now selects summary-before-withdrawal, restoration and
 recertification before the queued send can run; it also requires fresh-observation
 recovery. That source repair requires fresh independent review; earlier green gates
-do not certify it. See the
+do not certify it. On repaired `51738b973`, focused macOS activation passed
+41/41, including the causal buffered-order probe and fresh-observation recovery;
+recorded model-change passed 1/1 and scripted ping passed 2/2, with zero
+failures/errors/skips. These scoped author checks do not replace independent
+re-review. See the
 [plan and evidence boundaries](../../specs/architecture/2493-opening-read-metadata.md)
 and [recording contracts](../../recorded-tests.md#unavailable-summary-recording-integration-2467).
