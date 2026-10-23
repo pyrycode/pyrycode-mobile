@@ -1,7 +1,6 @@
 package de.pyryco.mobile.e2e
 
 import android.util.Log
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -450,7 +449,7 @@ internal class DurableGapProof(
                 .fetchSemanticsNodes()
                 .singleOrNull()
                 ?.config
-                ?.getOrNull(SemanticsActions.IndexForKey) ?: return false
+                ?.getOrNull(SemanticsProperties.IndexForKey) ?: return false
         return indexForKey(row.listKey(0)) >= 0
     }
 
