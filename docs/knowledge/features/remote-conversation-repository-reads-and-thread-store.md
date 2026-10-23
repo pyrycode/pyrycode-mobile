@@ -187,3 +187,44 @@ Existing legacy repository tests stay enabled. These are deterministic supplied-
 probes; production activation and combined live proof belong to #1988, not this seam.
 See the [query architecture plan](../../specs/architecture/2148-authoritative-thread-queries.md)
 and [item-store plan](../../specs/architecture/2043-authoritative-thread-store.md).
+
+<a id="recovering-unavailable-shown-metadata-2467"></a>
+
+### Recovering unavailable shown metadata (#2493)
+
+A replacement repository can certify held completion items without receiving a
+new live completion. Its opening `list_conversations` response and its current
+completion certification are independent inputs. `RemoteConversationRepository`
+records the actual opening request and the host's store generations at dispatch;
+only decoded rows correlated to that request can create a recovery observation.
+The summary supplies shown/read availability, never an epoch or certification.
+Either arrival order can complete the join. Held content, an unsolicited summary,
+a foreign request/conversation or a retired repository cannot supply authority.
+
+Once the same generation has current certified completion and the answered summary
+still lacks shown metadata, consume that observation before requesting one fresh
+summary. The follow-up is not registered as another recovery observation. Repeated
+certification, duplicate responses or another unavailable response cannot poll.
+Known metadata, including explicit zero, needs no follow-up. The retained
+live-completion summary path uses the same bounded recovery. Only returned daemon
+facts restore availability; recovery sends no `mark_conversation_read` and cannot
+clear unread without daemon-confirmed read coverage.
+
+Reset, replacement and retirement invalidate old authority. Completion withdrawal
+also consumes answered observations and fences outstanding opening requests in the
+generation that actually published certification. Check withdrawal after each
+accepted query frame, before a later frame can recertify; later certification must
+not revive the old observation. A newly dispatched opening after reset remains
+eligible but waits for its own fresh certificate. Retirement clears connection-local
+request and certification records; the scheduled send rechecks current authority.
+
+`NegotiatedThreadActivationTest` covers both arrival orders, duplicate/unavailable
+follow-ups, available/zero metadata, request/host/conversation isolation, multiple
+subscriptions, reset, retirement, withdrawal and intermediate-frame recertification.
+The retained macOS candidate `f5a29a43d9ef3b75f2b443a030a9def052aa711c`
+passed 40/40 activation cases, zero failures/errors/skips. Earlier causal and
+fixture-defective failures remain separate. Current-main integration and complete
+configured acceptance are still pending independent review; the historical focused
+pass does not certify the integrated candidate. See the
+[plan and evidence boundaries](../../specs/architecture/2493-opening-read-metadata.md)
+and [recording contracts](../../recorded-tests.md#unavailable-summary-recording-integration-2467).

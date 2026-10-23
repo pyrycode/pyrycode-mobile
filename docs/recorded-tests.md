@@ -77,6 +77,78 @@ and replays both the committed and fresh recordings. It never replaces the commi
 recording. Changed requests, choices or recovery steps require a reviewed replacement.
 Missing login, setup failure and a run with no executed tests fail these explicit commands.
 
+### Unavailable-summary recording integration (#2467)
+
+The [bounded metadata recovery](knowledge/features/remote-conversation-repository-reads-and-thread-store.md#recovering-unavailable-shown-metadata-2493)
+retains five genuine replacement assets from
+`8534e6ca2babec13ba8ac0981565590fb946dd19`. Their producer was Mobile
+`0b93815f1088c28c513aad4f4d83899c3520fea2`, Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, daemon SHA-256
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+All five assets retain their genuine capture bytes, full request payloads,
+connection ownership, original scenario assertions and deadlines.
+
+| `RecordedMobileSuiteTest` method | Historical comparison | Reviewed contract |
+| --- | --- | --- |
+| `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` | IDENTICAL | Terminal summary supplies shown/read 11/0; no follow-up needed. |
+| `interactiveTurn_markdownReply_rendersFormattedBody` | CHANGED | Additional empty-payload summary and checkpoint-16 catch-up; push registration before phone-send; correlated follow-up supplies shown/read 13/0. |
+| `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` | CHANGED | Additional checkpoint-14 catch-up and opposite epoch-alias allocation; exact commands and ownership remain. |
+| `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` | CHANGED | Additional checkpoint-15/24 catch-ups; list counts and host-2/other-conversation ownership remain exact. |
+| `negativeControl_wordClaudeNeverSays_isNeverDisplayed` | CHANGED | Additional checkpoint-14 catch-up; original absence wait remains. |
+
+These are one IDENTICAL and four reviewed CHANGED comparisons, not five passing
+compatibility verifications. Historical genuine capture and fresh strict replay
+executed/passed five methods each; the separate negative-control verification still
+exited 1 because old replay failed and comparison was CHANGED. Earlier permission
+compatibility and five-method integration failures remain failed. Final historical
+Linux replay on `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` passed all five;
+that result does not certify a later macOS integration or the separate #2494 proof.
+The recovered #2467 builder bundle preserves its 199-entry manifest and pointers
+to original-machine files omitted by publication limits. Historical #2462 captures
+with shortened logs/protobuf differences do not establish original byte completeness,
+post-summary numeric facts or a newly proven timeout cause.
+
+**Manual #2493 continuation, macOS.** Candidate
+`f5a29a43d9ef3b75f2b443a030a9def052aa711c` passed 40/40 final activation
+cases. Eight earlier focused selections at `fed72db87072dfd254fd83c2bebc309dfb824a24`
+passed 141/141, zero failures/errors/skips. Its six-method native selection finished
+after the builder timeout: 6 executed, 4 passed, 2 failed, zero errors/skips. The
+restart method failed at an absent scroll node; model-change failed at terminal
+close before test-end. The negative-control, permission, markdown and offline-retry
+methods passed. Preserve these failed results, the causal/fixture diagnostics and
+source identities. Current-main integration includes the later terminal lifecycle
+repair; fresh configured acceptance on that integration remains pending independent
+review. Complete gates are dispatcher-owned, including actual execution of all six
+required replay methods. Paired final-read native acceptance belongs to #2494.
+
+The retained XML is in agents `logs/evidence/2493/builder-macos-20261023/`,
+including `native-final-f5a29a43d/ui-y1h41xli/` and `jvm-final-f5a29a43d/`.
+The post-timeout native directory contains XML only: effective APK identities,
+phone/replay logs, exit status and cleanup receipts are not established by those
+reports. Fresh configured acceptance must retain those receipts. Earlier causal
+bundles and failed attempts remain separately identified; no new provider capture,
+Linux execution or IDENTICAL comparison is claimed here.
+
+### Captured read snapshot prerequisites (#2467)
+
+`SuiteReadReceipts` retains intermediate captured `conversation_updated` snapshots
+when qualified phone reads coalesce. Select the earliest covering captured mark
+from the current or a preceding action on the same connection/conversation, using
+the phone's requested mark rather than a peer's later confirmed progress. Only
+`read_up_to` is normalized; shown metadata comes from that captured snapshot.
+Otherwise a future snapshot can precede its causal query, or the intermediate
+acknowledgement that originally caused a query can disappear.
+
+`RecordedSuiteTape` holds each acknowledgement until its accepted same-owner list
+requests and same-conversation thread requests have strictly matched. Deliver ready
+acknowledgements before the same prerequisite releases owner termination. Another
+connection/conversation cannot supply a prerequisite. Genuine peer notifications
+retain their own guards and cannot be discarded merely because their payload
+matches a receipt. Mandatory reads, complete consumption, payload/correlation
+checks and duplicate rejection remain strict. The retained `SuiteReadReceiptsTest`
+probes cover query prerequisites, intermediate snapshots, foreign ownership,
+peer-progress isolation, guarded notifications and acknowledgement-before-close.
+
 ## What replay proves
 
 Every outgoing request must match its complete recorded type and payload. Generated
@@ -632,6 +704,14 @@ production request contract changed for this repair. See the
 [diagnosis and counted macOS evidence](knowledge/features/development-verification-test-scheduling.md#background-permission-replay-consumption-2348).
 
 ### Explicit graph-restart readiness (#2347)
+
+The #2493 retained restart corrections also wait for `ProcessLifecycleOwner` to
+leave STARTED after Activity destruction and again before replacement launch, under
+the existing thread deadline. Rebuilding the graph while a delayed process-stop
+callback is pending can otherwise close the replacement connection. Placement
+polling treats a temporarily absent or nonunique scroll semantics list as not yet
+ready; it does not establish placement or weaken the required assertion. The
+separate historical absent-session-boundary scroll failure remains failed evidence.
 
 An explicit `restartApp` destroys the Activity and rebuilds the graph inside the
 scenario, before final Activity teardown. Call

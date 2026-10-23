@@ -25,7 +25,7 @@ N/A: internal metadata and replay correctness only; no composable, layout, style
 
 A replacement repository can certify held terminal items without a new live terminal. The existing retained live-summary recovery has no opening-list request to join against. Track that opening observation on its repository, preserving unknown metadata until the daemon responds. No new public API or decision record is required.
 
-This is one behaviour: bounded recovery of unavailable daemon facts, with its required strict replay coverage. Forecast: at most 1550 written lines including retained tests/assets and this plan, zero exported declarations or public caller migrations, four acceptance criteria and fewer than ten reject branches. Recheck the final patch before handoff.
+This is one behaviour: bounded recovery of unavailable daemon facts, with its required strict replay coverage. Preserve the existing public and wire contracts and isolate the unrelated ping-proof continuation.
 
 Overlap scan found retained #2462 and older feature branches sharing these files. Current #2389 adds child demand, #2491 adds checkpoint placement inspection, #2476 changes rotation certification, and #2338 adds unrelated logging. Their blocks do not supply prerequisites to this repair; preserve local additive edits. The original #2462 branch/worktree and evidence remain intact.
 
@@ -116,3 +116,43 @@ Pending documentation stage:
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-23
+
+## Manual continuation — 2026-10-23
+
+The builder timed out after pushing `f5a29a43d9ef3b75f2b443a030a9def052aa711c`.
+No active worker/support task or remaining matching child process was present at
+manual takeover. Exact-ticket hold accepted revision 23; original source, failures
+and private evidence remain intact. The final activation XML passed 40/40. The
+native run completed after timeout with 6 executed, 4 passed, 2 failed, zero
+errors/skips: earlier-session Agent failed at an absent scroll node and model-change
+at terminal close before test-end. These are failed results, not missing execution.
+
+Current main `597122c667ebfb5d8fc42a18ac6a07e27009a91a` merged cleanly as
+`5ec1012dfb1f76de6b6edcba818afd28ed6d62e7`, including the later #2491 terminal
+lifecycle repair. The manual continuation introduces no additional implementation
+or recording change. Fresh configured acceptance, all six named replays and
+independent security/source review on this integration remain pending. Historical
+focused passes keep their original identities; #2494 still owns paired final-read
+native proof. Do not repeat the old diagnosis or a genuine capture merely to replace
+a failed historical result.
+
+Remove the obsolete written-line/reject-branch/public-migration forecast: it adds
+no behavioral acceptance and no longer describes the retained extraction. Keep
+correlation, certification/generation/retirement fences, unknown metadata, bounded
+follow-up, strict replay and the original assertion/deadline requirements.
+
+Documentation now describes the bounded opening join, withdrawal/reset handling,
+existing attention consumers, genuine capture comparison dispositions, causal
+receipt/restart fences and the actual retained counts in the two owning feature
+topics and recorded-test runbook. Reconcile pending integrated acceptance there
+when normal independent review finishes.
+
+Retained evidence authentication: all 199 entries in recovered #2467 bundle
+`5fffd2acc9468d76fbd5756a5d519ce065c6b42f1db4d9909275f2cd2bc0ac15`
+match their manifest. Eight earlier focused reports total 141 passed, zero
+failures/errors/skips. All five promoted assets match retained source bytes.
+The post-timeout native directory currently has XML only; its effective APK
+identities, phone/replay logs, command exit and cleanup receipts remain unproved.
+Fresh dispatcher acceptance must supply those receipts before a pass claim.
+Documentation guard, whitespace and normal pre-verification passed on the integrated
+candidate. No native or JVM tests were repeated by this manual continuation.
