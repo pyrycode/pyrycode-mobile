@@ -7,7 +7,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.printToString
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -317,9 +319,26 @@ class AgentChildrenScreenTest {
                 supported.value = ThreadSupport.Unverified
                 connection.emit(ConnectionState.Offline)
             }
-            compose.waitUntil(5000) { vm.state.value.authoritativeThread?.let { it.sourceConnection == null } == true }
+            compose.waitUntil(5000) {
+                compose.waitForIdle()
+                vm.state.value.authoritativeThread
+                    ?.let { it.sourceConnection == null } == true
+            }
+            assertEquals(
+                4,
+                vm.state.value.authoritativeThread
+                    ?.sourceSnapshot
+                    ?.childPages
+                    ?.get(17L to 23L)
+                    ?.items
+                    ?.size,
+            )
             toggle("Agent 17")
-            compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 53").fetchSemanticsNodes().isNotEmpty() }
+            try {
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 53").fetchSemanticsNodes().isNotEmpty() }
+            } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+                throw AssertionError(compose.onRoot().printToString(), failure)
+            }
             compose.onNodeWithText("Nested 53").assertExists()
             assertEquals(4, reads().size)
             toggle("Agent 18")
