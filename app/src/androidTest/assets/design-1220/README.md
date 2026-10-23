@@ -9,6 +9,19 @@ parity; #1434 owns that verdict.
 - **Figma inspection:** 2026-10-02 for `onboarding/`. Each subfolder records its own date; the page is the source of truth.
 - **Theme:** the app's fixed dark theme only. Light mode, system theme and dynamic colour are out of scope.
 
+## Where capture classes run
+
+A device test class whose name ends in `CaptureTest` is a design capture class. The verifier's
+per-ticket device step leaves these classes out, and the dispatcher's main sweep on `main` runs them
+with every other device test. On the headless gate emulator a capture writes metadata only, so the
+per-ticket run paid emulator time for no design evidence; the Pixel 8 run above remains the evidence.
+A sweep failure files a Backlog ticket like any other sweep failure.
+
+Name every new capture class `...CaptureTest` and it joins the sweep with no other step. A method in a
+capture class that checks behaviour and saves no frame carries `@PerTicketDeviceTest`, directly on the
+method, and keeps running on every ticket. Builders still run the capture classes they touch through the
+focused device command.
+
 ## Folder layout
 
 ```
