@@ -93,6 +93,11 @@ method with separate isolated daemons and separately counted outcomes. Both rest
 proofs rebuild the application graph over persisted storage, reopen the finished
 session-A Agent and its exact tools, then replace the negotiated connection while a
 session-B send awaits settlement. See [counted evidence](#negotiated-agent-restart-and-settlement-2246).
+The rung-4 settlement boundary now validates explicitly current Supported ownership
+before reconciling captured durable facts after connection replacement (#2390);
+[retention/recovery evidence](#retained-expansion-budget-evidence-2390) records its
+controlled regressions and both independent scripted cases, preserving ordinary
+owner matching and certification checks.
 The complementary [#1963 repository-to-screen regression](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963)
 adds actual synthetic older-page admission beside a running session-B Agent; it adds
 no real-Claude scenario or new live capture.
@@ -3961,6 +3966,156 @@ only their outer bash on failure; an owned watcher could retain pipes and obscur
 Its failure path was not executed in that review. Documentation does not claim this cleanup improved,
 and the accepted repair's original cleanup outcomes remain as recorded.
 
+### Retained expansion budget evidence (#2390)
+
+This is the retention contribution to #2376's documentation handoff, accepted by
+[PR #2503's final verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2503#issuecomment-6365969930)
+on Mobile `a1f93889aca346ffd48eb370a2f719d6779e3b31`. Checks ran on Linux;
+macOS is outside this ticket's verification scope. This child supplies retention
+proof, not genuine paired compact capture or integrated feature acceptance.
+
+| Retained run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Builder retention repair, eight focused JVM classes | 115 | 115 | 0 | 0 |
+| Builder recovery repair, `RecoveredAgentFamilyTest` | 7 | 7 | 0 | 0 |
+| Builder recovery scripted `background-agent` | 2 | 2 | 0 | 0 |
+| Builder recovery scripted `tool` | 1 | 1 | 0 | 0 |
+| Final dispatcher JVM/build gate | 5427 | 5427 | 0 | 0 |
+| Final dispatcher device UI | 333 | 333 | 0 | 1 |
+| Final dispatcher scripted-all | 24 | 24 | 0 | 0 |
+
+Failures include errors. The final verifier accepted all six configured commands,
+including pre-verify, docs guard and script unit checks. The JVM gate includes
+build checks. UI's `RenameDialogCaptureTest.renameAtFigmaViewport` was skipped,
+not passed. Complete configured acceptance for this child is now green; the
+historical main comparison remains unverified. No tests were run by documentation.
+
+The focused retention XML contains `ExpansionDetailBudgetTest` (9),
+`MissingToolBodyScreenTest` (6), `AgentChildrenScreenTest` (4),
+`ToolBodyQueriesTest` (16), `AgentChildrenQueriesTest` (16),
+`AuthoritativeThreadStoreTest` (18), `AuthoritativeThreadQueriesTest` (23) and
+`AuthoritativeThreadCacheTest` (23). These ran through focused
+`python3 scripts/gradle-gate.py testDebugUnitTest --tests <qualified-class>`
+invocations, not a complete builder suite. Source identity is parent
+`b8f34a62454caaf1e0646dbec40f02d30964af1e` plus patch SHA-256
+`e7dcee00d01443d33189ea0e58faeb6eb05c0445d46bc0fb3c42da82f3fe1537`;
+the native retention repair identifies Mobile
+`9704073e9e63f0ada5eb8290bc1a5389f4e5fc15`.
+
+All nine budget probes passed:
+
+- `byteBoundary` and `oneByteOverIsRejectedAndCapacityRetryIsExplicit` prove
+  inclusive 16,777,216 bytes versus one byte over and explicit recovery.
+- `summaryBoundaryAndPageCapacityRetry` proves 1000 versus 1001 summaries and
+  atomic rejected extension preserving prior rows/cursor.
+- `combinedByteBoundaryIncludesRawSummariesAndUnknownCursorFields` measures
+  serialized body, original raw-summary and cursor objects, including escaped,
+  multibyte and unknown fields, using protocol-valid bounded replies.
+- `combinedBudgetAndLru` proves combined body/page pressure, deterministic
+  cross-kind closed-entry eviction, unchanged reuse and eviction/reopen.
+- `reuseAndConsumerProtection` and `ancestorProtection` prove multiple consumers
+  and ancestry protection, including newer full children at order zero after
+  direct parent demand closes. Page identity and projected visibility survive.
+- `hostAndResetIsolation` proves conversations sharing host capacity, independent
+  hosts with colliding IDs and reset/reused-identity fences.
+- `recompositionDoesNotRefreshLru` keeps publication from refreshing recency.
+
+Mounted production-consumer methods also passed:
+`MissingToolBodyScreenTest.capacityRetryUsesExpandedBodyStylingAndRecoversAfterOtherDemandCloses`,
+`loadedExpandedBodyStaysProtectedUnderHostPressureAndRetriesAfterCollapse` and
+`retainedBodyReopenRefreshesLruThroughMountedConsumer`, plus
+`AgentChildrenScreenTest.capacityRetryStaysInsideExpandedAgentAndRecoversAfterOtherDemandCloses`.
+They preserve loaded expanded demand, existing inline Retry styling and sticky
+failure, recover after competing demand closes and refresh retained reopen use
+without refetch. The final full JVM gate independently passed the nine budget
+methods and loaded-body protection/reopen regressions; these are full-suite
+executions, not additional focused runs. Geometry, typography, nesting and Load
+more placement remain unchanged; no rendered design recapture was required.
+
+Recovery repair `b5510a25d11272b55e5c54c77dd20957cedc0c18` changes the existing
+rung-4 `DeterministicInteractiveStreamE2ETest` restart/settlement twin. The
+settlement boundary explicitly requires current `ThreadSupport.Supported` ownership
+before reconciling the captured durable family after connection replacement.
+Ordinary owner equality remains strict; document/epoch, identity, attribution,
+revision, content, placement and certified coverage checks remain. Same-generation
+document replacement and unverified, missing, retired or foreign evidence fail.
+The seven controlled JVM cases passed from parent
+`534253e050783c793edb2f6fef37124be04ce98e` plus patch SHA-256
+`16c246368d965ad3d22ced930317c04c5ec2605abe4b0ea5d05af7a8cea8dd93`.
+
+The supported `python3 scripts/android-test-gate.py scripted background-agent`
+route executed both independent methods once:
+`interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` and
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`.
+The latter retains real graph/cache restart, restored Unverified support,
+reopening and session-B settlement over a replacement connection. The existing
+`scripted tool` route passed
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+once. Both background-agent methods and tool also passed in the final 24-method
+scripted-all gate. Native and normalized XML describe the same executions and
+are counted once. No new rung-3 scenario or genuine capture was added.
+
+Recovery native identities from the retained reports:
+
+| Artifact | Source or SHA-256 |
+| --- | --- |
+| Mobile | `b5510a25d11272b55e5c54c77dd20957cedc0c18` |
+| Core source | `647a4e7526f581f78d422195cb22b3e9b979e767` |
+| Relay source | `2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1` |
+| App APK | `8a511ddfdba2c07281a4dced39a2452458dfbef9a55f065bf7f8b8c526dacd30` |
+| Test APK | `6bce1f015ac0270f95fee9ddb6e6706d82cf3c83455f472ae9f4a712c8f92f9d` |
+| Core binary | `871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a` |
+| Relay binary | `79c5e14b4b52c10c6b5523ca56f8d3354b2d6bbcb2672be68588f199a1b61973` |
+
+The retention rework's scripted tool run passed 1/1 with the same app/Core/relay
+identities and test APK SHA-256
+`57e5210aea6bd4d37c778b75c602d511b16533e5760a90acf0f579be557b6709`.
+The final merge into `a1f93889a` adds documentation from main; the repair's final
+assembly and pre-verification, including forced format and compilation, passed.
+
+At documentation time raw focused evidence was retained under
+`$AGENTS_REPO_PATH/logs/evidence/2390/`: `builder-rework-20261023/` has the eight
+`*-green/` class reports, identities and source patch; `builder-recovery-20261023/`
+has `replacement-green/`, `scripted-background-agent-green/`,
+`scripted-tool-green/`, identities, raw XML/HTML, phone logs, cleanup phases,
+isolated harness inputs/logs and SHA-256 manifests. The accepted verifier bundle
+is run `bea6ee4bae59ec4cf5086e25df2722f658e29bec539e56c808d58c647738fb75`,
+digest `290405c5754e494aa5d0fde9aa22e2bef13e91fbff3e20fe750090cb4dd1e96e`;
+it retains the verdict and counted gate reports in the gate logs. These are
+retention locations at the time, not permanent availability or removed build paths.
+
+Historical failures remain intact. The original implementation retained 146
+focused JVM passes and one scripted tool pass in `builder-resume-20261023/`.
+Its first verifier had green gates (5399 JVM, 333 UI with one skip, 24 scripted)
+but rejected loaded-body demand withdrawal and ancestor revision matching.
+The repair added mounted loaded-demand/reopen and newer-full-child ancestry
+regressions; their prior red results and compilation/selector failures remain in
+`builder-rework-20261023/`. The subsequent configured run on `9704073e9e63`
+passed 5416 JVM and 333 UI tests (one UI skip), but scripted-all executed 24,
+passed 23 and failed the restart/settlement method once, with no skips. That
+failure remains in verifier bundle
+`182fe94393d39f610e2a1f8bdf188c3867afb41cbb3119582d55f931e6c21ce2`,
+digest `2a2ce5d62c18cdb0b6f8f27b374a05b2af175faf66d9219e87d384efef4fb9e0`,
+and `builder-recovery-20261023/prior-verifier/`. Its two exact-method comparison
+attempts rejected the selector before execution: zero tests, no baseline result.
+The controlled replacement red run executed 5, passed 4 and failed 1, with zero
+skips, in `replacement-red-complete/`; the later seven-case green result does not
+erase it. Investigation
+`6dad56f746d763d86735adfbbfa7008a6edab10026c21ca6178090602ec1bae3`
+was assessment-queued, executed zero, requesting the supported two-case route
+against original candidate and merged main
+`f1f9c3adb2b733c28247ea81d0cdd4353b607f1a`. Historical main behavior remains
+unverified, not inherited or intermittent by inference. The repaired candidate's
+complete configured pass resolves this child's acceptance finding.
+
+See [screen demand](knowledge/features/thread-screen.md#what-it-does),
+[accounting/protection](knowledge/features/remote-conversation-repository.md#retained-expansion-budget-2390)
+and [cache lifetime](knowledge/features/conversation-cache.md#the-contract).
+Compact-v1 remains unadvertised. #2391 owns subtree invalidation, #2431–#2433
+compact application/activation and #2393 genuine paired compact capture/replay
+before #2376 integrated acceptance. Historical failures and recorded approval,
+privacy and sizing holds remain; this contribution does not release them.
+
 ### Direct-child page evidence (#2389)
 
 This is the direct-child contribution to #2376's original documentation handoff,
@@ -4083,8 +4238,9 @@ scripted passes on the previous candidate; these do not certify the final repair
 See [screen demand and inline controls](knowledge/features/thread-screen.md#what-it-does),
 [page admission/completion and restart](knowledge/features/remote-conversation-repository.md#direct-child-pages-2389)
 and [cache completeness and custody](knowledge/features/conversation-cache.md#the-contract).
-Compact-v1 remains unadvertised. #2390 owns retention budgets, #2391 subtree
-invalidation and #2431–#2433 compact application/activation. #2393 still owes
+Compact-v1 remains unadvertised. [#2390 retention evidence](#retained-expansion-budget-evidence-2390)
+covers budgets; #2391 owns subtree invalidation and #2431–#2433 compact
+application/activation. #2393 still owes
 genuine paired compact capture/replay before #2376 integrated acceptance; no
 paired outcome is supplied by this child. Historical approval/privacy holds and
 the existing `needs-human:sizing` disposition remain in force (2,012 measured
@@ -4173,7 +4329,8 @@ and [body-query contract](knowledge/features/remote-conversation-repository.md#m
 in-memory fetched details from persisted complete facts. Compact-v1 remains
 unadvertised here. #2393 still owns genuine paired compact capture and recorded
 replay before #2376 integrated acceptance; child paging is documented in the
-[#2389 evidence](#direct-child-page-evidence-2389), while selection, budgets and
+[#2389 evidence](#direct-child-page-evidence-2389) and budgets in the
+[#2390 evidence](#retained-expansion-budget-evidence-2390), while selection and
 subtree invalidation remain with their allocated children. All historical failures
 and recorded approval/privacy holds remain binding. Deterministic evidence does
 not satisfy the pending paired-capture requirement.
@@ -8067,6 +8224,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **#2390:** the existing rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+  now requires current Supported ownership at recovery before durable-family
+  reconciliation. [Counted focused and configured evidence](#retained-expansion-budget-evidence-2390)
+  resolves this child's acceptance finding; historical comparison is unverified.
+  Rung-3 `InteractiveStreamE2ETest` gains no capture here. Genuine paired compact
+  capture/replay remains with #2393 and integrated acceptance with #2376, retaining
+  historical failures and holds. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **#2367:** rung-3 `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
   and rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`

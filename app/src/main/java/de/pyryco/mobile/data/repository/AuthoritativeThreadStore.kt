@@ -250,6 +250,76 @@ internal class AuthoritativeThreadStore {
     }
 
     private val snapshots = MutableStateFlow<Map<Pair<String, String>, AuthoritativeThreadSnapshot>>(emptyMap())
+    private val detailBudget = ExpansionDetailBudget()
+    private val detailConsumers = mutableMapOf<Any, Set<ExpansionDetailKey>>()
+
+    /** A query owner contributes the union of all its current expanded consumers, including loaded bodies. */
+    @Synchronized
+    fun protectDetails(
+        owner: Any,
+        keys: Set<ExpansionDetailKey>,
+    ) {
+        val before = protectedDetails()
+        if (keys.isEmpty()) detailConsumers.remove(owner) else detailConsumers[owner] = keys
+        (protectedDetails() - before).forEach(detailBudget::touch)
+    }
+
+    private fun protectedDetails(): Set<ExpansionDetailKey> =
+        buildSet {
+            detailConsumers.values.flatten().forEach { key ->
+                val snapshot = current(key.host, key.conversation)
+                if (!key.owns(snapshot)) return@forEach
+                val items = snapshot.expansionItems.associateBy { it.id }
+                var item = items[key.item.first]?.takeIf { it.rev == key.item.second && it.shown } ?: return@forEach
+                add(key)
+                val visited = mutableSetOf<Long>()
+                while (visited.add(item.id)) {
+                    // An open descendant also needs the retained summaries that make its ancestry reachable.
+                    val id = item.id
+                    snapshot.childPages.forEach { (parent, page) ->
+                        // Projection uses membership by ID even when a newer full child revision wins.
+                        if (items[parent.first]?.rev == parent.second && page.items.any { it.id == id }) {
+                            add(key.copy(item = parent, children = true))
+                        }
+                    }
+                    item = items[item.parent] ?: break
+                }
+            }
+        }
+
+    private fun admitDetail(
+        key: ExpansionDetailKey,
+        bytes: Long,
+        summaries: Int,
+    ): Boolean {
+        val victims = detailBudget.victims(key, bytes, summaries, protectedDetails())
+        if (victims == null) {
+            RelayLog.i { "event=thread_detail code=capacity" }
+            return false
+        }
+        victims.forEach { victim ->
+            val held = current(victim.host, victim.conversation)
+            publish(
+                victim.host,
+                victim.conversation,
+                if (victim.children) {
+                    held.copy(childPages = held.childPages - victim.item, childLoads = held.childLoads - victim.item)
+                } else {
+                    held.copy(bodyContents = held.bodyContents - victim.item, bodyLoads = held.bodyLoads - victim.item)
+                },
+            )
+            RelayLog.i { "event=thread_detail code=evicted" }
+        }
+        detailBudget.record(key, bytes, summaries)
+        return true
+    }
+
+    private fun detailBytes(value: JsonObject): Long =
+        value
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+            .size
+            .toLong()
 
     @Synchronized
     fun registerPending(
@@ -356,12 +426,14 @@ internal class AuthoritativeThreadStore {
                 ?: return false
         if (current.hasToolBody(held)) return true
         val contents = data.content ?: return false
+        if (!admitDetail(ExpansionDetailKey(host, request, generation, incarnation), detailBytes(contents), 0)) return false
+        val retained = current(host, request.conversationId)
         publish(
             host,
             request.conversationId,
-            current.copy(
-                bodyContents = current.bodyContents.filterKeys { it.first != held.id } + ((held.id to held.rev) to contents),
-                bodyLoads = current.bodyLoads - (held.id to held.rev),
+            retained.copy(
+                bodyContents = retained.bodyContents.filterKeys { it.first != held.id } + ((held.id to held.rev) to contents),
+                bodyLoads = retained.bodyLoads - (held.id to held.rev),
             ),
         )
         RelayLog.i { "event=thread_body code=loaded" }
@@ -420,14 +492,17 @@ internal class AuthoritativeThreadStore {
         val admitted = data.map { child -> winners[child.id]?.takeIf { it.rev == child.rev } ?: child }
         val rows = (if (request.cursor == null) emptyList() else old?.items.orEmpty()) + admitted
         if (rows.map { it.id }.distinct().size != rows.size) return false
+        val bytes = rows.sumOf { detailBytes(it.summaryPayload ?: it.raw) } + (marker.cursor?.let(::detailBytes) ?: 0L)
+        if (!admitDetail(ExpansionDetailKey(host, request, generation, incarnation), bytes, rows.size)) return false
+        val retained = current(host, request.conversationId)
         publish(
             host,
             request.conversationId,
-            current.copy(
+            retained.copy(
                 childPages =
-                    current.childPages.filterKeys { it.first != parent.id } +
+                    retained.childPages.filterKeys { it.first != parent.id } +
                         (key to AgentChildPage(rows, marker.cursor, marker.checkpoint.version)),
-                childLoads = current.childLoads - key,
+                childLoads = retained.childLoads - key,
             ),
         )
         RelayLog.i { "event=thread_children code=loaded" }
@@ -840,6 +915,10 @@ internal class AuthoritativeThreadStore {
         preservePlacement: Boolean = false,
     ) {
         val previous = current(host, conversation)
+        detailBudget.reconcile(host, conversation, snapshot)
+        detailConsumers.entries.removeAll { (_, keys) ->
+            keys.all { it.host == host && it.conversation == conversation && !it.owns(snapshot) }
+        }
         val sameGeneration = previous.generation == snapshot.generation && previous.epoch == snapshot.epoch
         if (!sameGeneration) {
             removalPeers.remove(
