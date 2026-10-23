@@ -901,7 +901,8 @@ internal class AuthoritativeThreadStore {
             is ThreadQueryReply.Coverage.CatchUp -> {
                 if (request !is ThreadQueryRequest.CatchUp ||
                     current.coverage?.projection != request.projection ||
-                    request.projection != null && coverage?.connection != connection ||
+                    request.projection != null &&
+                    coverage?.connection != connection ||
                     certified.fromVersion != current.checkpoint.toULong()
                 ) {
                     return requestRepair(host, conversation)
