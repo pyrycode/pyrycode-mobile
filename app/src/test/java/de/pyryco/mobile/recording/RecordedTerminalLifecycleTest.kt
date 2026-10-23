@@ -37,6 +37,54 @@ class RecordedTerminalLifecycleTest {
 
     @Test fun aRecordedCloseBeforeCompleteStillPrecedesTheObservation() = terminal(closeBeforeComplete = true)
 
+    @Test fun terminalPreparationSharesOneDeadlineAcrossObservationAndConsumption() =
+        runTest {
+            val owner = "phone/host/0"
+            val query = frame(1, "list_conversations")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("daemon", owner, frame(2, "conversations", reply = 1), delayMs = 20000),
+                        SuiteStep("client", "control", frame(1, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                        SuiteStep("daemon", owner, frame(3, "turn_state"), delayMs = 20000),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                    ),
+                )
+            val hub =
+                SuiteConnections.replaying(
+                    CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler)),
+                    tape,
+                    originalSpeed = true,
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                val received = mutableListOf<String>()
+                backgroundScope.launch { pump.inbound.collect { received += it.type } }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                assertTrue(pump.send(query.copy(id = 90)))
+                val preparing = backgroundScope.async { runCatching { hub.completeBeforePhoneTeardown() }.exceptionOrNull() }
+                runCurrent()
+                advanceTimeBy(20001)
+                runCurrent()
+                assertEquals(listOf("conversations"), received)
+                assertFalse(preparing.isCompleted)
+                advanceTimeBy(10000)
+                runCurrent()
+                assertTrue("the observation must not restart the terminal deadline", preparing.isCompleted)
+                assertTrue(preparing.await() is TimeoutCancellationException)
+                assertEquals("post-observation work remains pending rather than moving earlier", listOf("conversations"), received)
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun missingTerminalWorkTimesOutAndEarlyCloseStillFails() =
         runTest {
             val owner = "phone/host/0"

@@ -32,7 +32,7 @@ No request, reply, owner, payload, correlation, deadline, or compatibility polic
 
 ## State and concurrency model
 
-JUnit's instrumentation thread sequences successful preparation before Activity destruction. Existing hub coroutine scope and delivery queue continue routing replies; request-producing application jobs remain owned by their original scopes. All new waits use the existing 30-second terminal budget. Native replay state is session-local and restored/disposed by existing finish cleanup.
+JUnit's instrumentation thread sequences successful preparation before Activity destruction. Existing hub coroutine scope and delivery queue continue routing replies; request-producing application jobs remain owned by their original scopes. Terminal preparation shares one existing 30-second budget across its close prefix, observation and downstream consumption; crossing a phase cannot restart it. Native replay state is session-local and restored/disposed by existing finish cleanup.
 
 ## State transitions and identity reuse
 
@@ -43,6 +43,7 @@ JUnit's instrumentation thread sequences successful preparation before Activity 
 | Close recorded before final checkpoint | `RecordedTerminalLifecycleTest.aRecordedCloseBeforeCompleteStillPrecedesTheObservation` leaves checkpoint emission to finish. |
 | Repeated query payload / foreign owner / observation | The success regression requires both correlated replies; `terminalQueriesCannotBorrowAnotherHostOrGenerationOrCrossTheObservation` rejects substitutions and early queries. |
 | Missing required work | `RecordedTerminalLifecycleTest.missingTerminalWorkTimesOutAndEarlyCloseStillFails` retains the deadline and strict close failure. |
+| Observation followed by delayed consumption | `RecordedTerminalLifecycleTest.terminalPreparationSharesOneDeadlineAcrossObservationAndConsumption` retains one 30-second budget and leaves later work on its recorded side of the observation. |
 | Body/end/preparation failure | `RecordedTerminalFailureTest.earlyEndAndPreparationFailuresStayPrimaryAndReleaseEveryActivityExactlyOnce` preserves primary errors and cleanup. |
 | Repeated evaluation/new session | `RecordedTerminalFailureTest.anotherEvaluationCannotReuseThePreviousEarlyEnd` resets cleanup ownership; `activityRuleCannotReuseAPreviousPrimaryFailure` prevents a prior body error replacing a later teardown error. |
 
@@ -77,3 +78,5 @@ The final main merge includes #2483's independent owned-run reveal helper. Its o
 Final scope measurement before this evidence entry: 478 inserted + 13 deleted lines across nine files, including the plan, with no production edits and no new exported production type. The additional plan evidence stays below the forecast and numeric ceilings. No split or wider diagnostic is needed.
 
 The final failure probes also repeat the same Activity statement after a body failure, proving that the wrapper cannot reuse its previous primary error. This adds coverage for the wrapper's session-local state without changing implementation or native inputs.
+
+2026-10-23: Final deadline review found that composing individually bounded waits could restart the preparation budget after scenario-complete. The controlled probe delivers one response after 20 seconds and retains another 20-second delivery after the observation; it failed before the correction (5 executed, 4 passed, 1 failed, 0 skipped). `completeBeforePhoneTeardown` now shares one outer 30-second timeout across all its phases. The existing end/checkpoint/close deadlines and original scenario deadlines are unchanged; required later work is neither released early nor discarded to succeed.
