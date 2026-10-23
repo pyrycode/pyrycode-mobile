@@ -271,3 +271,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Thread screen — wiring](features/thread-screen-wiring.md): Koin and destination binding, host ownership and composer topic pointer; split from the thread overview for #2388.
 
 - [Thread screen — expanded details](features/thread-screen-expanded-details.md): body/child demand, source and subtree invalidation, stale Loading/Retry/offline display, valid reopen and lifecycle retirement; split from thread-screen.md for #2391.
+
+- [Development verification — Gradle and source checks](features/development-verification-gradle.md): build admission, exact comparisons, watchdogs, heap evidence and snackbar routing; split from the gates overview for #2505.

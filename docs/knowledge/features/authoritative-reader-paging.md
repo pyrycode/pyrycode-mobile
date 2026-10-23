@@ -399,7 +399,7 @@ Existing manual holds, claims, counters and approvals remain in force.
 A transparent `NegotiatedThread` decorator must forward `localHistory(conversationId)` as
 the selected provider's exact flow. Inheriting the default Idle flow hides actual local-page
 Loading and Retry even while facts and reader ownership still pass through correctly.
-`TappingConversationRepository`, `InitialAttentionQueryGate.negotiated` and
+`TappingConversationRepository`, `ThreadAcquisitionGate.negotiated` and
 `PassiveThreadProbe.negotiated` now preserve it, including their installed
 `tapNegotiated=true` composition. Retry continues through the existing `older` action.
 No collector, query, reader, lease or state conversion is needed to expose that contract.
