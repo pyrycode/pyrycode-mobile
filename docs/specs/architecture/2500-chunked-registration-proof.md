@@ -54,3 +54,7 @@ Run required formatting, lint, assembly and final `scripts/pre-verify.py --gradl
 ## Open Questions
 
 - Resolved: the observed controlled timeout occurs before any child output, distinguishing startup from scanning; preserve uncertainty about the historical macOS attempt.
+
+## Revisions
+
+- 2026-10-23: The implemented proof follows the design. Both the original delayed proof and added regression failed with zero child bytes; the repaired class passes 12/12. Removing suffix carry in a temporary controller copy fails with all 4113 bytes present, confirming scanner coverage. Raw evidence, source snapshots and a verified manifest are retained in `scripts/e2e-fixtures/readiness-2500/`. Including these artifacts brings total written work to about 600 lines, still one behaviour with no production changes and within all ceilings. Scratch runners are retained as text evidence snapshots for reproducibility.

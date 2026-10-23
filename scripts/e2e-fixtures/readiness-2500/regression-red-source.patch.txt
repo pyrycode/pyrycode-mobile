@@ -1,0 +1,33 @@
+--- base/scripts/test_e2e_daemon_fault.py
++++ red/scripts/test_e2e_daemon_fault.py
+@@ -212,7 +212,13 @@
+                                 payload = {}
+                             return response.status, payload
+ 
+-                    yield request, path
++                    try:
++                        yield request, path
++                    except AssertionError as failure:
++                        child_output = (path / "child.log").read_bytes()
++                        self.fail(f"{failure}\nchild_bytes={len(child_output)}, "
++                                  f"complete_token={token.encode() in child_output}\n"
++                                  + (path / "controller.log").read_text())
+                 finally:
+                     process.terminate()
+                     process.wait(timeout=12)
+@@ -371,7 +377,14 @@
+             unrelated.wait(timeout=5)
+ 
+     def test_registration_token_across_chunks(self):
+-        script = "import time; print('x' * 4090 + 'relay: conn established', flush=True); time.sleep(120)"
++        self.assert_chunked_registration()
++
++    def test_registration_token_across_chunks_after_delayed_startup(self):
++        self.assert_chunked_registration(startup_delay=0.75)
++
++    def assert_chunked_registration(self, startup_delay=0):
++        script = (f"import time; time.sleep({startup_delay}); "
++                  "print('x' * 4090 + 'relay: conn established', flush=True); time.sleep(120)")
+         with self.controller(script) as (request, _):
+             self.assertEqual(200, request("start")[0])
+             self.assertTrue(request("status")[1]["ready"])
