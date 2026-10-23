@@ -3,6 +3,8 @@
 ## Files read
 
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `observeConversations`, `observeConversationSnapshots`, `publishAuthoritativeCompletions`, `completionIsCurrent`, and summary refresh own the join.
+- `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: immutable snapshot generations fence a response dispatched before reset.
+- `app/src/main/java/de/pyryco/mobile/di/HostConversationSource.kt`: `launchAttention` already collects `observeHostReadMarks`; `updateAttention` fences repository replacement. Do not duplicate the superseded #2467 wiring.
 - `app/src/test/java/de/pyryco/mobile/data/repository/NegotiatedThreadActivationTest.kt`: retained live-summary regression and controlled opening-summary patch prove the production connection path.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedSuiteTape.kt`: `drain` must release prerequisite-ready acknowledgements before termination.
 - `app/src/sharedTest/java/de/pyryco/mobile/recording/SuiteReadReceipts.kt`: retain intermediate captured snapshots and exact same-owner query prerequisites.
@@ -12,6 +14,7 @@
 - `app/src/androidTest/assets/recorded/suite.json` and its five affected suite assets: genuine #2467 request contracts.
 - `docs/knowledge/INDEX.md`, `features/remote-conversation-repository-reads-and-thread-store.md`, and `features/dependency-injection-host-conversation-source.md`: held content cannot certify checkpoints; unknown shown facts cannot authorize read or unread fallback.
 - `docs/recorded-tests.md`: strict request matching, causal release, genuine capture and comparison requirements remain binding.
+- Sibling `pyrycode/docs/protocol-mobile.md`, `conversations` and Security model: the [daemon summary contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#conversations) remains authoritative; no wire change or cryptographic admission change.
 - Retained commits through `8534e6ca2babec13ba8ac0981565590fb946dd19` and controlled patch at `logs/evidence/2462/rework-unavailable-metadata-20261023/controlled-opening-summary-red/`: extraction excludes ping proof and unrelated merged history.
 
 ## Design source
@@ -48,8 +51,12 @@ The existing inbound collector serializes replies and certification. Scope-owned
 | Available/explicit zero shown metadata | opening-summary available/zero probes and retained live-summary available cases |
 | Held content without certification, foreign response/owner/conversation | opening-summary isolation probes |
 | Reset with reused epoch, retirement/replacement, withdrawn certification | opening-summary invalidation probes |
+| Fresh opening observation after reset, before fresh certification | `newOpeningObservationAfterResetWaitsForFreshCertification` |
 | Real metadata response and daemon-confirmed coverage | opening-summary read-facts/attention assertions; no `mark_conversation_read` |
-| Captured query ordering, intermediate receipts, peer progress and termination | retained `SuiteReadReceiptsTest` regressions |
+| Captured query ordering and intermediate receipts | `coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery`, `anIntermediateCapturedReadMustNotWaitForTheQueryItCauses` |
+| Prerequisite readiness before owner termination | `readyReadAcknowledgementsPrecedeTheirOwnersInboundEnd` |
+| Peer progress cannot select a future snapshot | `peerReadProgressCannotChooseAFutureSnapshotForAnEarlierPhoneRead` |
+| Guarded peer notifications remain required | `peerProgressReleasesTheCapturedPhoneNotificationWithoutALocalRead` |
 | Graph restart and settlement reconnect | `RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect` |
 
 ## Error handling
@@ -67,6 +74,18 @@ Run focused tests, lint, assemble, instrumented compilation, formatting and fina
 ## Open Questions
 
 None. If native replay exposes a changed request absent from genuine assets, capture it before claiming acceptance.
+
+## Revisions
+
+2026-10-23: the store exposes no complete generation capture. Add `AuthoritativeThreadStore.generations`, an internal read-only snapshot used only by opening requests, so a delayed response cannot adopt a reset generation. This adds four lines in a second production file without a public API or consumer migration.
+
+2026-10-23: `anotherSubscriptionCannotStealTheOpeningResponse` failed against a single latest-opening slot. Track each outstanding opening request until its response is consumed or the repository retires. Each conversation still has one pending recovery observation; a current-generation observation replaces stale-generation state without displacing a live summary awaiting its own response.
+
+2026-10-23: the first expanded run executed 38 tests, passed 35 and failed three. The subscription failure was causal; two withdrawal failures used a live event that legitimately requests a summary and remain fixture-defective diagnostics. Corrected query-based withdrawal then executed 38, passed 37 and failed only `recertificationCannotReviveWithdrawnOpeningAuthority`. Invalidate answered observations and mark the conversation withdrawn on every outstanding opening request when previously published completion facts lose current authority, including a query that now certifies no completion. Later recertification cannot revive that request; a newly dispatched opening request remains eligible. Apply the same invalidation to live changes and recheck certification in the scheduled follow-up before sending.
+
+The invalidation remembers only the generation in which this repository actually published certification, and clears that private map on retirement. Old-generation completion facts cannot poison an opening request dispatched after reset; live callbacks check their captured generation before invalidating observations.
+
+2026-10-23: `newOpeningObservationAfterResetWaitsForFreshCertification` executed once and failed at the missing recovery follow-up. The response-side withdrawal guard also needs the generation-aware invalidation path: old completion facts must leave a fresh-generation observation waiting for its own certificate. Reuse that path, then verify the observation still owns its slot before attempting recovery.
 
 ## Documentation handoff
 

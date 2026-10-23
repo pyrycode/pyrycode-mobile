@@ -258,6 +258,12 @@ internal class AuthoritativeThreadStore {
         conversation: String,
     ): AuthoritativeThreadSnapshot = snapshots.value[host to conversation] ?: AuthoritativeThreadSnapshot()
 
+    /** Capture generations before a connection-wide metadata request; absent conversations start at zero. */
+    internal fun generations(host: String): Map<String, Long> =
+        snapshots.value.entries
+            .filter { it.key.first == host }
+            .associate { it.key.second to it.value.generation }
+
     fun observe(
         host: String,
         conversation: String,
