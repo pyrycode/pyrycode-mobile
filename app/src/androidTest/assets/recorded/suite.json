@@ -1669,7 +1669,7 @@
           "androidApi": "33"
         },
         "contractReview": {
-          "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
+          "report": "https://github.com/pyrycode/pyrycode-mobile/blob/8534e6ca2babec13ba8ac0981565590fb946dd19/docs/specs/architecture/2467-list-unread-after-reconnect.md",
           "sha256": "6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
@@ -1723,7 +1723,7 @@
           "androidApi": "33"
         },
         "contractReview": {
-          "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
+          "report": "https://github.com/pyrycode/pyrycode-mobile/blob/8534e6ca2babec13ba8ac0981565590fb946dd19/docs/specs/architecture/2467-list-unread-after-reconnect.md",
           "sha256": "6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343",
           "decision": "accepted-identical-contract",
           "strictComparison": "identical"
@@ -1940,7 +1940,7 @@
           "androidApi": "33"
         },
         "contractReview": {
-          "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
+          "report": "https://github.com/pyrycode/pyrycode-mobile/blob/8534e6ca2babec13ba8ac0981565590fb946dd19/docs/specs/architecture/2467-list-unread-after-reconnect.md",
           "sha256": "6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
@@ -2318,7 +2318,7 @@
           "androidApi": "33"
         },
         "contractReview": {
-          "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
+          "report": "https://github.com/pyrycode/pyrycode-mobile/blob/8534e6ca2babec13ba8ac0981565590fb946dd19/docs/specs/architecture/2467-list-unread-after-reconnect.md",
           "sha256": "6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"
@@ -3796,7 +3796,7 @@
           "androidApi": "33"
         },
         "contractReview": {
-          "report": "docs/specs/architecture/2467-list-unread-after-reconnect.md",
+          "report": "https://github.com/pyrycode/pyrycode-mobile/blob/8534e6ca2babec13ba8ac0981565590fb946dd19/docs/specs/architecture/2467-list-unread-after-reconnect.md",
           "sha256": "6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343",
           "decision": "accepted-changed-contract",
           "strictComparison": "changed"

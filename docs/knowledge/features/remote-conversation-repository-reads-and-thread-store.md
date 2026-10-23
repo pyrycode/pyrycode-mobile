@@ -202,8 +202,12 @@ Either arrival order can complete the join. Held content, an unsolicited summary
 a foreign request/conversation or a retired repository cannot supply authority.
 
 Once the same generation has current certified completion and the answered summary
-still lacks shown metadata, consume that observation before requesting one fresh
-summary. The follow-up is not registered as another recovery observation. Repeated
+still lacks shown metadata, mark that observation consumed and queue one fresh
+summary. Keep the same observation identity in its queued state until dispatch,
+where the coroutine rechecks current certification and consumes that exact owner.
+Withdrawal permanently removes the queued owner; restored terminal items and later
+recertification cannot recreate its authority. A genuinely fresh opening observation
+remains eligible. The follow-up is not registered as another recovery observation. Repeated
 certification, duplicate responses or another unavailable response cannot poll.
 Known metadata, including explicit zero, needs no follow-up. The retained
 live-completion summary path uses the same bounded recovery. Only returned daemon
@@ -223,8 +227,12 @@ follow-ups, available/zero metadata, request/host/conversation isolation, multip
 subscriptions, reset, retirement, withdrawal and intermediate-frame recertification.
 The retained macOS candidate `f5a29a43d9ef3b75f2b443a030a9def052aa711c`
 passed 40/40 activation cases, zero failures/errors/skips. Earlier causal and
-fixture-defective failures remain separate. Current-main integration and complete
-configured acceptance are still pending independent review; the historical focused
-pass does not certify the integrated candidate. See the
+fixture-defective failures remain separate. Integrated candidate `52e60852785d8fdb3c7003843bb532a10fc2011f`
+passed the configured gates under the dispatcher's flaky-test policy, including all
+six required replays, but independent review found the queued-authority race above.
+A buffered-order regression now selects summary-before-withdrawal, restoration and
+recertification before the queued send can run; it also requires fresh-observation
+recovery. That source repair requires fresh independent review; earlier green gates
+do not certify it. See the
 [plan and evidence boundaries](../../specs/architecture/2493-opening-read-metadata.md)
 and [recording contracts](../../recorded-tests.md#unavailable-summary-recording-integration-2467).

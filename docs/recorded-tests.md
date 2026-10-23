@@ -97,7 +97,10 @@ connection ownership, original scenario assertions and deadlines.
 | `negativeControl_wordClaudeNeverSays_isNeverDisplayed` | CHANGED | Additional checkpoint-14 catch-up; original absence wait remains. |
 
 These are one IDENTICAL and four reviewed CHANGED comparisons, not five passing
-compatibility verifications. Historical genuine capture and fresh strict replay
+compatibility verifications. The five `contractReview.report` references in
+`suite.json` pin the retained `8534e6ca2babec13ba8ac0981565590fb946dd19`
+report, SHA-256 `6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343`;
+the capture bytes and comparison dispositions are unchanged. Historical genuine capture and fresh strict replay
 executed/passed five methods each; the separate negative-control verification still
 exited 1 because old replay failed and comparison was CHANGED. Earlier permission
 compatibility and five-method integration failures remain failed. Final historical
@@ -125,7 +128,20 @@ The retained XML is in agents `logs/evidence/2493/builder-macos-20261023/`,
 including `native-final-f5a29a43d/ui-y1h41xli/` and `jvm-final-f5a29a43d/`.
 The post-timeout native directory contains XML only: effective APK identities,
 phone/replay logs, exit status and cleanup receipts are not established by those
-reports. Fresh configured acceptance must retain those receipts. Earlier causal
+reports. Fresh configured acceptance must retain those receipts.
+
+The later configured macOS run at `52e60852785d8fdb3c7003843bb532a10fc2011f`
+reported 5439/5439 JVM passes and 24/24 scripted passes. Its original full UI run
+executed 333: 332 passed and one inherited-effort test failed, with the unrelated
+RenameDialog capture additionally skipped. That failure passed the exact 1/1
+rerun under dispatcher policy; all six #2493 replay methods passed in the original
+full run. Independent review authenticated those counts and retained phone logs,
+but did not independently authenticate installed APK hashes and complete cleanup
+receipts. Source review still returned FAIL for queued recovery authority surviving
+withdrawal; passing replay is not proof of that asynchronous ordering. The focused
+repair and its buffered-order probe require new independent review. Preserve both
+the accepted gate disposition and the source finding, rather than treating the
+old gates as acceptance of later source changes. Earlier causal
 bundles and failed attempts remain separately identified; no new provider capture,
 Linux execution or IDENTICAL comparison is claimed here.
 

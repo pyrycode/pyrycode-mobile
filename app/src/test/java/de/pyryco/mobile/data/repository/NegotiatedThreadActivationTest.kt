@@ -594,6 +594,8 @@ class NegotiatedThreadActivationTest {
 
     @Test fun intermediateQueryWithdrawalCannotReviveOpeningAuthority() = reconnectReadSummary(true, probe = "intermediateWithdrawal")
 
+    @Test fun queuedOpeningRecoveryCannotSurviveWithdrawalAndRecertification() = reconnectReadSummary(true, probe = "queuedWithdrawal")
+
     @Test fun retiredOpeningOwnerCannotAuthorizeReplacementRecovery() = reconnectReadSummary(true, probe = "retired")
 
     private fun reconnectReadSummary(
@@ -703,15 +705,18 @@ class NegotiatedThreadActivationTest {
                 pump.push(window(fresh, 12, 9, 13, false))
                 runCurrent()
             }
-            if (probe in setOf("withdrawn", "recertified", "intermediateWithdrawal")) {
+            if (probe == "queuedWithdrawal") {
+                // Buffer the response before withdrawal. The collector must process every
+                // input before the StandardTestDispatcher runs its queued refresh coroutine.
+                pump.push(summary(openingSummary, null))
+            }
+            if (probe in setOf("withdrawn", "recertified", "intermediateWithdrawal", "queuedWithdrawal")) {
                 repo.openAuthoritativeThread("c")
                 val withdrawn = pump.queries().last()
                 pump.push(
                     batch(
                         withdrawn,
-                        if (probe ==
-                            "intermediateWithdrawal"
-                        ) {
+                        if (probe in setOf("intermediateWithdrawal", "queuedWithdrawal")) {
                             14
                         } else {
                             13
@@ -719,8 +724,8 @@ class NegotiatedThreadActivationTest {
                         listOf(item(12, 13, 12, kind = "turn_end", status = "running")),
                     ),
                 )
-                if (probe == "intermediateWithdrawal") {
-                    runCurrent()
+                if (probe in setOf("intermediateWithdrawal", "queuedWithdrawal")) {
+                    if (probe != "queuedWithdrawal") runCurrent()
                     val renewed = ThreadItemDto.decodeReplacement(JsonObject(terminal.raw + ("rev" to JsonPrimitive(14))))
                     pump.push(batch(withdrawn, 14, listOf(renewed)))
                 }
@@ -730,7 +735,7 @@ class NegotiatedThreadActivationTest {
                         buildJsonObject {
                             put("conversation_id", "c")
                             put("epoch", "e")
-                            put("version", if (probe == "intermediateWithdrawal") 14 else 13)
+                            put("version", if (probe in setOf("intermediateWithdrawal", "queuedWithdrawal")) 14 else 13)
                             put("from_version", 12)
                             put("items", JsonArray(emptyList()))
                             put("final", true)
@@ -770,7 +775,7 @@ class NegotiatedThreadActivationTest {
                 assertNull(host.repo().currentReadMarks("c"))
                 return@runTest
             }
-            if (summaryAfterCertification) {
+            if (summaryAfterCertification && probe != "queuedWithdrawal") {
                 val response = summary(openingSummary, shown)
                 pump.push(
                     when (probe) {
@@ -802,10 +807,11 @@ class NegotiatedThreadActivationTest {
                     "withdrawn",
                     "recertified",
                     "intermediateWithdrawal",
+                    "queuedWithdrawal",
                 )
             ) {
                 assertTrue("nonqualifying observations must not refresh", refresh.isEmpty())
-                if (probe == "recertified") {
+                if (probe in setOf("recertified", "queuedWithdrawal")) {
                     backgroundScope.launch { repo.observeConversations(ConversationFilter.All).collect {} }
                     runCurrent()
                     val freshOpening = pump.sent.last { it.type == "list_conversations" }

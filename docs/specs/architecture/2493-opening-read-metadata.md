@@ -39,7 +39,7 @@ Use private repository-owned records only. Keep `ThreadEvidenceOwner.matches` un
 
 ## State and concurrency model
 
-The existing inbound collector serializes replies and certification. Scope-owned refresh coroutines recheck connection/generation before sending. Request observations are connection-local; collector completion clears them. Opening generations are captured before sending, not when a delayed response arrives. Reset invalidates old observations; withdrawn certification cannot trigger recovery. No timers, polling jobs or new flows are introduced.
+The existing inbound collector serializes replies and certification. Scope-owned refresh coroutines recheck connection/generation and current certification before sending, and consume the exact queued observation identity at dispatch. Withdrawal can revoke that identity after observation consumption and before dispatch; later certification cannot revive it. Request observations are connection-local; collector completion clears them. Opening generations are captured before sending, not when a delayed response arrives. Reset invalidates old observations; withdrawn certification cannot trigger recovery. No timers, polling jobs or new flows are introduced.
 
 ## State transitions and identity reuse
 
@@ -53,6 +53,7 @@ The existing inbound collector serializes replies and certification. Scope-owned
 | Reset with reused epoch, retirement/replacement, withdrawn certification | opening-summary invalidation probes |
 | Fresh opening observation after reset, before fresh certification | `newOpeningObservationAfterResetWaitsForFreshCertification` |
 | Intermediate query batch withdraws completion before final recertification | `intermediateQueryWithdrawalCannotReviveOpeningAuthority` |
+| Unavailable response queues recovery before buffered withdrawal/restoration/recertification | `queuedOpeningRecoveryCannotSurviveWithdrawalAndRecertification`; fresh observation remains eligible |
 | Real metadata response and daemon-confirmed coverage | opening-summary read-facts/attention assertions; no `mark_conversation_read` |
 | Captured query ordering and intermediate receipts | `coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery`, `anIntermediateCapturedReadMustNotWaitForTheQueryItCauses` |
 | Prerequisite readiness before owner termination | `readyReadAcknowledgementsPrecedeTheirOwnersInboundEnd` |
@@ -155,4 +156,52 @@ The post-timeout native directory currently has XML only; its effective APK
 identities, phone/replay logs, command exit and cleanup receipts remain unproved.
 Fresh dispatcher acceptance must supply those receipts before a pass claim.
 Documentation guard, whitespace and normal pre-verification passed on the integrated
-candidate. No native or JVM tests were repeated by this manual continuation.
+candidate. The initial documentation continuation repeated no native or JVM tests; the later scoped repair is recorded below.
+
+## Independent review rework — 2026-10-23
+
+The independent review of `52e60852785d8fdb3c7003843bb532a10fc2011f`
+accepted the configured gates: 5439 JVM passes, all six required methods in the
+original complete UI run, one unrelated UI failure passing its exact rerun, and
+24 scripted passes. It returned FAIL for a concrete authority-lifetime gap:
+consumption removed the observation before queuing its send, so intervening
+withdrawal could not revoke it and later certification passed the send-time check.
+These green results remain valid for that source and are not acceptance of this
+subsequent repair.
+
+Add `queuedOpeningRecoveryCannotSurviveWithdrawalAndRecertification` before
+implementation. Buffer the unavailable opening response, withdrawal batch,
+restored terminal and final certification in the real inbound collector before
+running the queued refresh coroutine. The unfixed source executed one test and
+failed at `nonqualifying observations must not refresh`, zero errors/skips. The
+same probe requires a genuinely fresh opening observation to recover afterward.
+
+Keep a consumed observation as `recoveryQueued` in the existing private request
+map until dispatch. Repeated callbacks cannot queue it twice. The coroutine must
+still own that exact record and current certification before removing it and
+sending. Withdrawal removes the queued record; restoration/recertification cannot
+recreate it. Cleanup removes only its own record, so it cannot erase a newer
+observation. Opening and live-summary recovery share this helper. Existing
+connection/generation, reset, retirement, strict read facts, bounded follow-up and
+no-mark-read rules remain intact; no public API or protocol changes.
+
+The five promoted index entries now use a revision-qualified GitHub report URL
+at retained `8534e6ca2babec13ba8ac0981565590fb946dd19`. Its declared SHA-256
+`6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343` matches
+the retained report. Genuine capture files and one IDENTICAL/four reviewed CHANGED
+comparison dispositions are unchanged. This resolves the review's missing-report
+traceability finding without importing unrelated historical implementation.
+
+Security concurrency self-review: retain revocable ownership through scheduling,
+not only a current-certification check. Revocation is permanent for the old
+request identity; a new qualifying request has a different identity. The
+regression tests that stale authority is rejected and fresh authority remains
+usable. Independent source/security re-review and complete configured acceptance
+on the repaired candidate remain required; no author verification is a verifier PASS.
+
+Focused macOS red/green: the exact buffered-order test executed once and failed
+on unfixed source, then the affected activation class executed/passed 41/41,
+zero failures/errors/skips, exit 0 after repair. The passing new case includes
+fresh-observation recovery after the stale queued send is rejected. Spotless
+application passed. Focused native/scripted validation and final checks remain
+pending; complete acceptance stays dispatcher-owned.

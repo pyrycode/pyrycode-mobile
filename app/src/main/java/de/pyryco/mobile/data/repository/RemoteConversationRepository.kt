@@ -254,6 +254,7 @@ class RemoteConversationRepository internal constructor(
         val generation: Long,
         val requestId: Long,
         val answered: Boolean = false,
+        val recoveryQueued: Boolean = false,
     )
 
     /** One live or opening observation per conversation, consumed before its recovery request. */
@@ -736,6 +737,7 @@ class RemoteConversationRepository internal constructor(
         conversationId: String,
         generation: Long,
         liveCompletion: Boolean = false,
+        recovery: LiveReadSummaryRequest? = null,
     ) {
         val request = listConversationsRequest()
         val owner = LiveReadSummaryRequest(generation, request.id)
@@ -749,11 +751,20 @@ class RemoteConversationRepository internal constructor(
                 ) {
                     return@launch
                 }
-                if (!liveCompletion && !hasCurrentCertifiedCompletion(conversationId, generation)) return@launch
+                if (!liveCompletion &&
+                    (
+                        !hasCurrentCertifiedCompletion(conversationId, generation) ||
+                            recovery == null ||
+                            !liveReadSummaryRequests.remove(conversationId, recovery)
+                    )
+                ) {
+                    return@launch
+                }
                 sent = pump.send(request)
                 RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
             } finally {
                 if (!sent && liveCompletion) liveReadSummaryRequests.remove(conversationId, owner)
+                if (recovery != null) liveReadSummaryRequests.remove(conversationId, recovery)
             }
         }
     }
@@ -762,7 +773,10 @@ class RemoteConversationRepository internal constructor(
         conversation: String,
         generation: Long,
     ) {
-        val owner = liveReadSummaryRequests[conversation]?.takeIf { it.generation == generation && it.answered } ?: return
+        val owner =
+            liveReadSummaryRequests[conversation]?.takeIf {
+                it.generation == generation && it.answered && !it.recoveryQueued
+            } ?: return
         if (currentReadMarks(conversation)?.let { it.threadSupported && it.unreadWatermark == null } != true) {
             liveReadSummaryRequests.remove(conversation, owner)
             return
@@ -776,7 +790,12 @@ class RemoteConversationRepository internal constructor(
         if (liveReadSummaryRequests[conversation] != owner) return
         if (!hasCurrentCertifiedCompletion(conversation, generation)) return
         // Certification and the response may arrive in either order. Only daemon facts restore availability.
-        if (liveReadSummaryRequests.remove(conversation, owner)) refreshAuthoritativeReadFacts(conversation, generation)
+        // Consume the observation once, but keep its identity revocable until dispatch.
+        // Withdrawal removes this queued owner; later certification cannot recreate it.
+        val queued = owner.copy(recoveryQueued = true)
+        if (liveReadSummaryRequests.replace(conversation, owner, queued)) {
+            refreshAuthoritativeReadFacts(conversation, generation, recovery = queued)
+        }
     }
 
     private fun hasCurrentCertifiedCompletion(
