@@ -1,4 +1,8 @@
 <resources>
+    <string name="tool_body_loading">Loading tool details…</string>
+    <string name="tool_body_failed">Couldn’t load tool details</string>
+    <string name="tool_body_offline">Tool details aren’t available offline</string>
+    <string name="tool_body_retry">Retry</string>
     <string name="thread_open_context">Open context</string>
     <string name="thread_context_title">Context</string>
     <string name="thread_context_memory_files">Memory files</string>

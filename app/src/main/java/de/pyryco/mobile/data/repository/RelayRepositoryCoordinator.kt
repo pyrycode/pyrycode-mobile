@@ -380,6 +380,16 @@ class RelayRepositoryCoordinator(
                 override fun older(conversationId: String): Boolean =
                     verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
 
+                override fun bodies(
+                    conversationId: String,
+                    connection: Any,
+                    consumer: Any,
+                    snapshot: AuthoritativeThreadSnapshot,
+                    ids: Set<Long>,
+                    retry: Long?,
+                ): java.io.Closeable? =
+                    verifiedRepository()?.takeIf { it === connection }?.demandToolBodies(conversationId, consumer, snapshot, ids, retry)
+
                 override fun cancel(conversationId: String) {
                     (activeConnection.value?.repo)?.cancelAuthoritativeThread(conversationId)
                 }

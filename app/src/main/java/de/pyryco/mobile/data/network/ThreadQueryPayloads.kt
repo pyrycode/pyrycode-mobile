@@ -23,6 +23,30 @@ internal sealed class ThreadQueryRequest(
 
     final override fun toString(): String = "ThreadQueryRequest(redacted)"
 
+    data class Body(
+        val conversation: String,
+        val epoch: String,
+        val itemId: ULong,
+        val expectedRev: ULong,
+        val kind: String,
+    ) : ThreadQueryRequest(conversation, null) {
+        init {
+            require(epoch.isNotEmpty() && itemId > 0uL && expectedRev > 0uL && kind in setOf("tool_call", "agent"))
+        }
+
+        override val type = "thread_read_tool_body"
+
+        override fun fields() =
+            JsonObject(
+                mapOf(
+                    "conversation_id" to JsonPrimitive(conversation),
+                    "epoch" to JsonPrimitive(epoch),
+                    "item_id" to threadUnsignedJson(itemId),
+                    "expected_rev" to threadUnsignedJson(expectedRev),
+                ),
+            )
+    }
+
     class CatchUp(
         conversationId: String,
         val epoch: String,
@@ -95,6 +119,23 @@ internal sealed class ThreadQueryReply(
         val items: List<ThreadItemDto>,
     ) : ThreadQueryReply(raw)
 
+    class Body(
+        raw: JsonObject,
+    ) : ThreadQueryReply(raw) {
+        val checkpoint = Checkpoint(raw)
+        val itemId = raw.threadUnsigned("item_id")
+        val rev = raw.threadUnsigned("rev")
+        val kind = raw.threadString("kind")
+        val final = raw.threadBoolean("final")
+        val content = raw["content"] as? JsonObject
+
+        init {
+            require(kind in setOf("tool_call", "agent") && itemId > 0uL && rev > 0uL)
+            require(if (final) "content" !in raw else content != null)
+            require((threadQueryCoverageKeys + setOf("items", "data", "base_rev")).none { it in raw })
+        }
+    }
+
     class Success(
         raw: JsonObject,
         val checkpoint: Checkpoint,
@@ -122,6 +163,7 @@ internal fun decodeThreadQueryReply(
     try {
         require(validThreadJson(raw))
         when (type) {
+            "thread_tool_body" -> ThreadQueryReply.Body(raw)
             "thread_items" -> {
                 val checkpoint = ThreadQueryReply.Checkpoint(raw)
                 val items =

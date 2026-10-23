@@ -7,6 +7,8 @@ import java.io.Closeable
 
 internal enum class AuthoritativeHistoryLoad { Idle, Loading, Retry }
 
+internal enum class BodyLoad { Loading, Retry }
+
 /**
  * The production thread route of one exact host (#2175). Decorators forward it, as they forward
  * [ConversationRepository.runConfigurationReadings]; a repository without it is the legacy route.
@@ -20,6 +22,15 @@ abstract class NegotiatedThread {
     internal abstract fun observe(conversationId: String): Flow<AuthoritativeThreadSnapshot>
 
     internal open fun localHistory(conversationId: String): Flow<AuthoritativeHistoryLoad> = flowOf(AuthoritativeHistoryLoad.Idle)
+
+    internal open fun bodies(
+        conversationId: String,
+        connection: Any,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+    ): Closeable? = null
 
     /** Transient readings belong only to the supported connection captured by the caller. */
     internal open fun progress(
