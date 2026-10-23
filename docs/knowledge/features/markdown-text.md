@@ -132,7 +132,7 @@ frozen-block reuse and settlement. The unchanged
 `a_bare_url_renders_as_text_and_is_not_a_link` remains the bare-web regression.
 All four named methods are present and passed in retained full-gate XML and in
 the fresh focused Linux reports at `2dca08a77de10a46ac078b1000ad87d2df0978ee`.
-See [accepted #2270 counts and evidence](development-verification-gates.md#managed-build-heap-and-linux-acceptance-2270)
+See [accepted #2270 counts and evidence](development-verification-gradle.md#managed-build-heap-and-linux-acceptance-2270)
 for the cached full-suite result, 124 freshly executed focused checks and device gates.
 
 Bare-Obsidian coverage combines `BareObsidianLinksTest`, `MarkdownTextParsingTest`,

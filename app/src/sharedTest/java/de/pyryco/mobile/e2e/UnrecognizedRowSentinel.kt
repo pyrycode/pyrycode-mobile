@@ -260,7 +260,7 @@ internal class TappingConversationRepository(
 
                     override fun cancel(conversationId: String) = source.cancel(conversationId)
                 }
-            if (tapNegotiated) PassiveThreadProbe.negotiated(InitialAttentionQueryGate.negotiated(recorded)) else recorded
+            if (tapNegotiated) PassiveThreadProbe.negotiated(ThreadAcquisitionGate.negotiated(recorded)) else recorded
         }
     override val negotiatedThread get() = tappedNegotiated
 }
