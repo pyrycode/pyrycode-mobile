@@ -2,11 +2,15 @@
 """Run the retained Agent proof and restart twin with independent scripted daemons."""
 
 import os
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+
+from e2e_fault_evidence import binary_digest, source_revision
 
 CLASS = 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest'
 METHODS = {
@@ -15,9 +19,35 @@ METHODS = {
 }
 
 
+def retain_arm(root, reports, directory, case, exit_code, provenance):
+    """Archive this arm's entire output directory, leaving no diagnostics for the next arm."""
+    if reports.is_dir():
+        shutil.move(str(reports), directory / 'phone')
+    metadata = {'case': case, 'method': CLASS + '#' + METHODS[case], 'exit_code': exit_code,
+                'provenance': provenance, 'apk_sha256': {}}
+    for path in (root / 'app/build/outputs/apk').rglob('*.apk'):
+        metadata['apk_sha256'][str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (directory / 'result.json').write_text(json.dumps(metadata, sort_keys=True) + '\n')
+    hashes = {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in directory.rglob('*') if path.is_file()}
+    (directory / 'SHA256SUMS').write_text(''.join(f'{digest}  {name}\n' for name, digest in sorted(hashes.items())))
+    for name, expected in hashes.items():
+        if hashlib.sha256((directory / name).read_bytes()).hexdigest() != expected:
+            raise RuntimeError('Agent evidence copy verification failed')
+    for path in directory.rglob('*'):
+        path.chmod(0o700 if path.is_dir() else 0o600)
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
+    provenance = {'mobile': source_revision(str(root)), 'core': source_revision(environment.get('PYRYCODE_SRC')),
+                  'relay': source_revision(environment.get('PYRYCODE_RELAY_SRC')), 'binary_sha256': {}}
+    for name, default in (('PYRY_BIN', 'pyry'), ('RELAY_BIN', 'pyrycode-relay')):
+        executable = environment.get(name) or default
+        selected = shutil.which(executable, path=environment.get('PATH'))
+        environment[name] = str(Path(selected).absolute()) if selected else executable
+        provenance['binary_sha256'][name] = binary_digest(environment[name])
     admission = environment.get('PYRY_TEST_ADMISSION_FD')
     inherited = () if admission is None else (int(admission),)
     device = environment.get('DEVICE', 'pixel2Api33Atd')
@@ -25,10 +55,19 @@ def main():
     reports /= 'connected/debug' if device == 'connected' else 'managedDevice/debug/' + device
     status = 0
     retained = []
+    evidence = Path(environment.get('PYRY_GATE_EVIDENCE_DIR', root / 'build')) / 'background-agent-evidence'
+    evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
+    run = Path(tempfile.mkdtemp(prefix='run-', dir=evidence))
+    print(f'Background Agent evidence: {run}', flush=True)
+    # Earlier diagnostics have no attribution to either execution in this run.
+    if reports.is_dir():
+        shutil.move(str(reports), run / 'preexisting-phone')
     with tempfile.TemporaryDirectory(prefix='builder-2246-scripted-') as directory:
         try:
             for case in ('retained', 'restart'):
-                child = {**environment, 'E2E_BACKGROUND_AGENT_CASE': case}
+                arm = run / case
+                arm.mkdir(mode=0o700)
+                child = {**environment, 'E2E_BACKGROUND_AGENT_CASE': case, 'E2E_FAULT_EVIDENCE_DIR': str(arm / 'harness')}
                 # The shared gate owns this installed emulator and resets it between scenarios.
                 # Each half likewise starts with an empty phone and its own daemon/fixture release.
                 if environment.get('E2E_INSTALLED') == '1':
@@ -36,12 +75,13 @@ def main():
                         str(Path(environment['ANDROID_HOME']) / 'platform-tools/adb'),
                         '-s', environment['ANDROID_SERIAL'], 'shell', 'pm', 'clear', 'de.pyryco.mobile',
                     ], check=True)
-                # Only this execution may supply XML, regardless of filesystem timestamps.
-                for path in reports.rglob('TEST-*.xml'):
-                    path.unlink()
-                result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child, pass_fds=inherited)
+                result = None
+                try:
+                    result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child, pass_fds=inherited)
+                finally:
+                    retain_arm(root, reports, arm, case, None if result is None else result.returncode, provenance)
                 status = status or result.returncode
-                current = list(reports.rglob('TEST-*.xml'))
+                current = list((arm / 'phone').rglob('TEST-*.xml'))
                 cases = [test for path in current for test in ET.parse(path).getroot().iter('testcase')]
                 if len(cases) != 1 or cases[0].get('classname') != CLASS or cases[0].get('name') != METHODS[case] or any(
                         cases[0].find(key) is not None for key in ('failure', 'error', 'skipped')):
@@ -50,8 +90,6 @@ def main():
                     saved = Path(directory) / f'TEST-background-agent-{case}-{index}.xml'
                     shutil.copyfile(path, saved)
                     retained.append(saved)
-                    # Preserve the exact report before the next managed task replaces its outputs.
-                    path.unlink()
         finally:
             reports.mkdir(parents=True, exist_ok=True)
             for saved in retained:
