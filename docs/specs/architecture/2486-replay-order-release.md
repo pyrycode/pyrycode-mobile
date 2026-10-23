@@ -1,0 +1,71 @@
+# Replay-order release ownership (#2486)
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt`: replay-order scenario, `severLink`, `restoreLink`; the test requires a held thinking state before deliberate offline production.
+- `scripts/e2e-emulator.sh`: replay-order selection and second-fragment watcher; any new phone unregister currently releases the reply.
+- `scripts/test_e2e_stream_hold.py`: executes the actual shell selection/watcher against controlled logs and release files.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/DaemonFaultControl.kt`: existing fixed `releaseStream` control supports explicit offline release.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/ThreadEvidence.kt`: passive host route and authenticated connection ownership.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`: completion, order, segmentation and echo checks remain intact.
+- `docs/knowledge/features/development-verification.md` and `docs/e2e-interactive-stream.md`, replay-order: empty aggregate failures cannot identify the failed predicate; segmented replies are valid.
+
+## Context
+
+One behaviour: the replay-order scenario must release its reply only during its deliberate outage. Historical Linux #2483 and macOS #2344 daemon logs both show `v2.push.producer_gap.teardown` before reply completion and a fresh handshake shortly afterwards. The release watcher accepts that automatic disconnect, so the completed reply can replace thinking before the test observes it. Original instrumentation details are unavailable; preserve that limitation and capture a focused run before claiming an exact historical predicate.
+
+## Design
+
+Use the existing phone-checkpoint release mechanism for replay-order. After the thinking assertion and successful `severLink`, invoke `DaemonFaultControl.releaseStream`, then retain the original offline window and restore. The fixed host control writes only the harness-owned release file. Automatic reconnects cannot release the fixture. Add static phase logs around initial readiness, thinking, sever, release, restore, rendered text and final evidence.
+
+Keep exact rendered `alpha bravo charlie`, completion, item identity/order and single prompt echo assertions. Resolve the tested server's coordinator and negotiated route, retain its conversation identity before sending, and require final evidence to belong to the current supported connection and current snapshot. Do not sort retained evidence or retry the scenario. No production types, signatures, transport contracts or timeout values change.
+
+Shared-file overlaps include #1766, #2052, #2088, #2090, #2091, #2097, #2104, #2114, #2121, #2175, #2442 and #2462. Changes stay local to replay-order and its regression; inspected active #2104/#2462 work changes the rule/ping paths, not this release boundary.
+
+Forecast: roughly 350 written lines including this plan, diagnostics, shell regression and invariant probes; 0 exported types, 0 signature migrations, 4 acceptance criteria, no new production reject branches. This is one repair with its regression, below the 1600-line ceiling.
+
+## State and concurrency model
+
+The existing owned shell watcher waits for the release file; the existing fault server writes it. The instrumentation thread runs the scenario sequentially. Existing supervisor ownership, cancellation, watcher teardown and control timeouts stay unchanged. Passive evidence observation never opens a new query or connection.
+
+## State transitions and identity reuse
+
+| Event | Check |
+| --- | --- |
+| Automatic disconnect before thinking is observed | Controlled shell regression emits producer-gap unregister and verifies no release. |
+| Repeated automatic reconnect/unregister and enqueue | Same regression verifies the held fragment stays closed. |
+| Deliberate sever then explicit release | Regression verifies explicit release completes watcher; native replay-order checks thinking before sever and exact reply afterwards. |
+| Reconnect replaces authenticated source under same host/conversation | Final proof requires current route connection/snapshot; focused ownership probes reject retired connection, other host/conversation and changed document. |
+| Duplicate, missing, reordered or segmented replay; duplicate/late echo | Existing `QueueRecoveryAgentEvidenceTest`, `AuthoritativeScenarioScreenTest` and `ScriptedThreadRenderTest` retain their negative and success probes. |
+
+## Error handling
+
+Existing original deadlines and exceptions remain. Static phase start/complete logs identify the pending predicate without dumping text, tokens, identifiers or exception bodies. Control failure remains an immediate failure. Cleanup stays with the existing gate and harness owners.
+
+## Testing strategy
+
+Write and run the real shell watcher regression before the repair; it must fail on automatic unregister releasing the reply. Run it green after selection changes. Add pure ownership probes if a helper is necessary for the final current-source check. Run existing replay helper and native-render probes, lint, assembly, instrumentation compilation and formatting. Run focused `scripted replay-order` on Linux, inspecting counted XML, raw instrumentation, phone logcat and isolated daemon/relay/control logs. The native test requires real socket recovery and background dispatchers; Robolectric cannot replace that evidence. Dispatcher owns full scripted-all acceptance. No real Claude or second-OS run.
+
+## Open Questions
+
+- Which predicate failed in fresh focused execution? Record evidence and any design adjustment in Revisions; original empty aggregate failures alone cannot answer it.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, replay-order (#477, Layer 2d): replace disconnect-log release description with explicit phone release after deliberate sever; retain segmented replay and original timing contracts.
+
+## Security review
+
+**Verdict:** PASS
+
+- Trust boundaries: `DaemonFaultControl.releaseStream` uses the existing fixed test-only action and harness-owned file; accepts no path or daemon text. Final evidence must match the tested host/conversation and current authenticated source.
+- Tokens: no credentials added or copied; pairing output and private HOME stay out of published artifacts.
+- Files/storage: release path remains fixed by the isolated harness. Raw evidence stays private on the agents volume; publish only checked summaries/hashes.
+- Android attack surface: no manifest, component, deep link or provider changes.
+- Cryptography: real Noise transport remains untouched; no changes to keys, nonces or algorithms.
+- Network/I/O: existing bounded control request and supervisor backoff remain; no timeout increase or new endpoint.
+- Logs: static phase names only; never message bodies, tokens, keys, transcripts or headers.
+- Concurrency: explicit action follows completed close and null repository; no additional job or lock; existing cleanup owns shell children.
+- Threat model: dropped/reordered traffic must still fail ordered evidence; no plaintext disclosure to relay. Rooted-disk theft and UI screenshot/keyboard exposure are outside this test-only repair, with existing production storage/UI boundaries unchanged.
+
+**Reviewer:** builder self-review. **Date:** 2026-10-23.
