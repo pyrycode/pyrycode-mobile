@@ -161,6 +161,38 @@ existing viewport, exact rendered revision and certified-checkpoint requirements
 still apply after contents render. See [connection-owned body queries](remote-conversation-repository.md#missing-tool-body-queries-2388)
 and [focused evidence for the parent compact handoff](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
 
+**Direct agent children (#2389).** A visible, individually expanded agent demands
+its first missing page of direct-child summaries through the same owned lane.
+Nested agents demand only their own children when individually expanded. Opening
+a group exposes loaded member summaries with bodies closed; recomposition and
+hidden descendants initiate neither speculative child pages nor closed-body reads.
+Body demand remains independent. Unchanged retained pages reopen without a read,
+including offline, within the current in-memory snapshot.
+
+Loading, loaded children, authoritative empty, explicit Retry and offline missing
+data appear inside the expanded parent. Load more follows that parent's displayed
+descendants, uses the existing inline history-control styling and requests one
+certified continuation per tap; it is separate from thread-history paging. A short
+page does not mean complete. Only validated separate success with `more: false`
+certifies the enumeration, including marker-only empty success. Failures remain
+sticky across recomposition. Cursor rejection offers Retry from the first page for
+the current owner, retaining old rows until a validated replacement succeeds.
+
+Child demand uses independent consumer targets and the current presentation,
+connection and resumed destination binding. Collapse and retirement withdraw even
+before the Loading presentation reaches a display frame; held presentations may
+withdraw prior targets but cannot add demand or authorize Retry/Load more. Other
+consumers retain their demand; abandoned requests drain before lane reuse.
+
+Certified order-zero children stay under their parent, never in the root
+queued/lost tail. A full fact without order cannot borrow placement from an older
+summary. Summary `shown: false` participates in cursor accounting but renders no
+row. Its inert headline stays independent of tool input and survives body loading.
+Summary conversion supplies no read sight or history coverage. Final parent
+revisions govern descendant reachability in either page arrival order; stale
+parent pages cannot expose or demand descendants. See the [page admission rules](remote-conversation-repository.md#direct-child-pages-2389)
+and [counted evidence](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
 **Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only while the destination is resumed and
 unobscured, after exact row reveal completes and its readable trailing edge is

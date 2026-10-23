@@ -117,7 +117,8 @@ internal class SuiteThreadReadReceipts(
                     is ThreadDecodeOutcome.Repair -> fail()
                     is ThreadDecodeOutcome.Complete ->
                         when (val reply = outcome.value) {
-                            is ThreadQueryReply.Body -> Unit // A body grants no read receipt or checkpoint.
+                            // Expansion grants no read receipt or checkpoint.
+                            is ThreadQueryReply.Body, is ThreadQueryReply.Children -> Unit
                             is ThreadQueryReply.Batch -> {
                                 if (reply.checkpoint.version > 9007199254740991uL) {
                                     fail()
