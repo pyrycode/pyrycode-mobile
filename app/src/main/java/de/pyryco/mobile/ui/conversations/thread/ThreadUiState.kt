@@ -17,6 +17,25 @@ import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
+    data class AgentChildrenDemand(
+        val presentation: AuthoritativeThreadPresentation,
+        val keys: Set<String>,
+        val binding: Any,
+        val retry: String? = null,
+        val more: String? = null,
+    ) : ThreadEvent {
+        override fun toString() = "AgentChildrenDemand(redacted)"
+    }
+
+    data class ToolBodyDemand(
+        val presentation: AuthoritativeThreadPresentation,
+        val keys: Set<String>,
+        val binding: Any? = null,
+        val retry: String? = null,
+    ) : ThreadEvent {
+        override fun toString() = "ToolBodyDemand(<redacted>)"
+    }
+
     data class AuthoritativeQueueAction(
         val target: de.pyryco.mobile.data.repository.AuthoritativeQueueTarget,
         val sendNow: Boolean,

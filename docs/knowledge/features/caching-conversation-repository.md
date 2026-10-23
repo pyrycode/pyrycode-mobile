@@ -6,9 +6,13 @@
 `NegotiatedThread` with authoritative restore, observation and older demand. Offline
 facts never negotiate support. Runtime snapshot/list observers, raw row merging,
 legacy coverage/cursors and read/write-history-position APIs were removed in #2367.
-No active consumer reads or writes the legacy cached-row family. Serialized storage
-and its backend remain detached until #2364; their tests are storage history, not a
-runtime compatibility contract.
+Only supported authoritative facts can be stored/restored. #2385 retired legacy-file import,
+\#2386 discarded legacy Room tables, and #2387 removed the remaining storage methods, codecs
+and exclusive models. See the [supported cache contract](conversation-cache-contract.md#the-contract),
+[#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
+and [#2386 upgrade evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
+The [integrated acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+accepts this authoritative-only storage route without certifying #2447's replacement timing probes.
 
 ## Restore and ownership
 
@@ -17,6 +21,13 @@ A pristine store can adopt saved certification; merge retains newer live revisio
 and both held sides without inferring order. Generation, epoch/incarnation, exact
 host/conversation and cache lifetime are checked after suspension. Disk cannot
 supply current prompts, progress, pending sends or configuration readings.
+
+Restore publishes the store and committed baseline under the `authoritativeThreads` monitor.
+Observation reads that baseline under the same monitor on `processingDispatcher` before
+checking for missing committed facts, then releases it before further processing or IO.
+Otherwise a restored 400-fact store can be compared with its old 200-fact baseline and trigger
+redundant parent closure. A concurrent map does not pair those publications. See the
+[controlled publication regression and accepted receipt](authoritative-reader-paging.md#retry-publication-and-baseline-ownership-2452).
 
 ## Retrieving an attachment for this host (#899)
 
@@ -27,7 +38,7 @@ override suspend fun retrieveAttachment(conversationId: String, attachmentId: St
 ```
 
 This wrapper is the natural home for `retrieveAttachment` for the same reason it already holds the
-thread-row cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
+authoritative thread cache: it is the one place that knows both `serverId` and a live delegate to fetch through.
 [`AttachmentStore`](attachment-retrieval.md) does the actual work — single-flighting concurrent
 retrievals of the same file, checking for a kept file first, and writing verified bytes temp-then-rename
 — this wrapper only supplies the host identity and the fetch function. With no store (`attachments ==
@@ -88,14 +99,48 @@ recheck before merge/save, including reused ids/epoch text. Exit cancels pending
 hydration; confirmed conversation/host deletion fences final saves while preserving colliding
 identities on another host. See [writer custody](caching-conversation-repository-concurrency.md#state-and-concurrency).
 
-### Older saved-history demand
+### Older authoritative saved pages (#2334)
 
-The negotiated wrapper first offers reader demand to the active observation's
-reader-owned full authoritative hydration. Generation and cache lifetime guard
-the restored facts and their placement witnesses. If local work cannot accept the
-demand, it forwards to the owning daemon route. Opening, reconnect and page arrival
-create no reader pull. File caches/doubles retain full authoritative restoration;
-this is not a bridge to legacy rows. See [older paging](remote-conversation-repository-reads-and-thread-store-history-paging.md).
+Native acceptance follows the [approved authoritative mapping](authoritative-reader-paging.md#approved-native-acceptance-mapping-2447); legacy projection/span measurements remain historical.
+
+
+Reader movement and the existing explicit retry admit one local page of at most **200 additional
+display contributions**, plus active inputs and required parent/placement witnesses. Indexed
+local reads have their own observation-owned slot, so offline operation and held newest/catch-up
+requests do not block them. Repeated movement during a read is dropped; completing a page,
+reconnecting or receiving a network page never starts an automatic local walk. A failed local
+read retains held content and its boundary for explicit retry; it cannot authorize a daemon
+request. Local Loading/Retry belongs to the exact observation and runtime generation. A reset,
+including reused epoch text, clears that state and obsolete cursor/work before delivering the
+new snapshot. Replacement clears the old status; old completion or cleanup cannot clear its
+new owner's state. Reader identity and cancellation are checked under the store monitor before
+store and persisted-baseline application; registration and cleanup share that monitor. Same-generation failed-boundary retry is retained. Daemon queries keep their
+existing coordinator slot; they do not set the legacy/local Loading tail. Exit, reset and
+confirmed deletion fence pending reads and final saves.
+
+The cursor binds exact host/conversation, authoritative epoch/incarnation, disk generation and
+content/launch identity. Storage retains a weakly owned, content-free seek bound for each live
+cursor. Its owned writer already traverses metadata for changed components; it compares old
+contribution positions with the pre-write reader bound and extends that bound to include their
+new placement. The bound and new generation become visible only after the database transaction
+commits. A rollback leaves reader state unchanged. This covers moved components beyond any
+fixed predecessor lookahead, even when the boundary and nearer components remain unchanged.
+It adds no whole-thread payload scan, payload lookahead or newest restart. Skip already admitted
+content/launch identities before decoding selected payloads. Missing generation custody retains
+retry; a write from a different storage instance cannot bless an old cursor. Production cache
+readers and writers share one instance, and fresh reopen obtains a new committed cursor.
+
+Fragmented saved groups remain readable without certifying the holes between them. Only a
+successful local exhaustion forwards that reader demand to the existing authoritative
+coordinator, whose certified continuous boundary owns daemon continuation. Local paging cannot
+set daemon `olderExists` false, manufacture coverage or overwrite a daemon cursor. Hydration
+extends only the successful committed baseline; owned writes preserve unloaded facts, raw
+revision winners, explicit clears, held ordering and retirement fences. Read the
+[storage continuation contract](conversation-cache-contract.md#authoritative-reader-continuation-2334)
+and [counted paging evidence](thread-screen-testing-saved-first-draw.md#authoritative-reader-paging-2334).
+
+File caches and doubles retain full authoritative restoration; see
+[older paging](remote-conversation-repository-reads-and-thread-store-history-paging.md).
 
 
 ## What is written, and when
@@ -150,6 +195,13 @@ that tombstone under the write lock; deletion waits for admitted work and remove
 cached conversation data. Refusal preserves it, and another host's identical id is
 unaffected. Archive/unarchive remain delegation. Attachment retrieval continues
 through the exact host's `AttachmentStore`; content removal creates no new fetch.
+
+Mixed fixtures and e2e setup must seed, clear and inspect `SavedAuthoritativeThread` through
+supported cache operations and production projection. A successful-empty retired method could
+otherwise claim a clear while leaving real saved facts intact. Retained nesting tests must
+still prove parent attribution/rendering; attachment replay must still prove the restored row
+and open/save bytes, and stream probes must inspect authoritative persistence. See the
+[#2387 preservation evidence](conversation-cache-contract.md#retirement-and-preservation-evidence-2387).
 
 The destination wraps the stable delegate before decorators and forwards negotiated
 ownership through each wrapper. See [wiring](caching-conversation-repository-wiring.md)

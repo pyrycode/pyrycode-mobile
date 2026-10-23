@@ -198,6 +198,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -255,7 +256,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
-    /** Outside Activity teardown: close each test's owned daemon sessions even when its body fails. */
+    /** Close owned daemon sessions before releasing replacement Activities, even when the body fails. */
     @get:Rule(order = Int.MIN_VALUE)
     val sessionCleanup =
         LiveSessionCleanupRule(
@@ -3949,7 +3950,8 @@ class InteractiveStreamE2ETest {
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
             assertTrue("X starts with a saved model", freshSettings(chatX.id).model in setOf("", INHERITED_MODEL_VALUE))
-            val rows = usableRows(publishedMenu(chatX.id)).filter { it.value != INHERITED_MODEL_VALUE }
+            val initialMenu = publishedMenu(chatX.id)
+            val rows = usableRows(initialMenu).filter { it.value != INHERITED_MODEL_VALUE }
             val rowB = checkNotNull(rows.firstOrNull()) { "the menu publishes no usable model" }
             val effortY = rowB.effortLevels.firstOrNull().orEmpty()
             writeSettings(chatY.id, model = rowB.value, effort = effortY)
@@ -3981,12 +3983,41 @@ class InteractiveStreamE2ETest {
 
             leaveThread()
             openChatRow(nameX)
-            assertEquals("X's model on a fresh settings reply", target.value, freshSettings(chatX.id).model)
+            val reopenedX = freshSettings(chatX.id)
+            assertEquals("X's model on a fresh settings reply", target.value, reopenedX.model)
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             leaveThread()
             openChatRow(MODEL_Y_NAME_PREFIX + stamp)
-            assertEquals("Y's model on a fresh settings reply", rowB.value, freshSettings(chatY.id).model)
-            awaitFooter(changeModelLabel, rowB.dropdownLabel(ConversationAgent.Claude))
+            var receipt = "receipt=unavailable"
+            var readOwner = "owner=unavailable"
+            val reopenedY =
+                withFreshSettings(chatY.id, onReceipt = { request, reply ->
+                    receipt = "request=$request reply=${reply.id} in_reply_to=${reply.inReplyTo} " +
+                        "conversation=${reply.conversationId} session=${reply.sessionProvenance.raw} cleared=${reply.sessionStateCleared}"
+                }) { repository, reading ->
+                    readOwner = "receipt_repository=${System.identityHashCode(repository)} ${modelReopenOwner(chatY.id)}"
+                    reading
+                }
+            assertEquals("Y's model on a fresh settings reply", rowB.value, reopenedY.model)
+            awaitFooter(changeModelLabel, rowB.dropdownLabel(ConversationAgent.Claude), observe = { observed ->
+                val records =
+                    listOf(
+                        "stage=final-y-reopen $observed",
+                        "expected_y=$rowB initial_menu=$initialMenu",
+                        "x_conversation=${chatX.id} x_model=${reopenedX.model} x_effort=${reopenedX.effort} x_session=${reopenedX.sessionId}",
+                        "y_conversation=${chatY.id} y_model=${reopenedY.model} y_effort=${reopenedY.effort} " +
+                            "y_session=${reopenedY.sessionId} held=${reopenedY.held} $receipt",
+                        "read_owner=$readOwner",
+                        "wait_owner=${modelReopenOwner(chatY.id)}",
+                        RecordedSuiteNative.modelReopenProgress(twoHostArg(ARG_SERVER_ID)),
+                    )
+                records.forEachIndexed { record, value ->
+                    val chunks = JsonPrimitive(value).toString().chunked(800)
+                    chunks.forEachIndexed { index, chunk ->
+                        Log.i("ModelReopen", "record=$record chunk=${index + 1}/${chunks.size} data=$chunk")
+                    }
+                }
+            })
         } finally {
             restoreSettings(originals)
         }
@@ -4304,7 +4335,11 @@ class InteractiveStreamE2ETest {
             )
         val bypass = PermissionModeOption.Bypass
         val manual = PermissionModeOption.Default
-        try {
+        withOperatorBypassCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
             pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
             val name = BYPASS_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
@@ -4419,9 +4454,6 @@ class InteractiveStreamE2ETest {
                     e,
                 )
             }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
@@ -5457,30 +5489,25 @@ class InteractiveStreamE2ETest {
             )
             // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            var displayedEvidence: AgentReplyEvidence? = null
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                val current =
-                    runBlocking {
-                        withTimeoutOrNull(1000) {
-                            harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
-                                val support = phoneRepository.negotiatedThread?.support?.value
-                                reading.admitted && support is ThreadSupport.Supported && reading.owner.connection === support.connection
+            val evidence =
+                composeTestRule.revealHeldAgentRun(
+                    THREAD_TIMEOUT_MS,
+                    resolve = { remaining ->
+                        val current =
+                            runBlocking {
+                                withTimeoutOrNull(minOf(1000, remaining)) {
+                                    harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
+                                        val support = phoneRepository.negotiatedThread?.support?.value
+                                        reading.admitted &&
+                                            support is ThreadSupport.Supported &&
+                                            reading.owner.connection === support.connection
+                                    }
+                                }
                             }
-                        }
-                    }
-                val candidate = current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
-                val index =
-                    candidate?.let {
-                        list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
-                    } ?: -1
-                if (index < 0) {
-                    false
-                } else {
-                    displayedEvidence = candidate
-                    true
-                }
-            }
-            val evidence = checkNotNull(displayedEvidence) { "the held Agent must supply its own displayed tool run" }
+                        current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                    },
+                    evidence = { android.util.Log.i("AgentReplyReveal", it) },
+                )
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
@@ -5499,7 +5526,6 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("opened owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
                     }
-            list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
@@ -5553,7 +5579,11 @@ class InteractiveStreamE2ETest {
                     awaitChannelList()
                     awaitConnected()
                     openChatRow(name)
-                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
+                }, send = {
+                    sendFromPhone(
+                        "Reply briefly to this new-session settlement check.",
+                    )
+                }, withActivity = sessionCleanup::withRestartedActivity)
             }
         } catch (error: Throwable) {
             failure = error
@@ -6968,8 +6998,7 @@ class InteractiveStreamE2ETest {
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()
                     runBlocking {
-                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
-                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                        clearCachedThread(cache, serverId, chatX)
                     }
                 }
             awaitChannelList()
@@ -7196,8 +7225,7 @@ class InteractiveStreamE2ETest {
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()
                     runBlocking {
-                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
-                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                        clearCachedThread(cache, serverId, chatX)
                     }
                 }
             awaitChannelList()
@@ -7662,21 +7690,34 @@ class InteractiveStreamE2ETest {
         return ActivityScenario.launch(MainActivity::class.java)
     }
 
-    /** Read the saved family selected by this host's actual production repository. */
+    private suspend fun clearCachedThread(
+        cache: ConversationCache,
+        host: String,
+        conversation: String,
+    ) {
+        cache
+            .resetAuthoritativeThread(
+                host,
+                conversation,
+                de.pyryco.mobile.data.cache
+                    .SavedAuthoritativeThread("e2e-cleared", emptyList(), 0, 0),
+            ).getOrThrow()
+        assertTrue("X's thread cache was not cleared", requireNotNull(cache.readAuthoritativeThread(host, conversation)).items.isEmpty())
+    }
+
+    /** Read supported saved facts through the host's production authoritative projection. */
     private suspend fun cachedThreadItems(
         cache: ConversationCache,
         serverId: String,
         conversationId: String,
-    ): List<ThreadItem> =
-        if (harnessThreadEvidence(hostRepository(serverId)).kind == ThreadEvidenceKind.Authoritative) {
-            cache
-                .readAuthoritativeThread(serverId, conversationId)
-                ?.let {
-                    projectAuthoritativeThread(serverId, conversationId, it.toSnapshot()).items
-                }.orEmpty()
-        } else {
-            cache.readThread(serverId, conversationId)
-        }
+    ): List<ThreadItem> {
+        check(harnessThreadEvidence(hostRepository(serverId)).kind == ThreadEvidenceKind.Authoritative)
+        return cache
+            .readAuthoritativeThread(serverId, conversationId)
+            ?.let {
+                projectAuthoritativeThread(serverId, conversationId, it.toSnapshot()).items
+            }.orEmpty()
+    }
 
     /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
     private fun awaitCachedOffer(
@@ -8516,6 +8557,7 @@ class InteractiveStreamE2ETest {
     private fun <T> withFreshSettings(
         conversationId: String,
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+        onReceipt: (Long, Envelope) -> Unit = { _, _ -> },
         block: suspend (ConversationRepository, SessionSettings) -> T,
     ): T =
         runBlocking {
@@ -8545,9 +8587,13 @@ class InteractiveStreamE2ETest {
                     }
                 }
                 val reading =
-                    SettingsReadProbe.read(repository, conversationId, isCurrent) {
-                        bundle.coordinator.hostReadings.liveSessionBindings[conversationId]
-                    }
+                    SettingsReadProbe.read(
+                        repository,
+                        conversationId,
+                        isCurrent,
+                        session = { bundle.coordinator.hostReadings.liveSessionBindings[conversationId] },
+                        onReceipt = onReceipt,
+                    )
                 check(isCurrent()) { "settings read owner changed before use" }
                 block(repository, reading)
             }
@@ -8557,6 +8603,27 @@ class InteractiveStreamE2ETest {
     private fun publishedMenu(conversationId: String): ModelMenu {
         val repository = hostRepository()
         return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeModelMenu(conversationId).filterNotNull().first() } }
+    }
+
+    /** Existing state values only: collecting a menu here would change the replay's requests. */
+    private fun modelReopenOwner(conversationId: String): String {
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val bundle = registry.connectionFor(serverId)
+        val repository = bundle?.coordinator?.currentRepository?.value
+        val transport = bundle?.supervisor?.currentConnection?.value
+        val selectedHost =
+            registry.hostConnections.value
+                .singleOrNull {
+                    registry.connectionFor(
+                        it.serverId,
+                    ) === registry.selected.value
+                }?.serverId
+        return "host=$serverId conversation=$conversationId selected_host=$selectedHost " +
+            "bundle=${bundle?.let(System::identityHashCode)} repository=${repository?.let(System::identityHashCode)} " +
+            "transport=${transport?.let(System::identityHashCode)} relay=${bundle?.supervisor?.relayStatus?.value} " +
+            "session_binding=${bundle?.coordinator?.hostReadings?.liveSessionBindings?.get(conversationId)?.raw} " +
+            "published_menu=${bundle?.coordinator?.hostReadings?.modelMenus?.value?.get(conversationId)}"
     }
 
     /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
@@ -8794,12 +8861,20 @@ class InteractiveStreamE2ETest {
         clickLabel: String,
         label: String,
         confirmed: () -> Boolean = { true },
+        observe: (String) -> Unit = {},
         state: (String?) -> Boolean = { true },
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
         try {
-            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, confirmed = confirmed, state = state)
+            composeTestRule.awaitRunConfiguration(
+                section,
+                label,
+                THREAD_TIMEOUT_MS,
+                confirmed = confirmed,
+                observe = observe,
+                state = state,
+            )
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(e.message, e)
         } finally {

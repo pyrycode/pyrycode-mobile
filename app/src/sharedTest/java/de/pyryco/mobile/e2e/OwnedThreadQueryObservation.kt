@@ -134,6 +134,7 @@ internal class OwnedThreadQueryObservation(
                 }
                 is ThreadDecodeOutcome.Complete ->
                     when (val reply = outcome.value) {
+                        is ThreadQueryReply.Body, is ThreadQueryReply.Children -> Unit // Expansion never certifies history observation.
                         is ThreadQueryReply.Batch -> {
                             if (reply.checkpoint.epoch != expected.epoch) {
                                 close(connection)

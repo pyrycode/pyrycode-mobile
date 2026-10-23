@@ -24,6 +24,43 @@ writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires 
 
 ## The contract
 
+Fetched missing tool bodies (#2388) stay in the host thread snapshot's separate
+in-memory ID/revision map and can be reused on unchanged reopen or offline. They
+do not rewrite saved full source facts or extend the disk format. Process restore
+retains only the existing persisted facts, not fetched-body availability or
+transient Loading/Retry state. See [body retention and completion](remote-conversation-repository.md#missing-tool-body-queries-2388).
+
+Direct-child pages (#2389) likewise stay in the snapshot's separate in-memory
+parent/revision map, including their captured version and certified continuation.
+Unchanged offline reopen can reuse them; process restore does not promise pages,
+cursors or child Loading/Retry state. Summary enumeration never certifies root or
+saved-history completeness, rewrites newer complete facts or extends persisted
+coverage. Selection/activation and subtree invalidation remain
+with #2431–#2433 and #2391. See [page admission and completion](remote-conversation-repository.md#direct-child-pages-2389)
+and [the child evidence contribution to #2376](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
+**Expansion retention (#2390).** One in-memory budget per host spans fetched
+bodies and child enumerations in every conversation, including open, closed and
+unreachable entries: inclusive 16,777,216 serialized UTF-8 bytes and 1000 child
+summaries. Charge each body content object, original raw child-summary object and
+current cursor object once per retained entry, including unknown fields, escaped
+and multibyte text. Multiple consumers do not multiply cost. Complete source facts
+and their existing app-private no-backup persistence stay outside this budget;
+there is no new database, migration, background download or process-restore state.
+
+Current expanded demand protects loaded details and ancestry needed to expose open
+descendants. Other consumers keep protection after one collapses or retires.
+Admission evicts whole unprotected bodies or accumulated parent enumerations in
+cross-kind LRU order; successful admission or retained reopen records use, while
+recomposition does not. If admission cannot satisfy both limits, rejection preserves existing
+entries and the previous page/cursor atomically, with sticky inline Retry for the
+current owner. Closing other demand permits explicit Retry to reclaim capacity.
+Retained unchanged reopen works offline; evicted reopen is missing and follows the
+bounded read path. Eviction clears availability, cursor and detail completion,
+never saved full facts, root/history coverage, checkpoints, join watermarks or
+read marks, including reconnect. See [accounting and ownership](remote-conversation-repository.md#retained-expansion-budget-2390)
+and [counted parent handoff](../../e2e-interactive-stream.md#retained-expansion-budget-evidence-2390).
+
 **Read positions are the older-daemon fallback (#1883).** The host-keyed
 `ReadPosition` family keeps its existing format, storage custody and restart behavior.
 A daemon supplying confirmed read marks owns unread through its known latest durable id

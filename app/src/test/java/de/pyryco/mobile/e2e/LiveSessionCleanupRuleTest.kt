@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
@@ -62,5 +63,68 @@ class LiveSessionCleanupRuleTest {
             ),
         )
         assertEquals(emptyList<String>(), calls)
+    }
+
+    @Test fun replacementClosesAfterEndOnSuccessOrBodyOrEndFailure() {
+        for (stage in listOf("success", "body", "end")) {
+            val calls = mutableListOf<String>()
+            val original = AssertionError(stage)
+            val cleanup =
+                LiveSessionCleanupRule(begin = {}, end = {
+                    calls += "end"
+                    if (stage == "end") throw original
+                })
+            val result =
+                runCatching {
+                    cleanup
+                        .apply(
+                            object : Statement() {
+                                override fun evaluate() {
+                                    cleanup.withRestartedActivity(AutoCloseable { calls += "close" }) {
+                                        calls += "proof"
+                                        if (stage == "body") throw original
+                                    }
+                                    calls += "fixture-cleanup"
+                                }
+                            },
+                            Description.EMPTY,
+                        ).evaluate()
+                }.exceptionOrNull()
+            assertSame(if (stage == "success") null else original, result)
+            val expected = if (stage == "body") listOf("proof", "end", "close") else listOf("proof", "fixture-cleanup", "end", "close")
+            assertEquals(stage, expected, calls)
+        }
+    }
+
+    @Test fun replacementCloseFailureCannotHideEarlierFailuresOrSkipOtherCloses() {
+        for (stage in listOf("success", "body", "end")) {
+            val original = AssertionError(stage)
+            val closeFailure = AssertionError("close")
+            var closes = 0
+            val cleanup = LiveSessionCleanupRule(begin = {}, end = { if (stage == "end") throw original })
+            val result =
+                runCatching {
+                    cleanup
+                        .apply(
+                            object : Statement() {
+                                override fun evaluate() {
+                                    cleanup.withRestartedActivity(AutoCloseable { closes++ }) {}
+                                    cleanup.withRestartedActivity(
+                                        AutoCloseable {
+                                            closes++
+                                            throw closeFailure
+                                        },
+                                    ) {
+                                        if (stage == "body") throw original
+                                    }
+                                }
+                            },
+                            Description.EMPTY,
+                        ).evaluate()
+                }.exceptionOrNull()
+            assertSame(if (stage == "success") closeFailure else original, result)
+            if (stage != "success") assertTrue(original.suppressed.contains(closeFailure))
+            assertEquals("every resource closes once", 2, closes)
+        }
     }
 }

@@ -49,6 +49,7 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
     restart: (() -> Unit) -> AutoCloseable,
     openThread: () -> Unit,
     send: () -> Unit,
+    withActivity: (AutoCloseable, () -> Unit) -> Unit = { activity, proof -> activity.use { proof() } },
 ) {
     fun source() = GlobalContext.get().get<ThreadDestinationFactory>().repository(host)
 
@@ -218,24 +219,6 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                 }.maxByOrNull { requireNotNull(it.order) },
         ) { "release message must anchor the Agent between launch and finish" }
 
-    fun assertUiPlacement(
-        reading: ThreadEvidence,
-        after: ThreadEvidenceRecord? = null,
-    ) {
-        val root = reading.records.single { it.fact?.id == rootId }
-        val before = reading.records.single { it.fact?.id == beforeAnchor.id }
-        var indexes = emptyList<Int>()
-        waitUntil(120_000) {
-            val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
-            indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
-                after?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
-            indexes.all { it >= 0 }
-        }
-        // The lazy list is reversed: a newer row has a smaller index.
-        assertTrue("finished Agent stays after the pre-finish phone message", indexes[0] < indexes[1])
-        if (after != null) assertTrue("new-session send stays after the finished Agent", indexes[2] < indexes[0])
-    }
-
     fun assertFamily(restored: ThreadEvidence) {
         for (old in baseline) {
             val fact = requireNotNull(old.fact)
@@ -248,156 +231,253 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
         assertEquals("complete chronological anchor content", beforeAnchor.content, anchor.content)
         assertTrue("canonical finished placement is preserved", restored.retainsFinishedAgentPlacement(placementRoot, beforeAnchor))
     }
-    Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
-    restart {
-        assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
-        assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
-        assertTrue("cache reopened", GlobalContext.get().get<ConversationCache>() !== oldCache)
-        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
-        runBlocking {
-            withTimeout(120_000) { registry.hostConnections.first { registry.connectionFor(host) != null } }
-        }
-        val route = requireNotNull(source().negotiatedThread)
-        assertTrue("saved facts do not negotiate support", route.support.value is ThreadSupport.Unverified)
-        val restored = runBlocking { withTimeout(120_000) { route.observe(conversation).first { it.epoch != null } } }
-        assertEquals("certified saved checkpoint restored before Activity launch", saved.checkpoint, restored.checkpoint)
-        assertEquals("saved coverage restored", saved.coverage, restored.coverage)
-        assertFamily(authoritativeThreadEvidence(host, conversation, route, restored))
-        receipt("saved_before_launch", authoritativeThreadEvidence(host, conversation, route, restored))
-        Log.i("NegotiatedAgentRestart", "event=graph_cache_restart graph=replaced cache=reopened saved_family=restored support=unverified")
-    }.use {
-        openThread()
 
-        fun checkFamily(verifyUi: Boolean = true): ThreadEvidence {
-            val restored = evidence { snapshot -> snapshot.records.any { it.fact?.id == rootId && it.fact.active == false } }
-            assertFamily(restored)
-            receipt("reopened", restored)
-            val agent = restored.records.single { it.fact?.id == rootId }
-            val children = restored.records.filter { it.agentId == agent.message.id && it.message.id != agent.message.id }
-            assertEquals(
-                "restart retains every tool under its original Agent",
-                toolIds,
-                children
-                    .filter {
-                        it.message.role == Role.Tool
-                    }.map { requireNotNull(it.fact).id }
-                    .toSet(),
-            )
-            assertTrue(children.filter { it.message.role == Role.Tool }.all { it.session == session && (it.fact?.parent ?: 0) > 0 })
-            val owned = children.first { it.message.role == Role.Tool }
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
-            if (verifyUi) {
-                assertUiPlacement(restored)
-                verifyAgentRunNavigation(
-                    agent.message.id,
-                    requireNotNull(owned.toolRunId),
-                    children.map { it.message.id },
-                    hasTestTag(TOOL_ROW_TAG) and
-                        hasAnyAncestor(hasTestTag("background-agent-child:${agent.message.id}")),
-                    context.getString(R.string.agent_go_to),
-                    context.getString(R.string.tool_run_expand),
-                    context.getString(R.string.tool_run_collapse),
-                    markerMatcher =
-                        hasText(context.getString(R.string.agent_finished)) and
-                            hasText(context.getString(R.string.agent_go_to)) and hasClickAction(),
-                    ownedChildKey = owned.message.id,
-                    evidence = {
-                        Log.i("NegotiatedAgentRestart", it)
-                    },
+    var placementProbe = 0
+    var screenObservation: PassiveThreadObservation? = null
+
+    fun assertUiPlacement(
+        reading: ThreadEvidence,
+        after: ThreadEvidenceRecord? = null,
+    ) {
+        val observation = requireNotNull(screenObservation)
+        val afterFact = after?.fact
+        val requiredFactIds =
+            baseline.map { requireNotNull(it.fact).id }.toSet() + beforeAnchor.id + listOfNotNull(afterFact?.id)
+        val probe = ++placementProbe
+        var previousProbe: List<Any?>? = null
+        var indexes = emptyList<Int>()
+        waitUntil(120_000) {
+            val screenReading = observation.reading(host, conversation)
+            val screenEvidence = screenReading?.let(observation::evidence)
+            val screen = screenEvidence?.sourceSnapshot
+            val missingFactIds =
+                requiredFactIds.filter { id -> screenEvidence?.records?.none { it.fact?.id == id } != false }
+            if (screenEvidence != null) {
+                assertEquals("historical family epoch is retained", reading.owner.epoch, screenEvidence.owner.epoch)
+            }
+            if (screenEvidence != null && missingFactIds.isEmpty()) {
+                assertFamily(screenEvidence)
+                val root = screenEvidence.records.single { it.fact?.id == rootId }
+                val before = screenEvidence.records.single { it.fact?.id == beforeAnchor.id }
+                val currentAfter = afterFact?.let { fact -> screenEvidence.records.single { it.fact?.id == fact.id } }
+                if (currentAfter != null) {
+                    assertStableFact(requireNotNull(afterFact), requireNotNull(currentAfter.fact))
+                    assertEquals("recovered send body is retained", requireNotNull(after).fullText, currentAfter.fullText)
+                    assertTrue(
+                        "finished Agent stays before the recovered send after reset",
+                        screenEvidence.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(currentAfter.fact)),
+                    )
+                }
+                val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
+                    currentAfter?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+            } else {
+                indexes = List(if (after == null) 2 else 3) { -1 }
+            }
+            val current = requireNotNull(source().negotiatedThread).store.current(host, conversation)
+            val mark =
+                indexes +
+                    listOf(
+                        current.completedVersion,
+                        current.checkpoint,
+                        current.openingRows?.size,
+                        screen?.completedVersion,
+                        screen?.checkpoint,
+                        screen?.openingRows?.size,
+                        screen?.items?.size,
+                        current.generation,
+                        screen?.generation,
+                    ) + missingFactIds
+            if (mark != previousProbe) {
+                previousProbe = mark
+                val rootPresent = current.items.any { it.id == rootId }
+                val beforePresent = current.items.any { it.id == beforeAnchor.id }
+                val rootOpening = current.openingRows?.any { it.first == rootId }
+                val beforeOpening = current.openingRows?.any { it.first == beforeAnchor.id }
+                Log.i(
+                    "NegotiatedAgentRestart",
+                    "event=placement_probe probe=$probe indexes=$indexes missing_fact_ids=$missingFactIds facts=${current.items.size} " +
+                        "checkpoint=${current.checkpoint} opening_count=${current.openingRows?.size} " +
+                        "root_present=$rootPresent before_present=$beforePresent " +
+                        "root_opening=$rootOpening before_opening=$beforeOpening " +
+                        "screen_facts=${screen?.items?.size} screen_version=${screen?.completedVersion} " +
+                        "screen_checkpoint=${screen?.checkpoint} screen_opening=${screen?.openingRows?.size} " +
+                        "screen_root=${screen?.items?.any { it.id == rootId }} " +
+                        "screen_before=${screen?.items?.any { it.id == beforeAnchor.id }} screen_current=${screen === current} " +
+                        "captured_generation=${reading.owner.generation} current_generation=${current.generation} " +
+                        "screen_generation=${screen?.generation}",
                 )
             }
-            return restored
+            // A reset or connection switch during key lookup cannot certify the retired reading.
+            screenReading != null &&
+                screenEvidence != null &&
+                missingFactIds.isEmpty() &&
+                indexes.all { it >= 0 } &&
+                observation.evidence(screenReading) === screenEvidence
         }
-        checkFamily()
-        val bundle = requireNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(host))
-        val route = requireNotNull(source().negotiatedThread)
-        val oldConnection = (route.support.value as ThreadSupport.Supported).connection
-        val scope = CoroutineScope(Dispatchers.Main.immediate)
-        try {
-            val reconnect =
-                scope.async(start = CoroutineStart.UNDISPATCHED) {
-                    val pending =
-                        bundle.coordinator.authoritativeThreads
-                            .observe(host, conversation)
-                            .first { snapshot ->
-                                snapshot.pendingSends.any {
-                                    it.deviceId !=
-                                        null
-                                }
-                            }.pendingSends
-                            .first { it.deviceId != null }
-                    // Let the synchronous enqueue finish before retiring the transport that owns its acknowledgement.
-                    yield()
-                    assertTrue(
-                        "the admitted connection still owns the pending send at retirement",
-                        (route.support.value as? ThreadSupport.Supported)?.connection === oldConnection,
-                    )
-                    assertTrue(
-                        "settlement must still be pending when the connection retires",
-                        bundle.coordinator.authoritativeThreads.current(host, conversation).pendingSends.any {
-                            it.deviceId == pending.deviceId && it.message.id == pending.message.id
-                        },
-                    )
-                    bundle.supervisor.close()
-                    bundle.supervisor.retry()
-                    pending
-                }
-            send()
-            val pending = runBlocking { withTimeout(120_000) { reconnect.await() } }
+        // The lazy list is reversed: a newer row has a smaller index.
+        assertTrue("finished Agent stays after the pre-finish phone message", indexes[0] < indexes[1])
+        if (after != null) assertTrue("new-session send stays after the finished Agent", indexes[2] < indexes[0])
+    }
+
+    Log.i("NegotiatedAgentRestart", "event=saved_family_ready checkpoint=${saved.checkpoint}")
+    val replacement =
+        restart {
+            assertTrue("application graph replaced", GlobalContext.get() !== oldGraph)
+            assertTrue("registry replaced", GlobalContext.get().get<RelayConnectionRegistry>() !== oldRegistry)
+            assertTrue("cache reopened", GlobalContext.get().get<ConversationCache>() !== oldCache)
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
             runBlocking {
-                withTimeout(
-                    120_000,
-                ) { route.support.first { it is ThreadSupport.Supported && it.connection !== oldConnection } }
+                withTimeout(120_000) { registry.hostConnections.first { registry.connectionFor(host) != null } }
             }
+            val route = requireNotNull(source().negotiatedThread)
+            assertTrue("saved facts do not negotiate support", route.support.value is ThreadSupport.Unverified)
+            val restored = runBlocking { withTimeout(120_000) { route.observe(conversation).first { it.epoch != null } } }
+            assertEquals("certified saved checkpoint restored before Activity launch", saved.checkpoint, restored.checkpoint)
+            assertEquals("saved coverage restored", saved.coverage, restored.coverage)
+            assertFamily(authoritativeThreadEvidence(host, conversation, route, restored))
+            receipt("saved_before_launch", authoritativeThreadEvidence(host, conversation, route, restored))
             Log.i(
                 "NegotiatedAgentRestart",
-                "event=connection_replaced capability=thread route=authoritative pending_send=observed owner=replaced",
+                "event=graph_cache_restart graph=replaced cache=reopened saved_family=restored support=unverified",
             )
+        }
+    withActivity(replacement) {
+        PassiveThreadProbe.open().use { observation ->
+            screenObservation = observation
+            openThread()
 
-            fun ThreadEvidenceRecord.matchesSend(): Boolean = fact?.matchesPending(pending) == true
-            val settled =
-                evidence { snapshot ->
-                    snapshot.records.any {
-                        it.fact?.kind == "user_message" &&
-                            it.matchesSend() &&
-                            it.fact.status == "delivered" &&
-                            !it.fact.active
-                    }
+            fun checkFamily(verifyUi: Boolean = true): ThreadEvidence {
+                val restored = evidence { snapshot -> snapshot.records.any { it.fact?.id == rootId && it.fact.active == false } }
+                assertFamily(restored)
+                receipt("reopened", restored)
+                val agent = restored.records.single { it.fact?.id == rootId }
+                val children = restored.records.filter { it.agentId == agent.message.id && it.message.id != agent.message.id }
+                assertEquals(
+                    "restart retains every tool under its original Agent",
+                    toolIds,
+                    children
+                        .filter {
+                            it.message.role == Role.Tool
+                        }.map { requireNotNull(it.fact).id }
+                        .toSet(),
+                )
+                assertTrue(children.filter { it.message.role == Role.Tool }.all { it.session == session && (it.fact?.parent ?: 0) > 0 })
+                val owned = children.first { it.message.role == Role.Tool }
+                val context = InstrumentationRegistry.getInstrumentation().targetContext
+                if (verifyUi) {
+                    assertUiPlacement(restored)
+                    verifyAgentRunNavigation(
+                        agent.message.id,
+                        requireNotNull(owned.toolRunId),
+                        children.map { it.message.id },
+                        hasTestTag(TOOL_ROW_TAG) and
+                            hasAnyAncestor(hasTestTag("background-agent-child:${agent.message.id}")),
+                        context.getString(R.string.agent_go_to),
+                        context.getString(R.string.tool_run_expand),
+                        context.getString(R.string.tool_run_collapse),
+                        markerMatcher =
+                            hasText(context.getString(R.string.agent_finished)) and
+                                hasText(context.getString(R.string.agent_go_to)) and hasClickAction(),
+                        ownedChildKey = owned.message.id,
+                        evidence = {
+                            Log.i("NegotiatedAgentRestart", it)
+                        },
+                    )
                 }
-            assertEquals("recovered send settles once", 1, settled.records.count { it.matchesSend() })
-            receipt("settled_session_b", settled)
-            assertNotEquals(
-                "the recovered send belongs to the new session",
-                session,
-                requireNotNull(
-                    settled.records
-                        .single {
-                            it.matchesSend()
-                        }.session,
-                ),
-            )
-            assertEquals("the recovered send belongs to session B", nextSession, settled.records.single { it.matchesSend() }.session)
-            for (tool in settled.records.filter { it.fact?.kind == "tool_call" && it.agentId != null }) {
-                val agent = settled.records.single { it.message.id == tool.agentId }
-                assertEquals("each tool retains its own Agent's session", agent.session, tool.session)
-                assertTrue("nested tools need daemon parent links", (tool.fact?.parent ?: 0) > 0)
+                return restored
             }
-            assertTrue(
-                bundle.coordinator.authoritativeThreads
-                    .current(host, conversation)
-                    .pendingSends
-                    .isEmpty(),
-            )
-            val reopened = checkFamily(verifyUi = false)
-            val settledAnchor = reopened.records.single { it.matchesSend() }
-            assertTrue(
-                "finished Agent remains between the original release and recovered send",
-                reopened.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(settledAnchor.fact)),
-            )
-            assertUiPlacement(reopened, settledAnchor)
-            Log.i("NegotiatedAgentRestart", "event=thread_activation route=authoritative restart=passed settlement_reconnect=passed")
-        } finally {
-            scope.cancel()
+            checkFamily()
+            val bundle = requireNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(host))
+            val route = requireNotNull(source().negotiatedThread)
+            val oldConnection = (route.support.value as ThreadSupport.Supported).connection
+            val scope = CoroutineScope(Dispatchers.Main.immediate)
+            try {
+                val reconnect =
+                    scope.async(start = CoroutineStart.UNDISPATCHED) {
+                        val pending =
+                            bundle.coordinator.authoritativeThreads
+                                .observe(host, conversation)
+                                .first { snapshot ->
+                                    snapshot.pendingSends.any {
+                                        it.deviceId !=
+                                            null
+                                    }
+                                }.pendingSends
+                                .first { it.deviceId != null }
+                        // Let the synchronous enqueue finish before retiring the transport that owns its acknowledgement.
+                        yield()
+                        assertTrue(
+                            "the admitted connection still owns the pending send at retirement",
+                            (route.support.value as? ThreadSupport.Supported)?.connection === oldConnection,
+                        )
+                        assertTrue(
+                            "settlement must still be pending when the connection retires",
+                            bundle.coordinator.authoritativeThreads.current(host, conversation).pendingSends.any {
+                                it.deviceId == pending.deviceId && it.message.id == pending.message.id
+                            },
+                        )
+                        bundle.supervisor.close()
+                        bundle.supervisor.retry()
+                        pending
+                    }
+                send()
+                val pending = runBlocking { withTimeout(120_000) { reconnect.await() } }
+                runBlocking {
+                    withTimeout(
+                        120_000,
+                    ) { route.support.first { it is ThreadSupport.Supported && it.connection !== oldConnection } }
+                }
+                Log.i(
+                    "NegotiatedAgentRestart",
+                    "event=connection_replaced capability=thread route=authoritative pending_send=observed owner=replaced",
+                )
+
+                fun ThreadEvidenceRecord.matchesSend(): Boolean = fact?.matchesPending(pending) == true
+                val settled =
+                    evidence { snapshot ->
+                        snapshot.records.any {
+                            it.fact?.kind == "user_message" &&
+                                it.matchesSend() &&
+                                it.fact.status == "delivered" &&
+                                !it.fact.active
+                        }
+                    }
+                assertEquals("recovered send settles once", 1, settled.records.count { it.matchesSend() })
+                receipt("settled_session_b", settled)
+                assertNotEquals(
+                    "the recovered send belongs to the new session",
+                    session,
+                    requireNotNull(
+                        settled.records
+                            .single {
+                                it.matchesSend()
+                            }.session,
+                    ),
+                )
+                assertEquals("the recovered send belongs to session B", nextSession, settled.records.single { it.matchesSend() }.session)
+                for (tool in settled.records.filter { it.fact?.kind == "tool_call" && it.agentId != null }) {
+                    val agent = settled.records.single { it.message.id == tool.agentId }
+                    assertEquals("each tool retains its own Agent's session", agent.session, tool.session)
+                    assertTrue("nested tools need daemon parent links", (tool.fact?.parent ?: 0) > 0)
+                }
+                assertTrue(
+                    bundle.coordinator.authoritativeThreads
+                        .current(host, conversation)
+                        .pendingSends
+                        .isEmpty(),
+                )
+                val reopened = checkFamily(verifyUi = false)
+                val settledAnchor = reopened.records.single { it.matchesSend() }
+                assertTrue(
+                    "finished Agent remains between the original release and recovered send",
+                    reopened.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(settledAnchor.fact)),
+                )
+                assertUiPlacement(reopened, settledAnchor)
+                Log.i("NegotiatedAgentRestart", "event=thread_activation route=authoritative restart=passed settlement_reconnect=passed")
+            } finally {
+                scope.cancel()
+            }
         }
     }
 }

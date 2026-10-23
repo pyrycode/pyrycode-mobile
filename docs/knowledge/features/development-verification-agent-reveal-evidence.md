@@ -24,6 +24,76 @@ tree snapshot: the controlled reset had no list in either tree, so switching tre
 would not fix it. Separate the original lookup assertion from suppressed replay-close
 teardown failures. See [the causal regression and counted Linux evidence](thread-screen-agent-navigation-evidence.md#agent-navigation-proof-readiness-2373).
 
+Held tool-run readiness must also survive generation replacement (#2483). With
+collapse enabled, a held Agent and an intervening settled main reply, the original
+lookup could retain a generation-scoped run identity after its indexed-key check.
+`revealHeldAgentRun` re-resolves the same raw Agent and turns from current admitted
+evidence within one original absolute deadline. It requires one message list,
+checks `msg:<runId>` through `IndexForKey`, then validates that key and dispatches
+`ScrollToIndex` together on the UI thread. Detached lists or missing keys remain
+unready. After scrolling it resolves again and requires unchanged current Agent
+and run identities plus one clickable “Using tools:” descendant under the exact
+`tool-run:<runId>` ancestor. Multiple lists or matching headers fail as ambiguous.
+The caller retains the original click-label, ownership, visibility and uniqueness
+assertions; diagnostics contain only bounded static readiness/reveal stages.
+
+`AgentReplyEvidenceScreenTest.heldRunRebindsAfterResetBetweenReadinessAndReveal`
+uses the real store reset after the exact old key is ready. The same admitted
+family and current run remain available, but the obsolete key leaves the real
+projection. The extracted original lookup failed at its generation-0 clickable
+header: 2 executed, 1 passed, 1 failed, zero errors/skips. This demonstrates stale
+lookup identity across reset, rather than missing owned tools or a missing current
+header. After repair, this probe and `heldRunRebindsAfterTwoConsecutiveResets` open
+only the final current run, including when both resets reuse raw Agent/turn IDs.
+
+Key existence independently fails to prove header existence: the first owned tool
+can survive as a singleton under the same message key without a tool-run header.
+The real-screen `heldRunRejectsMissingProjectedKey` and
+`heldRunRejectsUnrelatedClickableRunWithOwnedKeyPresent` keep complete admitted
+evidence fixed while removing the owned run or retaining only its first tool.
+Both invoke the reveal helper with a 1-second deadline, require
+`ComposeTimeoutException` and no successful reveal, and leave a second Agent's
+clickable run collapsed. They subsequently open that unrelated run and prove its
+uniquely attributed prose, establishing a working control. Removing the initial
+key-readiness guard and exact header ancestor made both negatives fail: 2 executed,
+2 failed, zero errors/skips, exit 1. A single-run positive fixture cannot detect
+substitution of another Agent's clickable header.
+
+Final Linux evidence on 2026-10-23, after restoring the helper byte-for-byte:
+
+- Separate focused class runs passed 16/16, zero failures/errors/skips, exits 0:
+  `AgentReplyEvidenceScreenTest` 5 (both resets, both negatives and collapse/reopen),
+  `AgentReplyEvidenceTest` 9 and `AuthoritativeAgentOwnershipTest` 2.
+- The original `RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+  passed a separate focused `python3 scripts/android-test-gate.py ui --tests
+  de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+  run at `ef3cb7cf58e658cc0ad1ecdc89e3f181f366c0ab`: 1 executed, 1 passed, zero
+  failures/errors/skips, gate/native exits 0. Phone diagnostics recorded one owned
+  readiness/reveal and managed cleanup finished. Original placement, parent
+  attribution, collapse/expand, uniqueness, main-reply, graph/cache restart,
+  settlement/reconnect, strict request/payload matching and teardown proofs remain
+  active. Raw XML, phone/replay diagnostics, source/effective APK identities,
+  unchanged packaged recording, failed attempts and cleanup receipts were retained
+  with a SHA-256 manifest at agents `logs/evidence/2483/rework-rejection-ef3cb7cf5/`.
+- At verifier head `f758c83853d79442f563a80adbe5859dc358be2b`, configured gates
+  passed: JVM 5,357 executed/passed, zero failures/errors/skips; UI 333
+  executed/passed, zero failures/errors, plus 1 skipped
+  (`RenameDialogCaptureTest.renameAtFigmaViewport`); scripted-all 24 executed/passed,
+  zero failures/errors/skips. The UI run includes the original recorded method;
+  JVM includes all four reset/rejection methods. These are full-gate results,
+  separate from the focused proof above. See [the accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2485#issuecomment-6356839392).
+
+The unchanged Linux baseline separately passed 1/1. The historical macOS pair at
+`1a77b632eabbed27f95986ea4e59332a44f7e21e` remains 2 executed, 1 passed, 1 failed,
+zero errors/skips. Its matcher names generation 0 and its phone trace records a
+reset and fresh 12-row projection, but no failure-time projected keys were captured.
+Historical and baseline scenario bodies and recording bytes match; this comparison
+does not establish the historical interleaving or broader inherited/regression
+classification. Earlier controlled/compile failures and zero-test selector refusals
+remain retained under agents `logs/evidence/2483/`; none is a pass. macOS execution
+is outside this Linux ticket's verification scope. Replay supplies no fresh provider
+observation; see [what replay proves](../../recorded-tests.md#what-replay-proves).
+
 Peer `turn_end` is not a phone render fence (#1994). Before the first held-Agent
 marker reveal, wait for the phone repository's finalized main newer reply and Idle
 phase using the existing timeout. Later layout can still dispose the revealed row.
@@ -74,6 +144,37 @@ action and remain unready within the same absolute deadline. Ambiguity fails. Th
 repository wait and readiness consume one original timeout budget; the three geometry
 measurements, default callers' strict removed-key failure, owned finished-label check and
 physical tap count remain unchanged.
+
+Successful atomic keyed placement does not keep the list mounted for a later matcher
+scroll. The subsequent #2387 recurrence failed that second `performScrollToNode` after
+the owned finished marker had already been revealed. The opt-in current-key bridge
+therefore uses its existing keyed placement directly; its three geometry measurements
+continue to resample current identity/readiness and correct position. Only that bridge
+omits the redundant matcher scroll. Default `questionAnswerTarget` and `questionAnswerTap`
+paths keep it and their existing strict removed-key behavior. This adds no tap, sleep,
+scenario retry, geometry attempt, deadline extension or recording change.
+
+`resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` empties the real screen after the
+successful keyed reveal, restores the same owned family only at the next identity sample,
+and positively checks its displayed finished marker and collapsed children.
+`resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` instead supplies a different
+finished Agent and requires timeout rejection even though that other label is displayed.
+These controls cover the gap after atomic dispatch; they do not replace the earlier
+growth, generation, missing-list and wrong-owner probes. See the
+[post-reveal cause and evidence](thread-screen-agent-navigation-evidence.md#post-keyed-reveal-reset-recurrence-2373).
+
+Independent Linux acceptance at `a32c07ca8450d4b2065c2bb0b3366e94d4cdb63d`
+executed/passed both post-reveal controls in the full JVM gate: 5388 executed/passed,
+zero failures/errors/skips. The configured UI gate executed/passed the original recorded
+Agent method once among 333 executed/passed, zero failures/errors and one unrelated
+rename-capture skip. Scripted-all executed/passed 24 methods, zero failures/errors/skips,
+including both background-Agent placement/settlement and restart/reconnect scenarios.
+The [independent verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2454#issuecomment-6360402269)
+confirms unchanged helper defaults, absolute deadline, three geometry measurements,
+owned finished-label assertion and tap count. These full-gate results are separate
+from the earlier manual acceptance and five historical native passes. Source/recording
+identities, retained failed controls and the unavailable historical timeline remain in
+the linked navigation evidence.
 
 The controlled growth, generation-during-measurement and readiness-to-scroll probes each
 failed once before repair, with zero errors/skips, then passed in the final 27-method

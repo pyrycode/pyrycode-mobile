@@ -14,13 +14,33 @@ spec.loader.exec_module(scenarios)
 
 
 class AgentScenarioReportsTest(unittest.TestCase):
-    def run_cases(self, outcomes, admission=None):
+    def run_cases(self, outcomes, admission=None, report_mtimes=(3_000_000_000, 3_000_000_000), preexisting=False):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         reports = root / 'app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd'
         reports.mkdir(parents=True)
         calls = []
+        originals = []
+
+        def write_report(case, outcome, mtime):
+            suite = ET.Element('testsuite')
+            if outcome != 'zero':
+                test = ET.SubElement(suite, 'testcase', {
+                    'classname': 'wrong.Class' if outcome == 'wrong-class' else scenarios.CLASS,
+                    'name': 'wrongMethod' if outcome == 'wrong-method' else scenarios.METHODS[case],
+                })
+                rejection = {'skip': 'skipped', 'error': 'error', 1: 'failure'}.get(outcome)
+                if rejection:
+                    ET.SubElement(test, rejection, {'message': f'original {case} outcome'})
+            path = reports / 'TEST-run.xml'
+            ET.ElementTree(suite).write(path)
+            os.utime(path, ns=(mtime, mtime))
+            self.assertEqual(mtime, path.stat().st_mtime_ns)
+            return path.read_bytes()
+
+        if preexisting:
+            write_report('retained', 0, 9_000_000_000)
 
         def launch(command, cwd, env, pass_fds=()):
             if admission is not None:
@@ -31,19 +51,21 @@ class AgentScenarioReportsTest(unittest.TestCase):
             if isinstance(outcome, Exception):
                 raise outcome
             if outcome is not None:
-                failure = '<skipped/>' if outcome == 'skip' else '<failure/>' if outcome else ''
-                (reports / 'TEST-run.xml').write_text(
-                    f'<testsuite><testcase classname="{scenarios.CLASS}" name="{scenarios.METHODS[case]}">{failure}</testcase></testsuite>')
-            return subprocess.CompletedProcess(command, 0 if outcome == 'skip' else outcome or 0)
+                originals.append(write_report(case, outcome, report_mtimes[len(calls) - 1]))
+            return subprocess.CompletedProcess(command, outcome if isinstance(outcome, int) else 0)
 
         with patch.object(scenarios, '__file__', str(root / 'scripts/scenarios.py')), \
                 patch.dict(scenarios.os.environ, {} if admission is None else {'PYRY_TEST_ADMISSION_FD': str(admission)}, clear=True), \
+                patch('time.time_ns', return_value=2_000_000_000), \
                 patch.object(scenarios.subprocess, 'run', side_effect=launch):
             try:
                 status = scenarios.main()
             except RuntimeError:
                 status = 'interrupted'
-        cases = [case for path in reports.rglob('TEST-*.xml') for case in ET.parse(path).getroot().iter('testcase')]
+        paths = list(reports.rglob('TEST-*.xml'))
+        self.assertEqual(len(originals), len(paths))
+        self.assertCountEqual(originals, [path.read_bytes() for path in paths])
+        cases = [case for path in paths for case in ET.parse(path).getroot().iter('testcase')]
         return status, calls, cases
 
     def test_two_independent_outcomes_keep_the_first_failure(self):
@@ -67,14 +89,52 @@ class AgentScenarioReportsTest(unittest.TestCase):
         self.assertEqual([scenarios.METHODS['retained']], [case.get('name') for case in cases])
 
     def test_interruption_preserves_the_already_counted_outcome(self):
-        status, _, cases = self.run_cases([0, RuntimeError('interrupted')])
-        self.assertEqual('interrupted', status)
-        self.assertEqual([scenarios.METHODS['retained']], [case.get('name') for case in cases])
+        for mtime in (1_000_000_000, 3_000_000_000):
+            with self.subTest(mtime=mtime):
+                status, _, cases = self.run_cases([0, RuntimeError('interrupted')], report_mtimes=(mtime, mtime))
+                self.assertEqual('interrupted', status)
+                self.assertEqual([scenarios.METHODS['retained']], [case.get('name') for case in cases])
 
     def test_a_skipped_twin_cannot_count_as_success(self):
         status, _, cases = self.run_cases([0, 'skip'])
         self.assertEqual(1, status)
         self.assertEqual(2, len(cases))
+
+    def test_earlier_report_mtime_keeps_both_independent_outcomes(self):
+        rglob = Path.rglob
+        for reverse in (False, True):
+            for second in (0, 'skip'):
+                for mtimes in ((1_000_000_000, 3_000_000_000), (1_000_000_000, 1_000_000_000)):
+                    with self.subTest(reverse=reverse, second=second, mtimes=mtimes), patch.object(
+                            Path, 'rglob', autospec=True,
+                            side_effect=lambda path, pattern: iter(sorted(rglob(path, pattern), reverse=reverse))):
+                        status, calls, cases = self.run_cases([0, second], report_mtimes=mtimes)
+                        self.assertEqual(2, len(cases))
+                        self.assertEqual(int(second == 'skip'), status)
+                        self.assertEqual(['retained', 'restart'], calls)
+                        self.assertCountEqual(list(scenarios.METHODS.values()), [case.get('name') for case in cases])
+                        by_name = {case.get('name'): case for case in cases}
+                        self.assertEqual([], list(by_name[scenarios.METHODS['retained']]))
+                        self.assertEqual(
+                            ['skipped'] if second == 'skip' else [],
+                            [child.tag for child in by_name[scenarios.METHODS['restart']]])
+
+    def test_future_dated_preexisting_report_cannot_satisfy_an_execution(self):
+        status, _, cases = self.run_cases([None, 0], preexisting=True)
+        self.assertEqual(1, status)
+        self.assertEqual([scenarios.METHODS['restart']], [case.get('name') for case in cases])
+
+    def test_invalid_report_cannot_count_as_success(self):
+        for outcome in ('error', 'zero', 'wrong-method', 'wrong-class'):
+            with self.subTest(outcome=outcome):
+                status, _, _ = self.run_cases([0, outcome])
+                self.assertEqual(1, status)
+
+    def test_nonzero_child_status_cannot_count_as_success_despite_passing_xml(self):
+        status, _, cases = self.run_cases([7, 0])
+        self.assertEqual(7, status)
+        self.assertEqual(2, len(cases))
+        self.assertTrue(all(len(case) == 0 for case in cases))
 
     def test_nested_harness_keeps_the_original_admission_descriptor(self):
         reader, writer = os.pipe()

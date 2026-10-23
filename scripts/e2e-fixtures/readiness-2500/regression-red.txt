@@ -1,0 +1,33 @@
+test_registration_token_across_chunks_after_delayed_startup (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup) ... FAIL
+
+======================================================================
+FAIL: test_registration_token_across_chunks_after_delayed_startup (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 216, in controller
+    yield request, path
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 389, in assert_chunked_registration
+    self.assertEqual(200, request("start")[0])
+AssertionError: 200 != 503
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 383, in test_registration_token_across_chunks_after_delayed_startup
+    self.assert_chunked_registration(startup_delay=0.75)
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 388, in assert_chunked_registration
+    with self.controller(script) as (request, _):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 219, in controller
+    self.fail(f"{failure}\nchild_bytes={len(child_output)}, "
+AssertionError: 200 != 503
+child_bytes=0, complete_token=False
+{"event": "daemon_fault_transition", "time": 1792737985.2326057, "action": "spawn", "http_status": 0, "running": true, "pid": 727507, "generation": 1, "ready": false, "phase": "spawned", "log_offset": 0, "elapsed_ms": 0}
+{"event": "daemon_fault_transition", "time": 1792737985.531833, "action": "start", "http_status": 503, "running": true, "pid": 727507, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.368s
+
+FAILED (failures=1)

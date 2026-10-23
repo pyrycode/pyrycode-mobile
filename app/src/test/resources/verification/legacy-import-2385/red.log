@@ -1,0 +1,26 @@
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.data.cache.MigratingConversationCacheTest.ownershipInvariant_legacyFilesStayInertAcrossReopens'
+OS: Linux
+Production revision: f7b5aee1484fd4d2feb47ce83b6a2b3318c23b24 (identical implementation to af6721b314e4414034a7a8b58c5630ad0e42eecb)
+Test addition: red-regression.txt
+The initial compile emitted existing Kotlin warnings; that warning chunk was truncated by tool display and is not complete raw evidence. The complete counted failure is retained in red.xml.
+
+> Task :app:testDebugUnitTest
+
+MigratingConversationCacheTest > ownershipInvariant_legacyFilesStayInertAcrossReopens FAILED
+    java.lang.AssertionError at MigratingConversationCacheTest.kt:221
+
+1 test completed, 1 failed
+
+> Task :app:testDebugUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2385/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+BUILD FAILED in 1m 55s
+33 actionable tasks: 15 executed, 18 from cache

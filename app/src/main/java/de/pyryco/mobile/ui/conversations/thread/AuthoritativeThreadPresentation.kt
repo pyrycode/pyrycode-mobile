@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.authoritativeQueueTarget
+import de.pyryco.mobile.ui.conversations.components.toolSubjectField
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -43,7 +44,127 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val certifiedCheckpoint: Long?,
     internal val shownRowRevisions: Map<String, Long>,
     internal val sourceSnapshot: AuthoritativeThreadSnapshot,
+    private val parents: Map<String, String?>,
+    private val expandable: Set<String>,
+    private val resolveContents: ((String) -> ThreadRow.Delivered?)?,
+    internal val sourceConnection: Any? = null,
 ) {
+    internal val defersContents = resolveContents != null
+    private val summaryKeys =
+        sourceSnapshot.expansionItems
+            .filter { "headline" in it.raw && !sourceSnapshot.hasToolBody(it) }
+            .mapTo(HashSet()) { "msg:$scope:${it.id}" }
+    private val bodyItems =
+        sourceSnapshot.expansionItems
+            .filter { it.kind in setOf("tool_call", "agent") }
+            .groupBy { it.id }
+            .values
+            .associate { versions -> versions.maxBy { it.rev }.let { "msg:$scope:${it.id}" to it } }
+
+    internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
+
+    internal fun missingBody(key: String): Boolean = bodyItem(key)?.let { !sourceSnapshot.hasToolBody(it) } == true
+
+    internal fun childParent(key: String): ThreadItemDto? =
+        bodyItem(key)?.takeIf {
+            it.kind == "agent" && it.raw["detail_omitted"] == JsonPrimitive(true)
+        }
+
+    /** Place each control after the last currently displayed descendant, without adding timeline facts. */
+    internal fun childControls(
+        displayed: List<ThreadRow>,
+        expanded: Set<String>,
+    ): Map<String, List<String>> {
+        val result = mutableMapOf<String, MutableList<String>>()
+        for ((key, item) in bodyItems) {
+            val id = key.removePrefix("msg:")
+            if (item.kind != "agent" || childParent(key) == null || id !in expanded || displayed.none { it.listKey(0) == key }) continue
+            val last =
+                displayed.lastOrNull { row ->
+                    var parent = row.listKey(0).removePrefix("msg:")
+                    val visited = mutableSetOf<String>()
+                    while (visited.add(parent)) {
+                        if (parent == id) return@lastOrNull true
+                        parent = parents[parent] ?: break
+                    }
+                    false
+                } ?: continue
+            result.getOrPut(last.listKey(0)) { mutableListOf() }.add(key)
+        }
+        return result
+    }
+
+    /** Fold summaries first. An omitted ancestor cannot expose a separately placed descendant. */
+    internal fun demandRows(
+        folded: List<ThreadRow>,
+        expandedTools: Set<String>,
+    ): List<ThreadRow> {
+        val resolve = resolveContents ?: return folded
+        val displayed = folded.filterIsInstance<ThreadRow.Delivered>().mapTo(HashSet()) { it.listKey(0).removePrefix("msg:") }
+        val available = rows.filterIsInstance<ThreadRow.Delivered>().mapTo(HashSet()) { it.listKey(0).removePrefix("msg:") }
+
+        val visibility = mutableMapOf<String, Boolean>()
+
+        fun visible(id: String): Boolean {
+            val path = mutableSetOf<String>()
+            var parent = parents[id]
+            var result = true
+            while (parent != null && path.add(parent)) {
+                val known = visibility[parent]
+                if (known != null) {
+                    result = known
+                    break
+                }
+                if (parent in expandable && parent in available && parent !in displayed) {
+                    result = false
+                    break
+                }
+                if (childParent("msg:$parent") != null && parent !in expandedTools) {
+                    result = false
+                    break
+                }
+                parent = parents[parent]
+            }
+            path.forEach { visibility[it] = result }
+            return result
+        }
+        return folded
+            .filter { row ->
+                when (row) {
+                    is ThreadRow.Delivered -> visible(row.listKey(0).removePrefix("msg:"))
+                    is ThreadRow.ToolRun -> visible(row.runId)
+                    is ThreadRow.AgentStartMarker -> visible(row.agentId)
+                    is ThreadRow.Queued -> true
+                }
+            }.map { row ->
+                if (row is ThreadRow.Delivered && suppliesReadSight(row, expandedTools)) resolve(row.listKey(0)) ?: row else row
+            }
+    }
+
+    internal fun suppliesReadSight(
+        row: ThreadRow.Delivered,
+        expandedTools: Set<String>,
+    ): Boolean =
+        row.listKey(0) !in summaryKeys &&
+            !missingBody(row.listKey(0)) &&
+            (resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools)
+
+    /** Summaries are never proof of rendered contents. Resolve only the carried, exact current revision. */
+    internal fun matchesReadContents(
+        key: String?,
+        item: ThreadItem,
+        revision: Long?,
+    ): Boolean {
+        if (key == null || revision == null || shownRowRevisions[key] != revision) return false
+        if (key in summaryKeys) return false
+        if (missingBody(key)) return false
+        return if (resolveContents != null) {
+            resolveContents.invoke(key)?.item == item
+        } else {
+            rows.any { it is ThreadRow.Delivered && it.listKey(0) == key && it.item == item }
+        }
+    }
+
     /** Latest certified estimate from this session's root terminals. Outcomes do not change cost ownership. */
     internal fun reportedSessionCost(session: String): Double? {
         val snapshot = sourceSnapshot
@@ -115,38 +236,76 @@ internal fun projectAuthoritativeThread(
     conversation: String,
     snapshot: AuthoritativeThreadSnapshot,
     progress: AuthoritativeLiveProgress,
+): AuthoritativeThreadPresentation = projectThread(host, conversation, snapshot, progress, false, null)
+
+/** Production keeps placement/headlines available without adapting hidden bodies. */
+internal fun projectDeferredAuthoritativeThread(
+    host: String,
+    conversation: String,
+    snapshot: AuthoritativeThreadSnapshot,
+    progress: AuthoritativeLiveProgress = AuthoritativeLiveProgress(),
+    onFullConversion: ((Long) -> Unit)? = null,
+    sourceConnection: Any? = null,
+): AuthoritativeThreadPresentation = projectThread(host, conversation, snapshot, progress, true, onFullConversion, sourceConnection)
+
+private fun projectThread(
+    host: String,
+    conversation: String,
+    snapshot: AuthoritativeThreadSnapshot,
+    progress: AuthoritativeLiveProgress,
+    deferred: Boolean,
+    onFullConversion: ((Long) -> Unit)?,
+    sourceConnection: Any? = null,
 ): AuthoritativeThreadPresentation {
     val scope = listOf(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation.toString()).joinToString("") { "${it.length}:$it" }
 
     fun identity(id: Long) = "$scope:$id"
-    val held = snapshot.items.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
-    val ordered = held.values.filter { (it.order ?: 0) > 0 }.sortedBy { it.order }
+    val held = snapshot.expansionItems.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
+    val paged =
+        snapshot.childPages
+            .filterKeys { held[it.first]?.rev == it.second }
+            .values
+            .flatMap { it.items }
+            .mapTo(HashSet()) { it.id }
+    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.order == 0L && it.id in paged }.sortedBy { it.order }
     val agents = held.values.filter { it.kind == "agent" }.associateBy { it.id }
     // Parent chains are facts, not raw-event nesting. Hidden/unordered ancestors remain in this map.
     val owners = mutableMapOf<Long, Long?>()
     val depths = mutableMapOf<String, Int>()
+    val identities = held.keys.associateWith(::identity)
+    val parents = held.values.associate { identities.getValue(it.id) to identities[it.parent] }
+    val expandable =
+        ordered
+            .filter {
+                it.shown && it.kind in setOf("agent", "tool_call") && it.toolName() != null
+            }.mapTo(HashSet()) { identities.getValue(it.id) }
+    // Inclusive nearest-agent/depth summaries let shared parent chains be walked once.
+    val lineage = mutableMapOf<Long, Pair<Long?, Int>>()
+    val cyclic = mutableSetOf<Long>()
     for (item in held.values) {
-        val path = mutableSetOf(item.id)
-        var parent = item.parent
-        var owner: Long? = null
-        var depth = 0
-        var cyclic = false
-        while (parent != null && parent > 0) {
-            if (!path.add(parent)) {
-                cyclic = true
-                break
-            }
-            val fact = held[parent] ?: break
-            if (fact.kind == "agent") {
-                if (owner == null) owner = parent
-                depth++
-            }
-            parent = fact.parent
+        if (item.id in lineage || item.id in cyclic) continue
+        val path = mutableSetOf<Long>()
+        var cursor: Long? = item.id
+        while (cursor != null && cursor > 0 && cursor in held && cursor !in lineage && cursor !in cyclic && cursor !in path) {
+            path += cursor
+            cursor = held.getValue(cursor).parent
         }
-        // Cyclic attribution never creates a self-owning block.
-        if (cyclic) owner = null
-        owners[item.id] = owner
-        if (owner != null) depths[identity(item.id)] = depth
+        if (cursor in cyclic || cursor in path) {
+            // Cyclic attribution never creates a self-owning block, including its incoming paths.
+            cyclic += path
+            path.forEach { owners[it] = null }
+        } else {
+            var (owner, depth) = lineage[cursor] ?: (null to 0)
+            for (id in path.toList().asReversed()) {
+                owners[id] = owner
+                if (owner != null) depths[identities.getValue(id)] = depth
+                if (held.getValue(id).kind == "agent") {
+                    owner = id
+                    depth++
+                }
+                lineage[id] = owner to depth
+            }
+        }
     }
     val background =
         agents.values
@@ -154,22 +313,54 @@ internal fun projectAuthoritativeThread(
             .filter { (it.order ?: 0) > 0 }
             .associateBy { it.id }
     val visible = ordered.filter { it.shown }
+
+    fun adapt(item: ThreadItemDto): ThreadRow.Delivered {
+        onFullConversion?.invoke(item.id)
+        val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
+        val body = snapshot.bodyContents[item.id to item.rev]
+        val rendered =
+            if (body == null ||
+                item.hasToolBody
+            ) {
+                item
+            } else {
+                ThreadItemDto.decodeReplacement(
+                    JsonObject(
+                        item.raw + ("content" to JsonObject((item.content as? JsonObject).orEmpty() + body)),
+                    ),
+                )
+            }
+        return rendered.displayRow(
+            identity(item.id),
+            block,
+            item.parent?.let(::identity).orEmpty(),
+            CanonicalRefusalIdentity(host, conversation, snapshot.epoch.orEmpty(), item.id),
+            if (item.active && item.session == progress.sessionId) {
+                (item.content as? JsonObject)?.text("tool_use_id")?.let { progress.tools[it] }
+            } else {
+                null
+            },
+            bodyRead = body != null && !item.hasToolBody,
+        )
+    }
+
+    // Admitted root prose is always open. Share its full model with demand/read checks
+    // instead of retaining an empty summary and repeatedly allocating another model.
+    fun admittedRoot(item: ThreadItemDto) =
+        (item.parent == null || item.parent == 0L) &&
+            item.kind in setOf("user_message", "assistant_message") &&
+            snapshot.openingRows?.contains(item.id to false) != false
+
     val adapted =
         visible.associate { item ->
             val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
-            item.id to
-                item.displayRow(
-                    identity(item.id),
-                    block,
-                    item.parent?.let(::identity).orEmpty(),
-                    de.pyryco.mobile.data.repository
-                        .CanonicalRefusalIdentity(host, conversation, snapshot.epoch.orEmpty(), item.id),
-                    if (item.active && item.session == progress.sessionId) {
-                        (item.content as? JsonObject)?.text("tool_use_id")?.let { progress.tools[it] }
-                    } else {
-                        null
-                    },
-                )
+            val row =
+                if (deferred && !admittedRoot(item)) {
+                    item.summaryRow(identity(item.id), block, item.parent?.let(::identity).orEmpty(), progress)
+                } else {
+                    adapt(item)
+                }
+            item.id to row
         }
     val children =
         held.values
@@ -243,8 +434,13 @@ internal fun projectAuthoritativeThread(
                 .flatMap { backgroundContents.getValue(it.id) }
     val waiting =
         held.values
-            .filter { it.shown && it.kind == "user_message" && (it.order ?: 0) <= 0 && it.status in setOf("queued", "lost") }
-            .sortedBy { it.id }
+            .filter {
+                it.shown &&
+                    it.kind == "user_message" &&
+                    (it.parent == null || it.parent == 0L) &&
+                    (it.order ?: 0) <= 0 &&
+                    it.status in setOf("queued", "lost")
+            }.sortedBy { it.id }
             .map { item ->
                 val fields = item.content as? JsonObject
                 ThreadRow.Queued(
@@ -293,8 +489,21 @@ internal fun projectAuthoritativeThread(
             if (launch) "agent-start:${identity(id)}" else "msg:${identity(id)}"
         }
 
-    fun selected(row: ThreadRow) = selectedKeys == null || row.listKey(0) in selectedKeys
+    val pagedKeys = paged.mapTo(HashSet()) { "msg:${identity(it)}" }
+
+    fun selected(row: ThreadRow) = selectedKeys == null || row.listKey(0) in selectedKeys || row.listKey(0) in pagedKeys
     val selectedRows = rows.filter(::selected)
+    val resolver: ((String) -> ThreadRow.Delivered?)? =
+        if (deferred) {
+            // Partition the index: full roots replace their DTO entries, without a second
+            // whole-file cache. Neither index is shared with another presentation.
+            val roots = visible.filter(::admittedRoot).associate { "msg:${identity(it.id)}" to adapted.getValue(it.id) }
+            val byKey = visible.filterNot(::admittedRoot).associateBy { "msg:${identity(it.id)}" }
+            val resolve: (String) -> ThreadRow.Delivered? = { key -> roots[key] ?: byKey[key]?.let(::adapt) }
+            resolve
+        } else {
+            null
+        }
     return AuthoritativeThreadPresentation(
         scope,
         host,
@@ -324,6 +533,78 @@ internal fun projectAuthoritativeThread(
         snapshot.checkpoint.takeIf { snapshot.epoch != null && !snapshot.repairNeeded && !snapshot.resetNeeded && it >= 0 },
         visible.mapNotNull { item -> adapted[item.id]?.takeIf(::selected)?.let { it.listKey(0) to item.rev } }.toMap(),
         snapshot,
+        parents,
+        expandable,
+        resolver,
+        sourceConnection,
+    )
+}
+
+/** Only fields used by the closed headline/status enter this lightweight grouping model. */
+private fun ThreadItemDto.summaryRow(
+    id: String,
+    block: String?,
+    parentId: String,
+    progress: AuthoritativeLiveProgress,
+): ThreadRow.Delivered {
+    val fields = content as? JsonObject
+    val name = toolName()?.takeIf { kind in setOf("agent", "tool_call") && status in knownStatuses }
+    val input = fields?.obj("input")
+    val headline =
+        if (name == null) {
+            null
+        } else {
+            toolSubjectField(name.displayText()) { key ->
+                (input?.get(key) as? JsonPrimitive)
+                    ?.content
+                    ?.displayText()
+            }
+        }
+    val headlineFields =
+        when {
+            headline != null -> mapOf(headline)
+            input?.values?.any { it is JsonPrimitive } != true -> emptyMap()
+            else -> mapOf("summary" to "")
+        }
+    val elapsed =
+        if (active && session == progress.sessionId) {
+            fields?.text("tool_use_id")?.let { progress.tools[it] }
+        } else {
+            null
+        }
+    val tool =
+        name?.let {
+            ToolCall(
+                it.displayText(),
+                description(),
+                "",
+                when {
+                    active -> ToolCallStatus.Running
+                    status == "denied" -> ToolCallStatus.Denied
+                    status == "failed" -> ToolCallStatus.Failed
+                    else -> ToolCallStatus.Done
+                },
+                headlineFields,
+                parentId,
+                elapsedSeconds = elapsed,
+                resultDetail = fields?.obj("result")?.text("result_detail")?.displayText(),
+            )
+        }
+    return ThreadRow.Delivered(
+        ThreadItem.MessageItem(
+            Message(
+                id = id,
+                sessionId = session.orEmpty(),
+                role = if (tool == null) Role.Assistant else Role.Tool,
+                content = "",
+                timestamp = displayEpoch,
+                isStreaming = false,
+                toolCall = tool,
+            ),
+        ),
+        block,
+        identityKey = "msg:$id",
+        summaryText = if (tool == null && "headline" in raw) summary.displayText() else null,
     )
 }
 
@@ -357,7 +638,17 @@ private fun JsonObject.number(key: String): Long? =
 
 private fun String.displayText(): String = take(DISPLAY_TEXT_LIMIT).filter { it == '\n' || it == '\t' || !it.isISOControl() }
 
-private fun ThreadItemDto.toolName(): String? = (content as? JsonObject)?.let { it.text("name") ?: it.text("tool") }
+private fun ThreadItemDto.toolName(): String? =
+    (content as? JsonObject)?.let { it.text("name") ?: it.text("tool") }
+        ?: if ("headline" in raw) {
+            when (kind) {
+                "agent" -> "Agent"
+                "tool_call" -> "Tool use"
+                else -> null
+            }
+        } else {
+            null
+        }
 
 private fun ThreadItemDto.recordedTask(): Pair<String, String>? {
     val fields = content as? JsonObject ?: return null
@@ -394,6 +685,7 @@ private fun ThreadItemDto.displayRow(
     parentId: String,
     refusalIdentity: CanonicalRefusalIdentity,
     elapsedSeconds: Int?,
+    bodyRead: Boolean = false,
 ): ThreadRow.Delivered {
     val fields = content as? JsonObject
     val timestamp =
@@ -465,8 +757,17 @@ private fun ThreadItemDto.displayRow(
                             "",
                             ToolCall(
                                 name.displayText(),
-                                description(),
-                                if (kind == "agent" && !active) terminalText() else result?.text("result_summary").orEmpty().displayText(),
+                                ((if (bodyRead) fields.text("input") else null) ?: description()).displayText(),
+                                (
+                                    (if (bodyRead) fields.text("output") else null)
+                                        ?: if (kind == "agent" &&
+                                            !active
+                                        ) {
+                                            terminalText()
+                                        } else {
+                                            result?.text("result_summary").orEmpty()
+                                        }
+                                ).displayText(),
                                 toolStatus,
                                 input,
                                 parentId,
