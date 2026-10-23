@@ -1018,13 +1018,12 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
         arriveInSeededThread()
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val repository = requireNotNull(coordinator.currentRepository.value)
+        val hostRepository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(serverId)
+        val route = requireNotNull(hostRepository.negotiatedThread)
         runBlocking {
             var checkpoint = "conversation"
             var snapshotShape = "unobserved"
@@ -1039,6 +1038,19 @@ class DeterministicInteractiveStreamE2ETest {
                     checkpoint = "held prefix"
                     val firstSent = repository.sendMessage(conversationId, SEND_PROMPT)
                     val evidence = harnessThreadEvidence(repository)
+
+                    fun currentEvidence(observed: ThreadEvidence? = null): ThreadEvidence? {
+                        val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+                        val current = coordinator.currentRepository.value?.takeIf { it === supported } ?: return null
+                        val snapshot = route.store.current(serverId, conversationId)
+                        if (observed != null && !observed.isCurrentReplay(serverId, conversationId, current, snapshot)) return null
+                        val fresh = authoritativeThreadEvidence(serverId, conversationId, current, snapshot)
+                        return fresh.takeIf {
+                            fresh.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId)) &&
+                                coordinator.currentRepository.value === current &&
+                                (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current
+                        }
+                    }
                     val start = evidence.observe(conversationId).first { it.heldOpenReply(it.owner, STREAMED_PREFIX) != null }
                     val held = requireNotNull(start.heldOpenReply(start.owner, STREAMED_PREFIX))
                     val phoneDevice =
@@ -1091,22 +1103,47 @@ class DeterministicInteractiveStreamE2ETest {
                     )
                     evidence.observe(conversationId).first { it.holdsOpen(start.owner, held) }
                     checkpoint = "same reply completion"
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=queued_admitted")
                     DaemonFaultControl().releaseStream()
-                    val finished =
-                        evidence.observe(conversationId).first { current ->
-                            snapshotShape =
-                                current.records.joinToString { record ->
-                                    val message = record.message
-                                    "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
-                                        "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
-                                }
-                            !current.holdsOpen(start.owner, held) &&
-                                current.records.any { it.message.id == held.message.id && it.fullText == STREAMED_REPLY }
-                        }
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=released")
+                    // Force the producer-gap retirement boundary before completion observation, every run.
+                    severAndRestoreLink()
+                    assertTrue(
+                        "the completion observer must follow a replacement source",
+                        coordinator.currentRepository.value !== start.owner.connection,
+                    )
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=replacement_authenticated")
+                    evidence.observe(conversationId).first { observed ->
+                        snapshotShape = "admitted=${observed.admitted};source_current=" +
+                            "${observed.owner.connection === coordinator.currentRepository.value};records=${observed.records.size}"
+                        val current = currentEvidence(observed) ?: return@first false
+                        snapshotShape =
+                            current.records.joinToString { record ->
+                                val message = record.message
+                                "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
+                                    "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
+                            }
+                        current.settledQueuedReplyAfterRecovery(
+                            start,
+                            held,
+                            queued,
+                            STREAMED_REPLY,
+                            coordinator.currentRepository.value,
+                        ) !=
+                            null
+                    }
+                    checkpoint = "rendered reply"
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.renderedReplyText(STREAMED_REPLY) == STREAMED_REPLY }
+                    // Rendering can publish more facts. Reconcile only freshly admitted current evidence.
+                    val fresh = requireNotNull(currentEvidence()) { "queued reply source retired during rendering" }
                     // The held item's one settled form, alone in its turn: no suffix row split it.
                     assertNotNull(
                         "the held reply must settle alone; shape=$snapshotShape",
-                        finished.settledHeldReply(start.owner, held, STREAMED_REPLY),
+                        fresh.settledQueuedReplyAfterRecovery(start, held, queued, STREAMED_REPLY, coordinator.currentRepository.value),
+                    )
+                    android.util.Log.i(
+                        "QueuedEcho",
+                        "event=queued_reply_phase phase=completed source_replaced=${fresh.owner.connection !== start.owner.connection}",
                     )
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
