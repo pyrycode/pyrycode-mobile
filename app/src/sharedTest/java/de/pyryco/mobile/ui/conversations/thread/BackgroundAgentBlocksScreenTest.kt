@@ -400,6 +400,78 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
     }
 
+    @Test fun resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker() {
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(settled, collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var recovered = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = {
+                if (reset && !recovered) {
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                    recovered = true
+                    compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+                }
+                "a"
+            },
+        ) { sample ->
+            if ("stage=keyed-ready" in sample && !reset) {
+                reset = true
+                compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+            }
+        }
+        assertTrue("reset after atomic keyed reveal must be exercised", reset)
+        assertTrue("a new identity sample must recover the absent projection", recovered)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "revealing the finished marker must preserve collapsed child membership",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @Test fun resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent() {
+        mount(listOf(tool("a", "Agent"), launch(), finish(), user("Later")), collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var sampledAfterReset = false
+        assertThrows(ComposeTimeoutException::class.java) {
+            compose.assertFinishedAgentMarker(
+                "a",
+                ownedMarker,
+                "Agent finished",
+                readinessTimeoutMillis = 1_000,
+                resolveAgentId = {
+                    if (reset && !sampledAfterReset) {
+                        sampledAfterReset = true
+                        compose.runOnIdle {
+                            state = state.copy(items = listOf(tool("b", "Agent"), launch().copy(toolCallId = "b"), finish()))
+                        }
+                    }
+                    "a"
+                },
+            ) { sample ->
+                if ("stage=keyed-ready" in sample && !reset) {
+                    reset = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                }
+            }
+        }
+        assertTrue("the reset must follow successful keyed reveal", reset)
+        assertTrue("readiness must sample the replacement instead of failing an absent-list lookup", sampledAfterReset)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "the displayed finished Agent cannot substitute for the requested identity",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a") < 0,
+        )
+    }
+
     @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
         mount(
             listOf(

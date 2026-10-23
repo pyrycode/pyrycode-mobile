@@ -212,7 +212,13 @@ fault.main()
                                 payload = {}
                             return response.status, payload
 
-                    yield request, path
+                    try:
+                        yield request, path
+                    except AssertionError as failure:
+                        child_output = (path / "child.log").read_bytes()
+                        self.fail(f"{failure}\nchild_bytes={len(child_output)}, "
+                                  f"complete_token={token.encode() in child_output}\n"
+                                  + (path / "controller.log").read_text())
                 finally:
                     process.terminate()
                     process.wait(timeout=12)
@@ -371,10 +377,48 @@ else: time.sleep(120)
             unrelated.wait(timeout=5)
 
     def test_registration_token_across_chunks(self):
-        script = "import time; print('x' * 4090 + 'relay: conn established', flush=True); time.sleep(120)"
-        with self.controller(script) as (request, _):
-            self.assertEqual(200, request("start")[0])
-            self.assertTrue(request("status")[1]["ready"])
+        self.assert_chunked_registration()
+
+    def test_registration_token_across_chunks_after_delayed_startup(self):
+        self.assert_chunked_registration(startup_delay=0.75)
+
+    def assert_chunked_registration(self, startup_delay=0):
+        script = f"""import os,sys,time
+from pathlib import Path
+path = Path(os.environ['GENERATION_FIXTURE'])
+time.sleep({startup_delay})
+sys.stdout.write('x' * 4090 + 'relay:')
+sys.stdout.flush()
+while not (path / 'complete-token').exists(): time.sleep(0.01)
+sys.stdout.write(' conn established')
+sys.stdout.flush()
+time.sleep(120)
+"""
+        with self.controller(script) as (request, path):
+            def await_output(expected):
+                # Child startup is setup; it must not consume the 250 ms scan budget.
+                deadline = time.monotonic() + 5
+                while (path / "child.log").stat().st_size < len(expected):
+                    self.assertLess(time.monotonic(), deadline, "fixture output did not arrive")
+                    time.sleep(0.01)
+                self.assertEqual(expected, (path / "child.log").read_bytes())
+
+            prefix = b"x" * 4090 + b"relay:"
+            self.assertEqual(4096, len(prefix))
+            await_output(prefix)
+            status, partial = request("start")
+            self.assertEqual(503, status, partial)
+            self.assertEqual("registration_timeout", partial["phase"])
+            self.assertTrue(partial["running"])
+            self.assertFalse(partial["ready"])
+            (path / "complete-token").touch()
+            await_output(prefix + b" conn established")
+            status, complete = request("start")
+            self.assertEqual(200, status, complete)
+            self.assertTrue(complete["running"])
+            self.assertTrue(complete["ready"])
+            self.assertEqual(partial["pid"], complete["pid"])
+            self.assertEqual(partial["generation"], complete["generation"])
 
 
 import importlib.util
