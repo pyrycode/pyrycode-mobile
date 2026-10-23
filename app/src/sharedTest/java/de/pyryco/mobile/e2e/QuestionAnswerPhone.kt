@@ -87,7 +87,13 @@ private fun ComposeTestRule.questionAnswerLocation(
     }
     if (revealCurrentKey != null) revealCurrentKey() else keyForRead()?.let { list.performScrollToKey(it) }
     currentKey?.invoke()
-    list.performScrollToNode(matcher)
+    if (revealCurrentKey != null) {
+        evidence("event=question_answer_reveal stage=keyed-ready")
+        // The atomic keyed reveal already placed this row. A second matcher scroll can
+        // race reset/catch-up; the geometry reads below resample current-key readiness.
+    } else {
+        list.performScrollToNode(matcher)
+    }
     val target = onNode(matcher)
     var failure = "tap target did not remain composed after keyed reveal"
     // A live row can grow between these synchronized reads. Correct its new position, never tap again.
