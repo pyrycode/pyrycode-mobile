@@ -228,3 +228,80 @@ clean, all Kotlin source sets compiled, and security/theme/live/operator-file
 checks passed. Earlier scoped runtime checks keep the revisions stated above.
 Normal independent source/security re-review and complete configured acceptance
 remain dispatcher-owned; no author check is an independent PASS.
+
+## Navigation acceptance rework — 2026-10-23
+
+The independent review of integration `6c487ab17d4aa79b03c3b6b1ee35cf54998ea9d6`
+accepted the previous authority and provenance repairs. It accepted the exact JVM
+retirement-test and SavedThreadFirstDraw reruns under normal dispatcher policy,
+retaining their original failures. All six required recording replays passed in
+the original UI run. The remaining background-Agent navigation recording failed
+twice; scripted-all was not reached after that UI failure. These results remain
+bound to that integration, with the original evidence retained.
+
+The finished-marker helper already resolves current rendered identity, but
+`verifyAgentRunNavigation` retained its initial Agent/run/child family after
+readiness. Before implementation, two controlled real-screen regressions replaced
+that family after readiness and during marker geometry. Both executed and failed,
+zero errors/skips: the first lost the exact owned expansion action; the second
+reported `tap target left the projected list`. The test-only resolver seam was
+deliberately unused by the baseline. This demonstrates both stale-identity
+mechanisms; it does not reconstruct the historical phone interleaving. This plan
+amendment records the repair after those probes and implementation were prepared;
+the separate pre-implementation red patch is retained in private evidence.
+
+Opt the affected native caller into resolving the complete current rendered family
+from one admitted snapshot of the same raw Agent, settled reply and exact late tool
+children. At navigation and run-reveal boundaries, re-resolve that family, then
+validate the exact current key and dispatch its scroll together on the UI thread.
+Use one monotonic budget for navigation and each existing open/close transition;
+resampling cannot restart the budget. Fixed-key callers retain strict missing-key
+failure. Closed/open membership, positive attributed prose visibility, chrome
+geometry and one physical pointer tap per transition remain required.
+
+The scope is the shared navigation proof, its current-family tap adapter, the
+affected native caller and the two controlled screen regressions. No production
+recovery code, genuine recording bytes, strict request matching, authority/read
+invariants, assertions or original deadlines are relaxed. The requirements remain
+relevant; the earlier numeric forecast removal remains in effect.
+
+Verify the repaired pair first, then the affected screen class, instrumented
+compilation and the exact previously failing native recording. Preserve all
+attempts and actual XML/source/APK/cleanup limits. Reuse prior accepted evidence
+only at its own source. Resolve the five prior scripted failures with matched
+effective inputs and existing selectors; do not repeat unrelated green gates.
+Final configured acceptance and source/security disposition belong to a new normal
+independent review, followed by actual normal documentation pickup.
+
+Security self-review: the resolver consumes the existing admitted, source-bound
+thread evidence and correlates the same raw owner. It does not manufacture
+authority or transfer it across sources. No credential, protocol, persistence,
+production Android surface or read-state change is introduced. Evidence continues
+to use hashed rendered identities and private raw receipts.
+
+Focused repair attempts are retained separately. The first stopped at compilation
+because the final closed-state confirmation lacked its shared deadline argument;
+no test executed. The corrected pair executed twice and passed both original
+stale-identity boundaries, then both cases failed the positive attributed-prose
+visibility assertion. The compact fixture supplied no exact prose reveal key.
+Supplying its existing `ownedChildKey` input as `prose-$agent`, including the
+initial-family argument, retained the viewport, replacement stimuli, assertions,
+timing and physical taps. The next fresh invocation executed/passed 2/2, zero
+failures/errors/skips, exit 0. Its receipt is private
+`2493-ui-rework-evidence/green-v3/jvm-fg0wtoh7/`; the pre-implementation red and
+both failed repaired attempts remain retained. The v2 regression-byte-identity
+receipt applies to v2; v3 includes the explicit fixture reveal-key correction.
+These are author checks of the dirty repair over `6c487ab`, not independent
+acceptance or proof of the historical phone interleaving.
+
+After formatting, the affected `BackgroundAgentBlocksScreenTest` freshly
+executed/passed 30/30, zero failures/errors/skips, exit 0, including both new
+generation boundaries and existing missing-list, foreign-Agent, removed-marker,
+reset and collapse-isolation controls. Instrumented Kotlin compilation passed,
+exit 0. Private counted XML is `affected/jvm-lvhux16q/dispatcher.xml`, SHA-256
+`7c2f7db9adb02d29a1651070189138fea257f9a620a56152dce1c87695e0a546`.
+The exact native recording remains pending. The normal documentation stage should
+also fold the reviewed
+navigation-boundary lesson and its actual evidence into
+`docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, preserving
+the earlier finished-marker repair and its historical evidence.

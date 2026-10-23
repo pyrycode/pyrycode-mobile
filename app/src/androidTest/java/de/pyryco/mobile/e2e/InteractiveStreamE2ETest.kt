@@ -6160,6 +6160,28 @@ class InteractiveStreamE2ETest {
                 markerMatcher = marker,
                 expandLabel = string(R.string.tool_run_expand),
                 collapseLabel = string(R.string.tool_run_collapse),
+                currentFamily = { remaining ->
+                    val current =
+                        runBlocking {
+                            withTimeoutOrNull(minOf(1_000L, remaining)) {
+                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            }
+                        }
+                    val family = current?.takeIf { it.settledTurnReply(childReplyTurn, agentId) != null }?.renderedAgent(agentId)
+                    family?.takeIf { it.ownsTools(lateTools) && it.runId != null }?.let { f ->
+                        AgentRunNavigationFamily(
+                            f.agentId,
+                            checkNotNull(f.runId),
+                            f.childIds,
+                            SemanticsMatcher("nonempty attributed assistant paragraph") { node ->
+                                node.config
+                                    .getOrNull(SemanticsProperties.Text)
+                                    .orEmpty()
+                                    .any { it.text.isNotBlank() }
+                            } and hasAnyAncestor(hasTestTag("background-agent-child:${f.agentId}")),
+                        )
+                    }
+                },
                 evidence = { Log.i("AgentRunProof", "proof_run=$proofRun $it") },
             )
             // The expanded family can exceed the viewport once it contains prose, so compare list
