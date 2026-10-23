@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -119,9 +120,13 @@ class AgentSettlementRefreshTest {
             runCurrent()
             val request = fixture.pump.sent.last()
             assertTrue(retired !== fixture.repository)
+            val before = fixture.store.current("host", "chat")
+            val delivered = fixture.oldPump.received.size
             fixture.batch(retiredRequest, fixture.items(true), pump = fixture.oldPump)
             fixture.terminal(retiredRequest, 40, window = true, pump = fixture.oldPump)
             runCurrent()
+            assertEquals("retired replies reach the old collector", delivered + 2, fixture.oldPump.received.size)
+            assertTrue("retired replies cannot mutate or certify the shared store", before === fixture.store.current("host", "chat"))
             assertFalse("retired source cannot finish the proof", proof.isCompleted)
             fixture.batch(request, fixture.items(true))
             fixture.terminal(request, 40, window = true)
@@ -129,7 +134,7 @@ class AgentSettlementRefreshTest {
             val current = proof.await()
             assertTrue(current.owner.connection === fixture.repository)
             assertNotNull(current.settledAgentAfterRecovery(launched, family, "after1783", fixture.support.value))
-            assertEquals(2, fixture.releases)
+            assertEquals(3, fixture.releases)
             fixture.destination.close()
         }
 
@@ -187,7 +192,8 @@ class AgentSettlementRefreshTest {
 
     private class Pump : SessionPump {
         val frames = Channel<Envelope>(Channel.UNLIMITED)
-        override val inbound = frames.receiveAsFlow()
+        val received = mutableListOf<Envelope>()
+        override val inbound = frames.receiveAsFlow().onEach { received += it }
         val sent = mutableListOf<Envelope>()
 
         override fun send(envelope: Envelope): Boolean {
@@ -271,13 +277,15 @@ class AgentSettlementRefreshTest {
             scope.runCurrent()
         }
 
-        fun replace() {
+        suspend fun replace() {
             oldPump = pump
-            oldPump.frames.close()
+            // Retire the destination's old query interest while keeping late replies deliverable.
+            destination.close()
             scope.runCurrent()
             pump = Pump()
             repository = repository()
             support.value = ThreadSupport.Supported(repository)
+            destination = requireNotNull(route.acquire("chat", repository))
         }
 
         fun reading() = authoritativeThreadEvidence("host", "chat", repository, store.current("host", "chat"))
@@ -368,7 +376,10 @@ class AgentSettlementRefreshTest {
             pump: Pump,
             payload: JsonObject,
         ) {
-            pump.frames.trySend(Envelope(2000, "thread_items", "", payload, inReplyTo = request.id))
+            assertTrue(
+                "query replies must reach an open source",
+                pump.frames.trySend(Envelope(2000, "thread_items", "", payload, inReplyTo = request.id)).isSuccess,
+            )
         }
     }
 }

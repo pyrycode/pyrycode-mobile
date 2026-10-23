@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
+from e2e_fault_evidence import binary_digest, source_revision
+
 CLASS = 'de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest'
 METHODS = {
     'retained': 'interactiveTurn_seededChannel_backgroundAgentMovesAndSettles',
@@ -17,17 +19,10 @@ METHODS = {
 }
 
 
-def source_revision(path):
-    if not path:
-        return 'unavailable'
-    result = subprocess.run(['git', '-C', str(path), 'rev-parse', 'HEAD'], capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else 'unavailable'
-
-
 def retain_arm(root, reports, directory, case, exit_code, provenance):
-    """Copy managed outputs before another arm can replace them; never turn failure into a pass."""
+    """Archive this arm's entire output directory, leaving no diagnostics for the next arm."""
     if reports.is_dir():
-        shutil.copytree(reports, directory / 'phone')
+        shutil.move(str(reports), directory / 'phone')
     metadata = {'case': case, 'method': CLASS + '#' + METHODS[case], 'exit_code': exit_code,
                 'provenance': provenance, 'apk_sha256': {}}
     for path in (root / 'app/build/outputs/apk').rglob('*.apk'):
@@ -46,11 +41,13 @@ def retain_arm(root, reports, directory, case, exit_code, provenance):
 def main():
     root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
-    provenance = {'mobile': source_revision(root), 'core': source_revision(environment.get('PYRYCODE_SRC')),
+    provenance = {'mobile': source_revision(str(root)), 'core': source_revision(environment.get('PYRYCODE_SRC')),
                   'relay': source_revision(environment.get('PYRYCODE_RELAY_SRC')), 'binary_sha256': {}}
-    for name in ('PYRY_BIN', 'RELAY_BIN'):
-        selected = shutil.which(environment.get(name, ''))
-        provenance['binary_sha256'][name] = hashlib.sha256(Path(selected).read_bytes()).hexdigest() if selected else 'unavailable'
+    for name, default in (('PYRY_BIN', 'pyry'), ('RELAY_BIN', 'pyrycode-relay')):
+        executable = environment.get(name) or default
+        selected = shutil.which(executable, path=environment.get('PATH'))
+        environment[name] = str(Path(selected).absolute()) if selected else executable
+        provenance['binary_sha256'][name] = binary_digest(environment[name])
     admission = environment.get('PYRY_TEST_ADMISSION_FD')
     inherited = () if admission is None else (int(admission),)
     device = environment.get('DEVICE', 'pixel2Api33Atd')
@@ -62,6 +59,9 @@ def main():
     evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
     run = Path(tempfile.mkdtemp(prefix='run-', dir=evidence))
     print(f'Background Agent evidence: {run}', flush=True)
+    # Earlier diagnostics have no attribution to either execution in this run.
+    if reports.is_dir():
+        shutil.move(str(reports), run / 'preexisting-phone')
     with tempfile.TemporaryDirectory(prefix='builder-2246-scripted-') as directory:
         try:
             for case in ('retained', 'restart'):
@@ -75,16 +75,13 @@ def main():
                         str(Path(environment['ANDROID_HOME']) / 'platform-tools/adb'),
                         '-s', environment['ANDROID_SERIAL'], 'shell', 'pm', 'clear', 'de.pyryco.mobile',
                     ], check=True)
-                # Only this execution may supply XML, regardless of filesystem timestamps.
-                for path in reports.rglob('TEST-*.xml'):
-                    path.unlink()
                 result = None
                 try:
                     result = subprocess.run(['bash', str(root / 'scripts/e2e-emulator.sh')], cwd=root, env=child, pass_fds=inherited)
                 finally:
                     retain_arm(root, reports, arm, case, None if result is None else result.returncode, provenance)
                 status = status or result.returncode
-                current = list(reports.rglob('TEST-*.xml'))
+                current = list((arm / 'phone').rglob('TEST-*.xml'))
                 cases = [test for path in current for test in ET.parse(path).getroot().iter('testcase')]
                 if len(cases) != 1 or cases[0].get('classname') != CLASS or cases[0].get('name') != METHODS[case] or any(
                         cases[0].find(key) is not None for key in ('failure', 'error', 'skipped')):
@@ -93,8 +90,6 @@ def main():
                     saved = Path(directory) / f'TEST-background-agent-{case}-{index}.xml'
                     shutil.copyfile(path, saved)
                     retained.append(saved)
-                    # Preserve the exact report before the next managed task replaces its outputs.
-                    path.unlink()
         finally:
             reports.mkdir(parents=True, exist_ok=True)
             for saved in retained:

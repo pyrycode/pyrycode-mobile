@@ -46,8 +46,12 @@ internal suspend fun awaitCertifiedAgentSettlement(
                                     it.agentId == current?.agentId || it.agentId == null && it.fullText == followingText
                                 }.mapNotNull { it.fact?.order }
                         val outside = coverage == null || orders.any { it.toULong() !in coverage.lowerOrder..coverage.upperOrder }
-                        if (!refreshed && reading.admitted && snapshot.epoch == launched.owner.epoch &&
-                            current != null && reading.settledAgentPrecedes(reading.owner, current, followingText) && outside
+                        if (!refreshed &&
+                            reading.admitted &&
+                            snapshot.epoch == launched.owner.epoch &&
+                            current != null &&
+                            reading.settledAgentPrecedes(reading.owner, current, followingText) &&
+                            outside
                         ) {
                             refreshed = true
                             RelayLog.i {
