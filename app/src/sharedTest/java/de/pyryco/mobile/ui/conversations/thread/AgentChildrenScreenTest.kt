@@ -317,6 +317,7 @@ class AgentChildrenScreenTest {
                 supported.value = ThreadSupport.Unverified
                 connection.emit(ConnectionState.Offline)
             }
+            compose.waitUntil(5000) { vm.state.value.authoritativeThread?.let { it.sourceConnection == null } == true }
             toggle("Agent 17")
             compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 53").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Nested 53").assertExists()
