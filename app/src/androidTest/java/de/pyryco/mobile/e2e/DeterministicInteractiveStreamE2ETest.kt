@@ -511,8 +511,36 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         }
-        // Control the observed race: retire the captured connection after certification, before proof.
-        severAndRestoreLink()
+        val traceLock = Any()
+        var traceCount = 0
+        OwnedReplyProbe.readTrace = trace@{ connection, frame, sending ->
+            val kind =
+                when (frame.type) {
+                    "list_conversations" -> "list_request"
+                    "conversations" -> "list_reply"
+                    "thread_catch_up" -> "catch_up_request"
+                    "thread_items" -> "catch_up_reply"
+                    "conversation_read" -> "read_reply"
+                    else -> return@trace
+                }
+            val payload = frame.payload as? JsonObject
+            val rows = payload?.get("conversations") as? kotlinx.serialization.json.JsonArray
+            val row = rows?.filterIsInstance<JsonObject>()?.singleOrNull { it["id"]?.jsonPrimitive?.content == conversationId }
+
+            fun number(value: kotlinx.serialization.json.JsonElement?): Long? =
+                (value as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+            synchronized(traceLock) {
+                if (traceCount++ < 48) {
+                    android.util.Log.i(
+                        "PingReadProof",
+                        "event=ping_metadata_trace connection=${System.identityHashCode(connection)} sending=$sending kind=$kind " +
+                            "request=${frame.id} reply_to=${frame.inReplyTo} row=${row != null} " +
+                            "shown=${number(row?.get("last_shown_version"))} read=${number(row?.get("read_up_to"))} " +
+                            "version=${number(payload?.get("version"))}",
+                    )
+                }
+            }
+        }
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         var readSamples = 0
         var previousReadSample = ""
@@ -567,9 +595,12 @@ class DeterministicInteractiveStreamE2ETest {
                     currentEvidence?.sourceSnapshot === route.store.current(serverId, conversationId)
             }
         try {
+            // Control the observed race: retire the captured connection after certification, before proof.
+            severAndRestoreLink()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { readSample() }
         } finally {
             readSample(terminal = true)
+            OwnedReplyProbe.readTrace = null
         }
 
         // #1883 rung 4: a new durable post stays unread until a peer reads it, with no phone reopen.

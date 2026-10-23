@@ -182,8 +182,14 @@ internal class OwnedReplyObservation(
 
     /** Wait for this exact current phone send before another client acts. No reply completion is required. */
     @Synchronized fun acceptedSendCurrent(current: Any?): Boolean =
-        current === before.owner.connection && !closed && !failed && pump != null && pumpCurrent() &&
-            accepted && messageId != null && request?.field("message_id") == messageId &&
+        current === before.owner.connection &&
+            !closed &&
+            !failed &&
+            pump != null &&
+            pumpCurrent() &&
+            accepted &&
+            messageId != null &&
+            request?.field("message_id") == messageId &&
             request?.field("conversation_id") == before.owner.conversation
 
     @Synchronized fun received(
@@ -416,6 +422,7 @@ internal class OwnedReplyObservation(
 
 /** Passive phone-boundary tap; settings correlation and recording contracts remain in their own decorators. */
 internal object OwnedReplyProbe {
+    @Volatile var readTrace: ((Any, Envelope, Boolean) -> Unit)? = null
     private val hosts = WeakHashMap<RelayTransport, String>()
 
     @Volatile private var active: OwnedReplyObservation? = null
@@ -470,6 +477,7 @@ internal object OwnedReplyProbe {
                 flow {
                     try {
                         delegate.inbound.collect { frame ->
+                            readTrace?.invoke(connection, frame, false)
                             ContextResetProbe.before(host, connection, frame)
                             AuthoritativeHistoryProbe.received(host, connection, frame)
                             observers().forEach { it.phoneReceived(connection, frame) }
@@ -487,6 +495,7 @@ internal object OwnedReplyProbe {
                 }
 
             override fun send(envelope: Envelope): Boolean {
+                readTrace?.invoke(connection, envelope, true)
                 val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
                 val observers = observers()
                 AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
