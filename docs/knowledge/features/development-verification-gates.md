@@ -510,31 +510,30 @@ recording review rules and the limits of replay evidence.
 
 ### Scenario cleanup before activity teardown
 
-Permission isolation removes its paired host inside scenario cleanup, before the
-activity-level replay fence can run. Peer-observed turn end can leave required
-phone catch-up requests and scheduled replies outstanding. Keep the phone graph
-usable by closing the peer first, calling
-`RecordedSuiteNative.beforeHostLinkClose(serverId)`, and only then removing the
-host. The replay-only fence uses `SuiteConnections.beforeClose`'s existing
-30-second bound; capture and ordinary execution retain their original order.
-Strict request ownership, full payload matching, causal delivery and complete tape
-consumption still apply.
+Permission isolation and operator bypass remove their host during scenario cleanup,
+before the activity fence. Rendered witness text and peer turn end do not prove
+final phone catch-up completion. In #2484, host removal reached
+`RelayConnectionRegistry.reconcile` with request 82/checkpoint 33 pending; the
+step-39 close mismatch was primary, and test-end rethrew it.
 
-Cleanup attempts peer close, fence and host removal even on failure. Preserve the
-scenario throwable as primary, or the first cleanup throwable when the scenario
-succeeded; suppress later failures in order without self-suppression. A fence
-timeout still removes the host and fails. Never replace an earlier dialog-dismissal
-failure with a later close mismatch or claim the cleanup fence repaired it.
+Keep phone producers alive: close the peer, call
+`RecordedSuiteNative.beforeHostLinkClose(serverId)`, then remove the host.
+`withOperatorBypassCleanup` delegates this order to `withPermissionIsolationCleanup`.
+The replay fence retains `SuiteConnections.beforeClose`'s 30-second bound and waits
+for required requests, delivery and downstream consumption. Capture and ordinary
+execution use a no-op fence. Ownership, payloads and complete tape consumption stay
+strict. Attempt every cleanup action; preserve the scenario throwable or first
+cleanup failure, suppressing later failures without self-suppression. A fence
+failure still removes the host and fails; it cannot repair an earlier dialog failure.
 
-The [#2349 counted evidence](../../recorded-tests.md#counted-macos-cleanup-evidence-2026-10-21)
-retains the controlled old-cleanup failure, seven passing cleanup probes, focused
-permission replay and complete dispatcher gates on
-`96c4e6303f1da310f7c22de5df46a4ca0e972b23` (macOS). The configured UI gate executed
-335, passed 332, failed 3 and skipped 1; permission isolation itself executed and
-passed. Verifier PASS accepted the dispatcher's named flaky/inherited-failure
-disposition after comparisons, preserving the raw failures and skips. Focused
-passes alone do not supply complete-gate or sequence acceptance. Linux was outside
-this ticket's verification scope.
+[Permission-isolation evidence](../../recorded-tests.md#counted-macos-cleanup-evidence-2026-10-21)
+retains #2349's original failures and accepted comparisons.
+[Operator-bypass evidence](../../recorded-tests.md#operator-bypass-host-removal-2484)
+retains the controlled 2/2 failures before repair, 2/2 passes afterward, focused
+native 1/1 pass and the target's pass in the configured UI gate (333 executed,
+332 passed, 1 failed, 1 skipped). Verifier PASS accepted the unrelated #2368
+same-tree rerun; focused passes alone do not prove full-gate acceptance. Both
+repairs were verified on macOS; Linux was outside scope.
 
 ### Graph-restart replay evidence (#2347)
 
