@@ -355,7 +355,8 @@ class RemoteConversationRepository internal constructor(
             },
             expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
             compactEnabled = {
-                suppliedCompactRootPages && authoritativeLiveEnabled() &&
+                suppliedCompactRootPages &&
+                    authoritativeLiveEnabled() &&
                     setOf("thread_expansion", "thread_compact").all { it in negotiatedCapabilities() }
             },
         )
