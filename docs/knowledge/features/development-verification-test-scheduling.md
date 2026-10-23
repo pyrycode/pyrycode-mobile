@@ -503,6 +503,35 @@ exact composer staging without the picker, explicit Send and rendered reply.
 Bounded diagnostics emit static stages and admission/source booleans only, retain
 the original failure, and exclude authored content and pairing material.
 
+### Terminal replay producer lifetime (#2491)
+
+Keep the successful recorded Activity alive beyond test-end when the tape still requires
+queries, replies or scenario-complete. Run the real session end once while it is alive,
+then prepare the captured terminal prefix and downstream consumption before destruction.
+Whether scenario-complete precedes phone close is a recorded fact; retain either order.
+An early checkpoint is remembered only after its actual successful send. Outer cleanup
+still handles failures and releases replacement Activities once.
+
+One shared 30-second budget covers terminal preparation across observations. Re-entering
+individually bounded waits must not restart it. Repeated requests need their distinct
+correlated replies; foreign owners/generations or work crossing an observation cannot
+satisfy the prefix. Keep the first scenario/preparation failure when destruction fails,
+and reset end/failure state between evaluations. Changing production lifecycle behavior
+or the recording would hide this harness defect.
+
+The retained causal controls failed before repair; 95 affected JVM tests and the exact
+recorded Agent method passed on macOS at `00055df35`. Independent review then accepted
+integrated candidate `eb99f99da`: 220 script and 5411 JVM passes, including all eight
+terminal regression methods, and 24 scripted passes. The original complete UI run
+executed 333: 327 passed and six unrelated tests failed, with one additional ignored
+test. All six failures passed their exact rerun; the dispatcher accepted that gate
+under its flaky-rerun policy. The exact Agent method passed in the original full run
+(1 executed/passed, zero failures/errors/skips), independently of its retained focused pass.
+See [terminal preparation and counted evidence](../../recorded-tests.md#recorded-terminal-preparation-2491)
+for original source/APK identities, distinct pre/post-test-end failures, the shared-budget
+negative and accepted evidence. Historical reds remain failed; replay makes no claim
+about current provider behavior. Linux is outside this macOS ticket's verification scope.
+
 ### Background permission replay consumption (#2348)
 
 The original macOS main sweep on `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`
