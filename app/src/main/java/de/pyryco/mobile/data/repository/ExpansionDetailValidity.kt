@@ -34,7 +34,13 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
     val changed = mutableSetOf<Long>()
     val completeBodies = mutableSetOf<Long>()
     for (item in incoming) {
-        if (item.kind !in setOf("agent", "tool_call") || item.id in retirements) continue
+        if (item.id in retirements) continue
+        if (item.kind !in setOf("agent", "tool_call")) {
+            if (item.hasToolBody && item.rev >= (known[item.id]?.rev ?: 0) && version >= (detailValidity.floors[item.id] ?: 0)) {
+                completeBodies += item.id
+            }
+            continue
+        }
         val freshness = (item.raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 }
         val previous =
             observations[item.id] ?: known[item.id]?.let { held ->

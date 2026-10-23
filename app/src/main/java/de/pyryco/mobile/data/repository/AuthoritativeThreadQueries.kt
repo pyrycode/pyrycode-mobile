@@ -119,7 +119,8 @@ internal class AuthoritativeThreadQueries(
             val pair = id to key.request.expectedRev.toLong()
             val state = store.current(host, conversation).childLoads[pair]
             if (state == BodyLoad.Retry && retry != id) continue
-            if (snapshot.expansionItems.any { it.id == id && snapshot.hasChildPage(it) } && retry != id &&
+            if (snapshot.expansionItems.any { it.id == id && snapshot.hasChildPage(it) } &&
+                retry != id &&
                 (more != id || key.cursor == null)
             ) {
                 continue
@@ -217,9 +218,10 @@ internal class AuthoritativeThreadQueries(
             snapshot.epoch == key.request.epoch &&
             snapshot.detailValidity.serial(key.request.itemId.toLong()) == key.validity &&
             (
-                key.cursor == null || snapshot.childPages[key.request.itemId.toLong() to key.request.expectedRev.toLong()]?.let {
-                    it.version == key.consumedVersion && it.cursor == key.cursor
-                } == true
+                key.cursor == null ||
+                    snapshot.childPages[key.request.itemId.toLong() to key.request.expectedRev.toLong()]?.let {
+                        it.version == key.consumedVersion && it.cursor == key.cursor
+                    } == true
             ) &&
             snapshot.expansionItems.any {
                 it.id.toULong() == key.request.itemId &&

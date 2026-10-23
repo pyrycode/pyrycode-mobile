@@ -432,6 +432,29 @@ class AgentChildrenQueriesTest {
             assertNull(f.page())
         }
 
+    @Test fun freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            val prose =
+                ThreadItemDto.decode(
+                    json(
+                        """{"id":60,"rev":70,"order":6,"parent":17,"kind":"assistant_message","status":"done","shown":true,"active":false,"summary":"child","content":{"text":"current"}}""",
+                    ),
+                )
+            f.store.applyBatch("h", "c", "e", 70, listOf(prose), 0)
+            f.observe(74, null)
+            assertFalse(f.snapshot().hasToolBody(prose))
+            f.store.applyBatch("h", "c", "e", 73, listOf(prose), 0)
+            assertFalse(f.snapshot().hasToolBody(prose))
+            val before = f.snapshot()
+            f.store.applyBatch("h", "c", "e", 75, listOf(prose), 0)
+            assertTrue(f.snapshot().hasToolBody(prose))
+            assertSame(prose, f.snapshot().items.single { it.id == 60L })
+            assertEquals(before.checkpoint, f.snapshot().checkpoint)
+            assertEquals(before.coverage, f.snapshot().coverage)
+        }
+
     @Test fun ownershipInvariantConsumersCoalesceWithdrawAndDrainTheCapturedVersion() =
         runTest {
             val f = fixture()
