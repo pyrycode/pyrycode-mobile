@@ -32,6 +32,8 @@ internal class AuthoritativeThreadQueries(
         val request: ThreadQueryRequest.Expansion,
         val generation: Long,
         val incarnation: String,
+        val validity: Long,
+        val consumedVersion: ULong? = null,
     ) {
         val children get() = request is ThreadQueryRequest.Children
         val cursor get() = (request as? ThreadQueryRequest.Children)?.cursor
@@ -86,15 +88,16 @@ internal class AuthoritativeThreadQueries(
                 .filter {
                     it.id in ids && it.shown && it.kind == "agent" && it.raw["detail_omitted"] == JsonPrimitive(true)
                 }.mapTo(mutableSetOf()) {
-                    val page = snapshot.childPages[it.id to it.rev]
+                    val page = snapshot.childPages[it.id to it.rev].takeIf { _ -> snapshot.hasChildPage(it) }
                     // Keep the active/queued page's exact key while Loading changes the supplied snapshot.
                     val pending =
                         childConsumers[consumer]?.firstOrNull { key ->
                             key.request.itemId == it.id.toULong() &&
-                                key.request.expectedRev == it.rev.toULong()
+                                key.request.expectedRev == it.rev.toULong() &&
+                                key.validity == snapshot.detailValidity.serial(it.id)
                         }
                     val cursor =
-                        if (retry == it.id) {
+                        if (!snapshot.hasChildPage(it) || retry == it.id) {
                             null
                         } else if (more == it.id) {
                             page?.cursor
@@ -105,6 +108,8 @@ internal class AuthoritativeThreadQueries(
                         ThreadQueryRequest.Children(conversation, epoch, it.id.toULong(), it.rev.toULong(), cursor),
                         snapshot.generation,
                         snapshot.incarnation,
+                        snapshot.detailValidity.serial(it.id),
+                        if (cursor == null) null else page?.version,
                     )
                 }
         childConsumers[consumer] = if (current) keys else childConsumers[consumer].orEmpty().intersect(keys)
@@ -114,7 +119,11 @@ internal class AuthoritativeThreadQueries(
             val pair = id to key.request.expectedRev.toLong()
             val state = store.current(host, conversation).childLoads[pair]
             if (state == BodyLoad.Retry && retry != id) continue
-            if (snapshot.childPages.containsKey(pair) && retry != id && (more != id || key.cursor == null)) continue
+            if (snapshot.expansionItems.any { it.id == id && snapshot.hasChildPage(it) } && retry != id &&
+                (more != id || key.cursor == null)
+            ) {
+                continue
+            }
             if (active?.takeIf { it.abandonedAt == null }?.body == key || queued.any { it.body == key }) continue
             load(key, BodyLoad.Loading)
             queued.addLast(Intent(conversation, false, body = key))
@@ -134,12 +143,7 @@ internal class AuthoritativeThreadQueries(
         key: BodyKey,
         state: BodyLoad?,
     ) {
-        val r = key.request
-        if (key.children) {
-            store.childLoad(host, r.conversationId, r.itemId.toLong(), r.expectedRev.toLong(), state)
-        } else {
-            store.bodyLoad(host, r.conversationId, r.itemId.toLong(), r.expectedRev.toLong(), state)
-        }
+        store.detailLoad(ExpansionDetailKey(host, key.request, key.generation, key.incarnation), key.validity, this, state)
     }
 
     @Synchronized
@@ -164,6 +168,7 @@ internal class AuthoritativeThreadQueries(
                         ThreadQueryRequest.Body(conversation, epoch, it.id.toULong(), it.rev.toULong(), it.kind),
                         snapshot.generation,
                         snapshot.incarnation,
+                        snapshot.detailValidity.serial(it.id),
                     )
                 }
         // A held presentation may withdraw exact targets, but cannot add demand or retry a read.
@@ -175,7 +180,7 @@ internal class AuthoritativeThreadQueries(
             val state = store.current(host, conversation).bodyLoads[request.itemId.toLong() to request.expectedRev.toLong()]
             if (state == BodyLoad.Retry && retry?.toULong() != request.itemId) continue
             if (active?.takeIf { it.abandonedAt == null }?.body == key || queued.any { it.body == key }) continue
-            store.bodyLoad(host, conversation, request.itemId.toLong(), request.expectedRev.toLong(), BodyLoad.Loading)
+            load(key, BodyLoad.Loading)
             queued.addLast(Intent(conversation, false, body = key))
         }
         dispatch()
@@ -200,7 +205,8 @@ internal class AuthoritativeThreadQueries(
                             it.request.itemId == key.request.itemId &&
                             it.request.expectedRev == key.request.expectedRev &&
                             it.generation == key.generation &&
-                            it.incarnation == key.incarnation
+                            it.incarnation == key.incarnation &&
+                            it.validity == key.validity
                     }
                 } else {
                     key in keys
@@ -209,6 +215,12 @@ internal class AuthoritativeThreadQueries(
             snapshot.generation == key.generation &&
             snapshot.incarnation == key.incarnation &&
             snapshot.epoch == key.request.epoch &&
+            snapshot.detailValidity.serial(key.request.itemId.toLong()) == key.validity &&
+            (
+                key.cursor == null || snapshot.childPages[key.request.itemId.toLong() to key.request.expectedRev.toLong()]?.let {
+                    it.version == key.consumedVersion && it.cursor == key.cursor
+                } == true
+            ) &&
             snapshot.expansionItems.any {
                 it.id.toULong() == key.request.itemId &&
                     it.rev.toULong() == key.request.expectedRev &&
@@ -380,7 +392,15 @@ internal class AuthoritativeThreadQueries(
                                         key.children &&
                                         bodyCurrent(key) &&
                                         request is ThreadQueryRequest.Children &&
-                                        store.enrichChildren(host, request, held.childrenData, reply, key.generation, key.incarnation)
+                                        store.enrichChildren(
+                                            host,
+                                            request,
+                                            held.childrenData,
+                                            reply,
+                                            key.generation,
+                                            key.incarnation,
+                                            key.validity,
+                                        )
                                 retire(if (applied) "complete" else "application", failed = !applied, remoteComplete = true)
                             }
                         }
@@ -395,7 +415,7 @@ internal class AuthoritativeThreadQueries(
                                         data != null &&
                                         bodyCurrent(key) &&
                                         request is ThreadQueryRequest.Body &&
-                                        store.enrichBody(host, request, data, key.generation, key.incarnation)
+                                        store.enrichBody(host, request, data, key.generation, key.incarnation, key.validity)
                                 retire(if (applied) "complete" else "application", failed = !applied, remoteComplete = true)
                             }
                         }

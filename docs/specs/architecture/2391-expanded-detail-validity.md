@@ -68,6 +68,11 @@ Run focused JVM classes, lint, assembleDebug, instrumented Kotlin compilation, S
 
 None. Unknown freshness invalidates once per accepted source observation, never once per recomposition.
 
+## Revisions
+
+- 2026-10-23: The earlier child-owner regression expected a revised ancestor to hide all retained grandchildren immediately. The ticket explicitly requires stale rows to remain until validated replacement, so its assertion now proves retained visibility with invalid page/body and no read sight in either page insertion order. Missing bodies still avoid full conversion. This changes display retention, never source identity or freshness certification.
+- 2026-10-23: Lifecycle review identified a second asynchronous publication boundary: an old lane's final retirement could clear a replacement lane's sticky Retry under colliding IDs. Bind load-state writes to their query owner in `detailLoad`, retain serial/generation checks and prune owner bookkeeping with snapshot publication. The controlled replacement probe also collides request IDs. The mounted connection switch explicitly reopens after the existing destination-local expansion reset.
+
 ## Documentation handoff
 
 Pending for the documentation stage and #2393's relocated handoff: supply invalidation, retry/reopen and lifecycle behaviour, counted outcomes, source/binary revisions and durable raw evidence for `docs/knowledge/features/thread-screen.md`, `docs/knowledge/features/remote-conversation-repository.md`, `docs/knowledge/features/conversation-cache.md` and `docs/e2e-interactive-stream.md`. Preserve historical failures and privacy/approval holds; documentation cannot supply missing checks.

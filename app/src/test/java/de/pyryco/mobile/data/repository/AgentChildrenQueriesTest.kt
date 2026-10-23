@@ -183,6 +183,255 @@ class AgentChildrenQueriesTest {
             assertFalse(f.snapshot().repairNeeded)
         }
 
+    @Test fun freshnessInvariantEqualRevisionAncestorObservationRefreshesOnlyDemandedPages() =
+        runTest {
+            for (freshness in listOf("0", "42", null)) {
+                val f = fixture()
+                val initial =
+                    ThreadItemDto.decode(
+                        JsonObject(
+                            parent().raw + ("subtree_version" to kotlinx.serialization.json.JsonPrimitive(0)),
+                        ),
+                    )
+                f.store.applyBatch("h", "c", "e", 24, listOf(initial), 0)
+                f.demand()
+                f.success(true)
+                val held = requireNotNull(f.page())
+                val before = f.snapshot()
+                val fields = parent().raw.toMutableMap()
+                freshness?.let { fields["subtree_version"] = kotlinx.serialization.json.JsonPrimitive(it.toLong()) }
+                f.store.applyBatch("h", "c", "e", 42, listOf(ThreadItemDto.decode(JsonObject(fields))), 0)
+                repeat(3) { f.demand() }
+                if (freshness == "0") {
+                    assertEquals(1, f.sent.size)
+                } else {
+                    assertEquals("freshness=$freshness", 2, f.sent.size)
+                    assertFalse("cursor" in (f.sent.last().payload as JsonObject))
+                    assertSame(held, f.page())
+                    f.lane.accept(f.reply(version = 43, child = 51))
+                    assertSame(held, f.page())
+                    f.lane.accept(f.reply(true, version = 43))
+                    assertEquals(listOf(51L), f.page()?.items?.map { it.id })
+                    repeat(3) { f.demand() }
+                    assertEquals(2, f.sent.size)
+                }
+                assertEquals(before.checkpoint, f.snapshot().checkpoint)
+                assertEquals(before.coverage, f.snapshot().coverage)
+            }
+        }
+
+    private fun Fixture.observe(
+        version: Long,
+        freshness: Long? = version,
+        rev: Long = 23,
+    ) {
+        val fields = parent(rev).raw.toMutableMap()
+        freshness?.let { fields["subtree_version"] = kotlinx.serialization.json.JsonPrimitive(it) }
+        assertEquals(
+            AuthoritativeThreadOutcome.Applied,
+            store.applyBatch("h", "c", "e", version, listOf(ThreadItemDto.decode(JsonObject(fields))), 0),
+        )
+    }
+
+    private fun Fixture.bodyReply(
+        final: Boolean = false,
+        request: Envelope = sent.last(),
+        version: Int = 43,
+    ) = Envelope(
+        94,
+        "thread_tool_body",
+        "now",
+        json(
+            """{"conversation_id":"c","epoch":"e","version":$version,"item_id":50,"rev":7,"kind":"agent","final":$final${if (final) "" else ",\"content\":{\"input\":\"retained private body\"}"}}""",
+        ),
+        inReplyTo = request.id,
+    )
+
+    @Test fun freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            f.demand()
+            f.success()
+            val bodyConsumer = Any()
+
+            fun body(retry: Long? = null) = f.lane.bodies("c", bodyConsumer, f.snapshot(), setOf(50), retry)
+            body()
+            f.lane.accept(f.bodyReply())
+            f.lane.accept(f.bodyReply(true))
+            val held = f.snapshot().bodyContents
+            f.observe(44)
+            body()
+            assertEquals(3, f.sent.size)
+            assertSame(held, f.snapshot().bodyContents)
+            assertFalse(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
+            f.error()
+            repeat(3) { body() }
+            assertEquals(3, f.sent.size)
+            assertEquals(BodyLoad.Retry, f.snapshot().bodyLoads[50L to 7L])
+            val p = projectDeferredAuthoritativeThread("h", "c", f.snapshot())
+            val rows = p.demandRows(p.rows, setOf("${p.scope}:17", "${p.scope}:50"))
+            val nested = rows.filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0) == "msg:${p.scope}:50" }
+            assertFalse(p.suppliesReadSight(nested, setOf("${p.scope}:17", "${p.scope}:50")))
+            body(50)
+            f.lane.accept(f.bodyReply(version = 45))
+            f.lane.accept(f.bodyReply(true, version = 45))
+            assertTrue(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
+            repeat(3) { body() }
+            assertEquals(4, f.sent.size)
+            // The closed root page and closed/hidden descendants never acquire speculative demand.
+            assertEquals(1, f.sent.count { it.type == "thread_read_children" })
+        }
+
+    @Test fun captureInvariantInvalidationBetweenDataAndMarkerDrainsBeforeReplacement() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            f.demand()
+            f.success(true)
+            val before = f.snapshot()
+            val held = f.page()
+            f.demand(more = 17)
+            val old = f.sent.last()
+            f.lane.accept(f.reply(request = old, child = 51))
+            f.observe(44)
+            f.demand(more = 17)
+            assertEquals(2, f.sent.size)
+            assertSame(held, f.page())
+            f.lane.accept(f.reply(true, request = old, version = 42))
+            assertEquals(2, f.sent.size)
+            f.lane.accept(f.reply(true, request = old))
+            assertEquals(3, f.sent.size)
+            assertFalse("cursor" in (f.sent.last().payload as JsonObject))
+            f.lane.accept(f.reply(version = 45, child = 52))
+            f.lane.accept(f.reply(true, true, version = 45, child = 52))
+            f.lane.accept(f.reply(true, request = old))
+            assertEquals(listOf(52L), f.page()?.items?.map { it.id })
+            f.demand(more = 17)
+            f.lane.accept(f.reply(version = 45, child = 53))
+            f.lane.accept(f.reply(true, version = 45, child = 53))
+            assertEquals(listOf(52L, 53L), f.page()?.items?.map { it.id })
+            assertEquals(before.checkpoint, f.snapshot().checkpoint)
+            assertEquals(before.coverage, f.snapshot().coverage)
+        }
+
+    @Test fun freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            f.demand()
+            f.success(true)
+            f.observe(44, 0, rev = 44)
+            val converted = mutableListOf<Long>()
+            val p = projectDeferredAuthoritativeThread("h", "c", f.snapshot(), onFullConversion = { converted += it })
+            assertTrue(p.demandRows(p.rows, setOf("${p.scope}:17")).any { it.listKey(0) == "msg:${p.scope}:50" })
+            assertFalse(50L in converted)
+            f.demand(more = 17)
+            assertEquals(2, f.sent.size)
+            assertFalse("cursor" in (f.sent.last().payload as JsonObject))
+            f.lane.accept(f.reply(true, ownerRev = 44, version = 45))
+            assertEquals(
+                emptyList<Long>(),
+                f
+                    .snapshot()
+                    .childPages[17L to 44L]
+                    ?.items
+                    ?.map { it.id },
+            )
+            assertFalse(f.snapshot().expansionItems.any { it.id == 50L })
+            repeat(3) { f.demand() }
+            assertEquals(2, f.sent.size)
+        }
+
+    @Test fun ownershipInvariantInvalidatedConsumerUnionRejectsHeldAdditionsAndOldCaptures() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            val first = f.demand()
+            f.success(true)
+            val second = Any()
+            f.demand(second)
+            val old = f.snapshot()
+            f.observe(44, null)
+            f.demand(second)
+            first?.close()
+            f.lane.children("c", f, old, setOf(17, 50), retry = 17, more = 17)
+            assertEquals(2, f.sent.size)
+            // A reply to the current request can still carry an obsolete source capture.
+            f.lane.accept(f.reply(child = 51))
+            f.lane.accept(f.reply(true))
+            assertEquals(listOf(50L), f.page()?.items?.map { it.id })
+            assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+            f.demand(second, retry = 17)
+            f.lane.accept(f.reply(version = 45, child = 52))
+            f.lane.accept(f.reply(true, version = 45))
+            assertEquals(listOf(52L), f.page()?.items?.map { it.id })
+            repeat(3) { f.demand(second) }
+            assertEquals(3, f.sent.size)
+        }
+
+    @Test fun captureInvariantOlderFullBatchCannotClearNewerAncestorInvalidation() =
+        runTest {
+            val f = fixture()
+            f.observe(24, 0)
+            f.demand()
+            f.success()
+            f.observe(44, null)
+            val full =
+                ThreadItemDto.decode(
+                    json(
+                        """{"id":50,"rev":7,"order":0,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"child","content":{"name":"Agent","input":"private"}}""",
+                    ),
+                )
+            f.store.applyBatch("h", "c", "e", 43, listOf(full), 0)
+            assertFalse(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
+            f.store.applyBatch("h", "c", "e", 45, listOf(full), 0)
+            assertTrue(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
+            f.demand()
+            f.lane.accept(f.reply(version = 46))
+            f.lane.accept(f.reply(true, version = 46))
+            repeat(3) { f.demand() }
+            assertEquals(2, f.sent.size)
+            // Another genuinely newer unknown observation invalidates once again.
+            f.observe(47, null)
+            repeat(3) { f.demand() }
+            assertEquals(3, f.sent.size)
+        }
+
+    @Test fun ownershipInvariantLateRetirementCannotClearReplacementRetryWithCollidingIds() =
+        runTest {
+            val f = fixture()
+            f.demand()
+            val oldRequest = f.sent.single()
+            val sent = mutableListOf<Envelope>()
+            val replacement =
+                AuthoritativeThreadQueries("h", f.store, AuthoritativeThreadRoute("h", f.store), { true }, { 1 }, {
+                    sent += it
+                    true
+                }, { 0L }, expansionEnabled = { true })
+            val consumer = Any()
+
+            fun demand() = replacement.children("c", consumer, f.snapshot(), setOf(17))
+            demand()
+            assertEquals(oldRequest.id, sent.single().id)
+            replacement.accept(
+                Envelope(
+                    91,
+                    "error",
+                    "now",
+                    json("""{"code":"thread.query_failed","message":"private","retryable":true}"""),
+                    inReplyTo = sent.single().id,
+                ),
+            )
+            assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+            f.lane.abandon()
+            f.lane.accept(f.reply(true, request = oldRequest))
+            assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+            repeat(3) { demand() }
+            assertEquals(1, sent.size)
+            assertNull(f.page())
+        }
+
     @Test fun ownershipInvariantConsumersCoalesceWithdrawAndDrainTheCapturedVersion() =
         runTest {
             val f = fixture()
@@ -442,7 +691,7 @@ class AgentChildrenQueriesTest {
             }
         }
 
-    @Test fun ownershipInvariantFinalParentRevisionFencesBothPageOrders() =
+    @Test fun ownershipInvariantFinalParentRevisionFencesValidityInBothPageOrders() =
         runTest {
             val f = fixture()
             val full = ThreadItemDto.decode(JsonObject(parent(60, 50).raw + ("parent" to kotlinx.serialization.json.JsonPrimitive(17))))
@@ -470,17 +719,21 @@ class AgentChildrenQueriesTest {
                 )
             for (ordered in listOf(snapshot, reversed)) {
                 assertEquals(90L, ordered.expansionItems.single { it.id == 50L }.rev)
-                assertFalse(ordered.expansionItems.any { it.id == 51L })
+                assertTrue(ordered.expansionItems.any { it.id == 51L })
+                assertFalse(ordered.hasChildPage(ordered.expansionItems.single { it.id == 50L }))
+                assertFalse(ordered.hasToolBody(ordered.expansionItems.single { it.id == 51L }))
                 val converted = mutableListOf<Long>()
                 val p = projectDeferredAuthoritativeThread("h", "c", ordered, onFullConversion = { converted += it })
                 val rows = p.demandRows(p.rows, setOf("${p.scope}:17", "${p.scope}:50", "${p.scope}:51"))
-                assertEquals(listOf("msg:${p.scope}:17", "msg:${p.scope}:50"), rows.map { it.listKey(0) })
-                assertNull(p.bodyItem("msg:${p.scope}:51"))
+                assertEquals(listOf("msg:${p.scope}:17", "msg:${p.scope}:50", "msg:${p.scope}:51"), rows.map { it.listKey(0) })
+                val retained = rows.filterIsInstance<ThreadRow.Delivered>().last()
+                assertFalse(p.suppliesReadSight(retained, setOf("${p.scope}:17", "${p.scope}:50", "${p.scope}:51")))
                 assertFalse(51L in converted)
             }
             val requests = f.sent.size
-            f.lane.children("c", Any(), snapshot, setOf(51))
-            f.lane.bodies("c", Any(), f.snapshot(), setOf(51))
+            // Retained rows stay displayable while invalid; closed ancestors still hide their demand.
+            f.lane.children("c", Any(), snapshot, emptySet())
+            f.lane.bodies("c", Any(), f.snapshot(), emptySet())
             assertEquals(requests, f.sent.size)
             assertSame(full, snapshot.items.single { it.id == 50L })
         }
