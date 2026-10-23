@@ -81,3 +81,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Scripte
 **Date:** 2026-10-23
 
 Forecast: approximately 850 written lines including plan/tests, one new test-facing type, two added peer call sites, four acceptance criteria and fewer than ten reject branches. The sole consumer and its regression proof form one behaviour slice within the scope policy.
+
+## Revisions
+
+- 2026-10-23: Core's `TestAssistantMessageTimeAfterReopen` confirms channel posts may have no session identity. `sessionlessCanonicalPostStillNeedsItsOwnCompletion` reproduced rejection of a completed sessionless post. Post admission uses its canonical item identity, order, full text and own terminal status; interactive reply admission retains exact send/session/turn and successful terminal validation through `OwnedReplyObservation.admitted`. No phone settings read supplies producer identity.

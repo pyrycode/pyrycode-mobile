@@ -90,6 +90,8 @@ class SecondClientPeer(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile internal var replyObservation: OwnedReplyObservation? = null
+
+    @Volatile private var productionObservation: ProducerThreadObservation? = null
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
     private val closed = MutableStateFlow(false)
@@ -102,6 +104,41 @@ class SecondClientPeer(
 
     /** Whether the peer's session is open, and on which link; for failure messages. Counts and labels only. */
     fun linkState(): String = link.describe()
+
+    /** Establish this physical producer's baseline independently of the phone. */
+    internal suspend fun observeProduction(
+        conversationId: String,
+        timeoutMs: Long,
+    ): ProducerThreadObservation =
+        awaiting("producer baseline", timeoutMs) {
+            check(threadEnabled) { "producer thread was not negotiated" }
+            check(productionObservation == null) { "producer observation already started" }
+            val pump = checkNotNull(link.current.value).pump
+            val opened = checkNotNull(pump.state.value as? PumpState.Open)
+            val observation =
+                ProducerThreadObservation(pairing.serverId, conversationId, pump, opened.capabilities.toSet()) {
+                    !closed.value && link.current.value?.pump === pump && pump.state.value is PumpState.Open
+                }
+            productionObservation = observation
+            do {
+                catchUpProduction(observation, timeoutMs)
+            } while (observation.evidence() == null)
+            observation
+        }
+
+    /** Only read queries repeat. A replacement source cannot complete this producer's proof. */
+    internal suspend fun catchUpProduction(
+        observation: ProducerThreadObservation,
+        timeoutMs: Long,
+    ) {
+        awaiting("producer catch-up", timeoutMs) {
+            val query = observation.nextQuery()
+            link.request("producer catch-up", resend = false) { live ->
+                check(live.pump === observation.connection) { "producer connection replaced" }
+                attempt(live, query.type, query.payload()) { id -> inReplyTo == id && observation.completed(id) }
+            }
+        }
+    }
 
     /**
      * Post [text] to [conversationId] as this device, naming [attachmentIds] if any (#1016), and wait for the
@@ -527,6 +564,7 @@ class SecondClientPeer(
     /** Stop redialing and wipe session keys; retain the host/token static identity for later peers. Idempotent. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        productionObservation?.let { it.ended(it.connection) }
         link.close()
         scope.cancel()
     }
@@ -591,11 +629,14 @@ class SecondClientPeer(
         val id = requestId.incrementAndGet()
         val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
         val observation = replyObservation
+        val production = productionObservation
+        production?.sending(live.pump, envelope)
         val targeted = observation?.sending(this, envelope) { !closed.value && live.pump.state.value is PumpState.Open } == true
         if (type == "modal_answer" && envelope.payloadField("option_id") == "allow_once") {
             RecordedSuiteNative.beforePeerPermission(live.pump, checkNotNull(envelope.payloadField("modal_id")), permissionTimeoutMs)
         }
         val sent = live.pump.send(envelope)
+        production?.sent(live.pump, envelope, sent)
         if (targeted) observation?.sent(this, sent)
         if (!sent) {
             return RedialingLink.Attempt.NotSent
@@ -635,7 +676,20 @@ class SecondClientPeer(
                     pump.start()
                     val opened = pump.state.first { it !is PumpState.Handshaking } as? PumpState.Open ?: return@withTimeoutOrNull null
                     if (threadEnabled && !setOf("thread", "interactive").all { it in opened.capabilities }) return@withTimeoutOrNull null
-                    val dialed = Link(pump, scope.launch { pump.inbound.collect(::record) })
+                    val dialed =
+                        Link(
+                            pump,
+                            scope.launch {
+                                try {
+                                    pump.inbound.collect { envelope ->
+                                        productionObservation?.received(pump, envelope)
+                                        record(envelope)
+                                    }
+                                } finally {
+                                    productionObservation?.ended(pump)
+                                }
+                            },
+                        )
                     val probe = attempt(dialed, "list_conversations", JsonObject(emptyMap())) { id -> inReplyTo == id }
                     dialed.takeIf { probe is RedialingLink.Attempt.Answered }
                 }
