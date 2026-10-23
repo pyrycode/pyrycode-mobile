@@ -384,6 +384,45 @@ unestablished. The controlled interleaving establishes the readiness defect,
 without attributing historical host load or preceding tests. Native repaired
 acceptance and the remaining focused classes are still pending at this commit.
 
+### 2026-10-23 — repaired Linux focused evidence complete
+
+The seven focused JVM classes passed 119 executed tests, zero failures/errors/skips:
+consumption 4, readiness 7, passive observation 3, query coordination 23,
+connections 28, tape 49 and cleanup ownership 5. The latter five receipts identify
+implementation `796d479f4bc1a1e2c7ae4c417e4b03ddef141b6b`; the first two retain
+their exact pre-commit patches. Each class ran in its own managed invocation.
+The earlier multi-class selection refusal executed zero tests and is retained
+separately as `selection-refusal.json`.
+
+After a clean merge of main, including the accepted #2483 pre-restart lookup
+repair, pushed source `76f9b235b845cc65f1ce6b1ad7d89f71828a2c02` passed the
+exact original recorded method in three independent fresh Linux invocations:
+
+| Attempt | Gate | Executed / passed / failed / errors / skipped |
+| --- | --- | --- |
+| Native 1 | `ui-6dv8xoii` | 1 / 1 / 0 / 0 / 0 |
+| Native 2 | `ui-wcxanwkz` | 1 / 1 / 0 / 0 / 0 |
+| Native 3 | `ui-0q5wzbgs` | 1 / 1 / 0 / 0 / 0 |
+
+Every command exited zero, with a clean executable tree. Each `native-N` folder
+under agents `logs/evidence/2476/builder-certified-rotation-20261023/` retains
+18 verified manifest entries: raw XML/native reports and phone logs, source/input
+identities, effective APK hashes and managed-image/completion phases. All three
+cleanup receipts finish successfully. Each phone observes certified checkpoint
+81/completed version 81 before reopening, then graph/cache reconstruction and
+replacement-connection settlement. App APK SHA-256 is
+`207d419cd215b34ffbdc0caa0f8d735eec0434f8cc52d5fb42e3662f92905ff0`;
+test APK SHA-256 is
+`f1bb8fa3a5fc3eaf08ed8fb8282d4b4345a244563d459f9b6bd6583341fd4835`.
+Both hashes and the source revision are identical across all three attempts.
+
+Lint, debug assembly and instrumented Kotlin compilation passed after that last
+main merge. Final pre-verify remains the next builder check. Complete configured
+acceptance, including counted execution of this named method in the dispatcher
+UI gate, and independent review remain pending. Historical artifact gaps and
+the accepted #2478 repair retain their separate status. No macOS test, complete
+suite or genuine Claude turn was launched for this unchanged recording.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
