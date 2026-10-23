@@ -262,9 +262,9 @@ internal fun AuthoritativeThreadSnapshot.toSavedAuthoritativeThread(): SavedAuth
         appliedVersion = completedVersion,
         incarnation = incarnation,
         retirements = retirements,
-        checkpoint = if (items.size > MAX_CACHED_THREAD_ROWS) 0 else checkpoint,
+        checkpoint = if (items.size > MAX_CACHED_THREAD_ROWS) 0 else savedCheckpoint,
         coverage =
-            coverage?.takeIf { items.size <= MAX_CACHED_THREAD_ROWS }?.let {
+            savedCoverage?.takeIf { items.size <= MAX_CACHED_THREAD_ROWS }?.let {
                 SavedThreadCoverage(
                     it.lowerOrder.toLong(),
                     it.upperOrder.toLong(),

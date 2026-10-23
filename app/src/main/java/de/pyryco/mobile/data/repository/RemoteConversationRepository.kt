@@ -352,6 +352,9 @@ class RemoteConversationRepository internal constructor(
                 publishAuthoritativeCompletions(conversation, generation, certificate = reply)
             },
             expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
+            compactEnabled = {
+                authoritativeLiveEnabled() && setOf("thread_expansion", "thread_compact").all { it in negotiatedCapabilities() }
+            },
         )
 
     /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */

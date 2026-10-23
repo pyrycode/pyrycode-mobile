@@ -44,14 +44,23 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
         }
         val freshness = (item.raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 }
         val previous =
-            observations[item.id] ?: known[item.id]?.let { held ->
+            observations[item.id]?.takeIf { it.revision >= (known[item.id]?.rev ?: 0) } ?: known[item.id]?.let { held ->
                 ExpansionDetailValidity.Observation(
                     held.rev,
                     (held.raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 },
                     -1,
                 )
             }
-        if (previous != null && (item.rev < previous.revision || version <= previous.version)) continue
+        if (previous != null &&
+            (
+                item.rev < previous.revision ||
+                    version < previous.version ||
+                    version == previous.version &&
+                    item.rev <= previous.revision
+            )
+        ) {
+            continue
+        }
         observations[item.id] = ExpansionDetailValidity.Observation(item.rev, freshness, version)
         if (previous != null && (previous.revision != item.rev || freshness == null || previous.freshness != freshness)) {
             changed += item.id

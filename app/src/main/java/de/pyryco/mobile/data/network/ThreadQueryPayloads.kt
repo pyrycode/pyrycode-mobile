@@ -4,13 +4,17 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+internal const val THREAD_COMPACT_PROJECTION = "compact-v1"
+
 /** Supplied query contract only; no production advertisement, scheduling or row-count cutoff. */
 internal sealed class ThreadQueryRequest(
     val conversationId: String,
     val limit: Long?,
+    val projection: String? = null,
 ) {
     init {
         require(limit == null || limit >= 0) { "invalid thread query limit" }
+        require(projection == null || projection == THREAD_COMPACT_PROJECTION)
     }
 
     /** Ordered window rows only; a nonzero catch-up is never truncated by this limit. */
@@ -19,7 +23,14 @@ internal sealed class ThreadQueryRequest(
 
     protected abstract fun fields(): JsonObject
 
-    fun payload(): JsonObject = JsonObject(fields() + buildMap { limit?.let { put("limit", JsonPrimitive(it.coerceAtMost(256))) } })
+    fun payload(): JsonObject =
+        JsonObject(
+            fields() +
+                buildMap {
+                    limit?.let { put("limit", JsonPrimitive(it.coerceAtMost(256))) }
+                    projection?.let { put("projection", JsonPrimitive(it)) }
+                },
+        )
 
     final override fun toString(): String = "ThreadQueryRequest(redacted)"
 
@@ -85,7 +96,8 @@ internal sealed class ThreadQueryRequest(
         val epoch: String,
         val version: ULong,
         limit: Long? = null,
-    ) : ThreadQueryRequest(conversationId, limit) {
+        projection: String? = null,
+    ) : ThreadQueryRequest(conversationId, limit, projection) {
         override val type: String = "thread_catch_up"
 
         override fun fields(): JsonObject =
@@ -102,7 +114,13 @@ internal sealed class ThreadQueryRequest(
         conversationId: String,
         val beforeOrder: ULong,
         limit: Long? = null,
-    ) : ThreadQueryRequest(conversationId, limit) {
+        projection: String? = null,
+        val epoch: String? = null,
+    ) : ThreadQueryRequest(conversationId, limit, projection) {
+        init {
+            require(projection == null || !epoch.isNullOrEmpty())
+        }
+
         override val type: String = "thread_page"
 
         override fun fields(): JsonObject =
@@ -110,12 +128,12 @@ internal sealed class ThreadQueryRequest(
                 mapOf(
                     "conversation_id" to JsonPrimitive(conversationId),
                     "before_order" to threadUnsignedJson(beforeOrder),
-                ),
+                ) + if (projection != null) mapOf("epoch" to JsonPrimitive(epoch)) else emptyMap(),
             )
     }
 }
 
-/** Batches are complete facts, never completion evidence; only Success carries coverage. */
+/** Batches carry full facts or compact summaries; only separate Success carries scoped coverage. */
 internal sealed class ThreadQueryReply(
     val raw: JsonObject,
 ) {
@@ -127,6 +145,11 @@ internal sealed class ThreadQueryReply(
         val conversationId: String = raw.threadString("conversation_id")
         val epoch: String = raw.threadString("epoch")
         val version: ULong = raw.threadUnsigned("version")
+        val projection: String? = if ("projection" in raw) raw.threadString("projection") else null
+
+        init {
+            require(projection == null || projection == THREAD_COMPACT_PROJECTION && epoch.isNotEmpty())
+        }
 
         override fun toString(): String = "ThreadQueryReply.Checkpoint(redacted)"
     }
@@ -230,16 +253,41 @@ internal fun decodeThreadQueryReply(
             "thread_tool_body" -> ThreadQueryReply.Body(raw)
             "thread_items" -> {
                 val checkpoint = ThreadQueryReply.Checkpoint(raw)
-                val items =
+                val full =
                     (raw["items"] as? JsonArray ?: throw IllegalArgumentException("invalid thread batch")).map {
                         ThreadItemDto.decode(it as? JsonObject ?: throw IllegalArgumentException("invalid thread item"))
                     }
+                val compact = checkpoint.projection == THREAD_COMPACT_PROJECTION
+                require(compact || "headers" !in raw)
+                val headers =
+                    if ("headers" in raw) {
+                        (raw["headers"] as? JsonArray ?: throw IllegalArgumentException("invalid root headers")).map {
+                            decodeThreadSummary(
+                                it as? JsonObject ?: throw IllegalArgumentException("invalid root header"),
+                                checkpoint.version,
+                            ).also { header ->
+                                require(header.kind in setOf("tool_call", "agent") && header.parent == 0L)
+                                require(header.shown && (header.order ?: 0) > 0)
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                if (compact) {
+                    require(
+                        full.all {
+                            it.kind !in setOf("tool_call", "agent") && (it.parent ?: 0) == 0L && it.shown && (it.order ?: 0) > 0
+                        },
+                    )
+                }
+                val items = full + headers
                 require("data" !in raw && "item_id" !in raw && "rev" !in raw && "base_rev" !in raw)
                 if (!raw.threadBoolean("final")) {
                     require(threadQueryCoverageKeys.none { it in raw })
                     ThreadQueryReply.Batch(raw, checkpoint, items)
                 } else {
                     require(items.isEmpty())
+                    require("headers" !in raw)
                     val coverage =
                         if ("from_version" in raw) {
                             require((threadQueryCoverageKeys - "from_version").none { it in raw })
@@ -257,7 +305,8 @@ internal fun decodeThreadQueryReply(
                 }
             }
             "thread_reset" -> {
-                require((threadQueryCoverageKeys + setOf("items", "final", "data", "item_id", "rev", "base_rev")).none { it in raw })
+                val forbidden = threadQueryCoverageKeys + setOf("items", "headers", "final", "data", "item_id", "rev", "base_rev")
+                require(forbidden.none { it in raw })
                 ThreadQueryReply.Reset(raw, ThreadQueryReply.Checkpoint(raw))
             }
             "error" -> {

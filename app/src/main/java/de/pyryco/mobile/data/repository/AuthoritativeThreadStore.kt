@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.THREAD_COMPACT_PROJECTION
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_ADDED
 import de.pyryco.mobile.data.network.TYPE_THREAD_ITEM_CHANGED
 import de.pyryco.mobile.data.network.TYPE_THREAD_TEXT_APPEND
@@ -37,13 +38,27 @@ internal data class AuthoritativeThreadSnapshot(
     val childPages: Map<Pair<Long, Long>, AgentChildPage> = emptyMap(),
     val childLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
     val detailValidity: ExpansionDetailValidity = ExpansionDetailValidity(),
+    /** Runtime compact metadata never replaces the complete facts in items. */
+    val compactRoots: Map<Long, ThreadItemDto> = emptyMap(),
+    val compactSelected: Boolean = false,
+    val completeCheckpoint: Long = 0,
+    val completeCoverage: AuthoritativeThreadCoverage? = null,
 ) {
+    val savedCheckpoint: Long get() = if (compactSelected) completeCheckpoint else checkpoint
+    val savedCoverage: AuthoritativeThreadCoverage? get() = if (compactSelected) completeCoverage else coverage
+
     /** Expansion summaries never enter saved full facts or history coverage. */
     val expansionItems: List<ThreadItemDto> =
         buildMap<Long, ThreadItemDto> {
             items.forEach { item ->
                 val held = get(item.id)
                 if (held == null || item.rev > held.rev) put(item.id, item)
+            }
+            if (compactSelected) {
+                compactRoots.values.forEach { item ->
+                    val held = get(item.id)
+                    if (item.id !in retirements && (held == null || item.rev >= held.rev)) put(item.id, item)
+                }
             }
             val remaining =
                 childPages
@@ -71,10 +86,18 @@ internal data class AuthoritativeThreadSnapshot(
                     progressed = true
                 }
             } while (progressed)
-        }.values.toList()
+        }.values.toList().let { rows ->
+            if (compactSelected) rows.sortedWith(compareBy<ThreadItemDto> { it.order ?: Long.MAX_VALUE }.thenBy { it.id }) else rows
+        }
 
     fun hasToolBody(item: ThreadItemDto): Boolean =
-        item.id !in detailValidity.bodies && (item.hasToolBody || (item.id to item.rev) in bodyContents)
+        item.id !in detailValidity.bodies &&
+            (
+                item.hasToolBody ||
+                    (item.id to item.rev) in bodyContents ||
+                    item.summaryPayload != null &&
+                    items.any { it.id == item.id && it.rev == item.rev && it.hasToolBody }
+            )
 
     fun retainedBody(item: ThreadItemDto): JsonObject? =
         bodyContents[item.id to item.rev] ?: if (item.id in detailValidity.bodies) {
@@ -83,7 +106,13 @@ internal data class AuthoritativeThreadSnapshot(
                 .maxByOrNull { it.key.second }
                 ?.value
         } else {
-            null
+            if (item.summaryPayload !=
+                null
+            ) {
+                items.firstOrNull { it.id == item.id && it.rev == item.rev && it.hasToolBody }?.content as? JsonObject
+            } else {
+                null
+            }
         }
 
     fun retainedChildren(item: ThreadItemDto): AgentChildPage? =
@@ -121,6 +150,8 @@ internal data class AuthoritativeThreadCoverage(
     val upperOrder: ULong,
     val continuation: ULong,
     val olderExists: Boolean,
+    val projection: String? = null,
+    val connection: String? = null,
 )
 
 internal enum class AuthoritativeThreadOutcome { Applied, Ignored, RepairNeeded, ResetNeeded, StaleGeneration }
@@ -537,7 +568,7 @@ internal class AuthoritativeThreadStore {
             current.childPages.values
                 .flatMap { it.items }
                 .groupBy { it.id }
-        val known = (current.items + summaries.values.flatten()).groupBy { it.id }
+        val known = (current.items + current.compactRoots.values + summaries.values.flatten()).groupBy { it.id }
         if (data.any { child -> known[child.id].orEmpty().any { it.parent != child.parent || it.kind != child.kind } }) return false
         val winners = summaries.mapValues { (_, versions) -> versions.maxBy { it.rev } }
         if (data.any { child -> winners[child.id]?.let { it.rev > child.rev || it.rev == child.rev && it.order != child.order } == true }) {
@@ -592,7 +623,7 @@ internal class AuthoritativeThreadStore {
         if (current.incarnation.isNotEmpty() && current.incarnation != saved.incarnation) return AuthoritativeThreadOutcome.Ignored
         val retirements = saved.retirements + current.retirements
         val merged = merge(current, saved.items, saved.completedVersion, retirements) ?: return AuthoritativeThreadOutcome.Ignored
-        val adoptCertification = current.checkpoint == 0L
+        val adoptCertification = current.checkpoint == 0L && !current.compactSelected
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
         publishSnapshot(
@@ -748,6 +779,70 @@ internal class AuthoritativeThreadStore {
         }
     }
 
+    /** Compact roots are upserts; neither omitted detail nor received roots certify any inventory. */
+    @Synchronized
+    fun applyCompactBatch(
+        host: String,
+        batch: ThreadQueryReply.Batch,
+        generation: Long,
+    ): AuthoritativeThreadOutcome {
+        val checkpoint = batch.checkpoint
+        val conversation = checkpoint.conversationId
+        if (checkpoint.projection != THREAD_COMPACT_PROJECTION || checkpoint.version > 9007199254740991uL) {
+            return requestRepair(host, conversation)
+        }
+        guard(host, conversation, checkpoint.epoch, generation)?.let { return it }
+        val current = current(host, conversation)
+        val version = checkpoint.version.toLong()
+        val known = current.expansionItems.associateBy { it.id }.toMutableMap()
+        for (item in batch.items) {
+            val previous = known[item.id]
+            if (!valid(item, version) ||
+                (item.parent ?: 0) != 0L ||
+                previous != null &&
+                (previous.kind != item.kind || (previous.parent ?: 0) != (item.parent ?: 0))
+            ) {
+                return requestRepair(host, conversation)
+            }
+            if (previous == null || item.rev >= previous.rev) known[item.id] = item
+        }
+        val full =
+            merge(current, batch.items.filter { it.summaryPayload == null }, version, current.retirements)
+                ?: return requestRepair(host, conversation)
+        val roots = current.compactRoots.toMutableMap()
+        val held = current.expansionItems.associateBy { it.id }
+        batch.items.filter { it.summaryPayload != null }.forEach { item ->
+            if (item.id !in current.retirements &&
+                item.rev >= (held[item.id]?.rev ?: 0) &&
+                (
+                    item.rev > (roots[item.id]?.rev ?: 0) ||
+                        item.rev == roots[item.id]?.rev &&
+                        version >= (current.detailValidity.observations[item.id]?.version ?: 0)
+                )
+            ) {
+                roots[item.id] = item
+            }
+        }
+        publish(
+            host,
+            conversation,
+            current.observeDetails(batch.items, version).copy(
+                epoch = checkpoint.epoch,
+                items = ordered(full),
+                compactRoots = roots,
+                compactSelected = true,
+                checkpoint = if (current.compactSelected) current.checkpoint else 0,
+                coverage = current.coverage.takeIf { current.compactSelected },
+                completeCheckpoint = current.savedCheckpoint,
+                completeCoverage = current.savedCoverage,
+                completedVersion = maxOf(current.completedVersion, version),
+                openingRows = current.openingRows?.plus(batch.items.flatMap { listOf(it.id to false, it.id to true) }),
+            ),
+        )
+        RelayLog.i { "event=thread_store code=compact_batch" }
+        return AuthoritativeThreadOutcome.Applied
+    }
+
     /** Caller certifies complete supplied state, not merely receipt of a page/batch or live update. */
     @Synchronized
     fun establishComplete(
@@ -785,16 +880,30 @@ internal class AuthoritativeThreadStore {
         request: ThreadQueryRequest,
         success: ThreadQueryReply.Success,
         generation: Long,
+        connection: String? = null,
     ): AuthoritativeThreadOutcome {
         val conversation = request.conversationId
         val checkpoint = success.checkpoint
+        if (request.projection != null && connection.isNullOrEmpty()) return requestRepair(host, conversation)
+        if (checkpoint.projection != request.projection ||
+            checkpoint.conversationId != conversation
+        ) {
+            return requestRepair(host, conversation)
+        }
         guard(host, conversation, checkpoint.epoch, generation)?.let { return it }
         val current = current(host, conversation)
         if (checkpoint.version > 9007199254740991uL) return requestRepair(host, conversation)
-        var coverage = current.coverage
+        var coverage =
+            current.coverage?.takeIf {
+                it.projection == request.projection && (request.projection == null || it.connection == connection)
+            }
         when (val certified = success.coverage) {
             is ThreadQueryReply.Coverage.CatchUp -> {
-                if (request !is ThreadQueryRequest.CatchUp || certified.fromVersion != current.checkpoint.toULong()) {
+                if (request !is ThreadQueryRequest.CatchUp ||
+                    current.coverage?.projection != request.projection ||
+                    request.projection != null && coverage?.connection != connection ||
+                    certified.fromVersion != current.checkpoint.toULong()
+                ) {
                     return requestRepair(host, conversation)
                 }
             }
@@ -806,9 +915,21 @@ internal class AuthoritativeThreadStore {
                     return requestRepair(host, conversation)
                 }
                 val range =
-                    AuthoritativeThreadCoverage(certified.lowerOrder, certified.upperOrder, certified.continuation, certified.olderExists)
+                    AuthoritativeThreadCoverage(
+                        certified.lowerOrder,
+                        certified.upperOrder,
+                        certified.continuation,
+                        certified.olderExists,
+                        request.projection,
+                        connection.takeIf { request.projection != null },
+                    )
                 if (request is ThreadQueryRequest.Page) {
-                    if (coverage == null || request.beforeOrder != coverage.continuation || certified.upperOrder != request.beforeOrder) {
+                    if (coverage == null ||
+                        request.beforeOrder != coverage.continuation ||
+                        certified.upperOrder != request.beforeOrder ||
+                        request.projection != null &&
+                        request.epoch != current.epoch
+                    ) {
                         return requestRepair(host, conversation)
                     }
                     coverage = range.copy(upperOrder = coverage.upperOrder)
@@ -830,15 +951,27 @@ internal class AuthoritativeThreadStore {
         }
         val version = checkpoint.version.toLong()
         val catchesUp = request is ThreadQueryRequest.CatchUp && version >= current.completedVersion
+        val compact = request.projection == THREAD_COMPACT_PROJECTION
+        val priorCheckpoint =
+            if (compact == current.compactSelected) {
+                current.checkpoint
+            } else if (compact) {
+                0
+            } else {
+                current.completeCheckpoint
+            }
         publish(
             host,
             conversation,
             current.copy(
                 epoch = checkpoint.epoch,
                 coverage = coverage,
-                checkpoint = if (catchesUp) version else current.checkpoint,
+                checkpoint = if (catchesUp) version else priorCheckpoint,
                 completedVersion = if (catchesUp) version else current.completedVersion,
                 repairNeeded = if (request is ThreadQueryRequest.CatchUp) !catchesUp else current.repairNeeded,
+                compactSelected = compact,
+                completeCheckpoint = if (compact) current.savedCheckpoint else 0,
+                completeCoverage = if (compact) current.savedCoverage else null,
             ),
         )
         RelayLog.i { "event=thread_store code=certified" }
@@ -940,6 +1073,8 @@ internal class AuthoritativeThreadStore {
             val previous = merged[item.id]
             if (previous != null && previous.kind != item.kind) return null
             if (summaryKinds[item.id]?.let { it != item.kind } == true) return null
+            val root = held.compactRoots[item.id]
+            if (root != null && (root.kind != item.kind || (root.parent ?: 0) != (item.parent ?: 0))) return null
             if (previous == null || item.rev > previous.rev) merged[item.id] = item
         }
         return merged.values.toList()
@@ -1027,6 +1162,8 @@ internal class AuthoritativeThreadStore {
                 snapshot.copy(
                     checkpoint = 0,
                     coverage = null,
+                    completeCheckpoint = 0,
+                    completeCoverage = null,
                     repairNeeded = true,
                 )
             }

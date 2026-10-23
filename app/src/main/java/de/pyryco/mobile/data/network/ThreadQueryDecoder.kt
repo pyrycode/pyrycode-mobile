@@ -31,6 +31,7 @@ internal class ThreadQueryDecoder(
     private var childrenData: List<ThreadItemDto>? = null
     private var childrenBytes = 0
     private var childrenLast: Pair<ULong, ULong>? = null
+    private val rootOrders = mutableMapOf<Long, Pair<Long, Long>>()
 
     override fun toString(): String = "ThreadQueryDecoder(redacted)"
 
@@ -40,6 +41,9 @@ internal class ThreadQueryDecoder(
         if (terminal) return listOf(reject("terminal"))
         if (envelope.inReplyTo != requestId) return listOf(reject("attribution"))
         val raw = envelope.payload as? JsonObject ?: return listOf(reject("malformed"))
+        if (envelope.type != "error" && raw["projection"] != request.projection?.let(::JsonPrimitive)) {
+            return listOf(reject("attribution"))
+        }
         val route = envelopeRouting(envelope) ?: return listOf(reject("attribution"))
         if (routing != null && routing != route) return listOf(reject("attribution"))
         if (boundedThreadJsonSize(route, maxPayloadBytes) == null) return listOf(reject("capacity"))
@@ -63,6 +67,7 @@ internal class ThreadQueryDecoder(
             val captured = checkpoint
             val initialCatchUp = request is ThreadQueryRequest.CatchUp && request.version == 0uL && request.epoch.isEmpty()
             if ((request is ThreadQueryRequest.CatchUp && !initialCatchUp && current.epoch != request.epoch) ||
+                (request is ThreadQueryRequest.Page && request.projection != null && current.epoch != request.epoch) ||
                 (captured != null && (captured.epoch != current.epoch || captured.version != current.version))
             ) {
                 return listOf(reject("attribution"))
@@ -100,6 +105,12 @@ internal class ThreadQueryDecoder(
                             (request is ThreadQueryRequest.CatchUp && request.version == 0uL)
                 }
             if (!validCoverage) return listOf(reject("coverage"))
+            if (request.projection != null && success.coverage is ThreadQueryReply.Coverage.Window) {
+                val window = success.coverage
+                if (rootOrders.values.any { it.second.toULong() < window.lowerOrder || it.second.toULong() >= window.upperOrder }) {
+                    return listOf(reject("coverage"))
+                }
+            }
             finish()
             RelayLog.i { "event=thread_query code=success" }
             return listOf(ThreadDecodeOutcome.Complete(success))
@@ -109,7 +120,12 @@ internal class ThreadQueryDecoder(
                 envelope.type,
                 raw,
                 { assemblyMetadata(it, route, fragment) },
-                { decodeThreadQueryReply("thread_items", it) as? ThreadQueryReply.Batch },
+                {
+                    (decodeThreadQueryReply("thread_items", it) as? ThreadQueryReply.Batch)?.takeIf { batch ->
+                        batch.checkpoint.projection == request.projection &&
+                            (!fragment || batch.items.singleOrNull()?.summaryPayload == null)
+                    }
+                },
                 { metadata(it.checkpoint, route, it.items.singleOrNull()?.let { item -> item.id to item.rev }) },
             )
         return listOf(
@@ -120,6 +136,11 @@ internal class ThreadQueryDecoder(
                 }
                 is ThreadDecodeOutcome.Complete -> {
                     pending = false
+                    if (request.projection != null) {
+                        outcome.value.items.forEach { item ->
+                            if (item.rev >= (rootOrders[item.id]?.first ?: 0)) rootOrders[item.id] = item.rev to requireNotNull(item.order)
+                        }
+                    }
                     outcome
                 }
                 is ThreadDecodeOutcome.Repair -> {
@@ -344,9 +365,10 @@ internal class ThreadQueryDecoder(
     ): JsonObject? =
         try {
             val current = ThreadQueryReply.Checkpoint(raw)
+            require(current.projection == request.projection)
             val identity =
                 if (fragment) {
-                    require((threadQueryCoverageKeys - "continuation" + setOf("items", "final", "base_rev")).none { it in raw })
+                    require((threadQueryCoverageKeys - "continuation" + setOf("items", "headers", "final", "base_rev")).none { it in raw })
                     raw.threadInteger("item_id") to raw.threadInteger("rev")
                 } else {
                     null
@@ -366,6 +388,7 @@ internal class ThreadQueryDecoder(
                 put("conversation_id", JsonPrimitive(current.conversationId))
                 put("epoch", JsonPrimitive(current.epoch))
                 put("version", threadUnsignedJson(current.version))
+                current.projection?.let { put("projection", JsonPrimitive(it)) }
                 put("envelope_routing", route)
                 identity?.let {
                     put("item_id", JsonPrimitive(it.first))
