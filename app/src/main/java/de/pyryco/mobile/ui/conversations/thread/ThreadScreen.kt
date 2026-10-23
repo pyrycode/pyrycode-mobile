@@ -1061,6 +1061,8 @@ fun ThreadScreen(
                                     ToolCallExpansion(
                                         id in expandedTools,
                                         missingBody = authoritative?.missingBody(row.listKey(0)) == true,
+                                        retainedBody =
+                                            source?.let { it.hasToolBody || authoritative.sourceSnapshot.retainedBody(it) != null } == true,
                                         bodyLoad = source?.let { authoritative.sourceSnapshot.bodyLoads[it.id to it.rev] },
                                         offline = !connected,
                                         retry = { authoritative?.let { actionPublisher.retryBody(it, row.listKey(0)) } },
@@ -1707,15 +1709,16 @@ private fun AgentChildrenControl(
     more: () -> Unit,
 ) {
     val parent = p.childParent(key) ?: return
-    val page = p.sourceSnapshot.childPages[parent.id to parent.rev]
+    val page = p.sourceSnapshot.retainedChildren(parent)
+    val valid = p.sourceSnapshot.hasChildPage(parent)
     val load = p.sourceSnapshot.childLoads[parent.id to parent.rev]
     Column(Modifier.padding(horizontal = MessageContentGutter).testTag("agent-children:${parent.id}")) {
         val label =
             when {
-                !connected && (page == null || page.cursor != null) -> R.string.agent_children_offline
+                !connected && (!valid || page?.cursor != null) -> R.string.agent_children_offline
                 load == de.pyryco.mobile.data.repository.BodyLoad.Retry -> R.string.agent_children_failed
-                load == de.pyryco.mobile.data.repository.BodyLoad.Loading || page == null -> R.string.agent_children_loading
-                page.items.isEmpty() -> R.string.agent_children_empty
+                load == de.pyryco.mobile.data.repository.BodyLoad.Loading || !valid -> R.string.agent_children_loading
+                page?.items?.isEmpty() == true -> R.string.agent_children_empty
                 else -> null
             }
         label?.let {
@@ -1727,7 +1730,7 @@ private fun AgentChildrenControl(
         }
         if (connected && load == de.pyryco.mobile.data.repository.BodyLoad.Retry) {
             androidx.compose.material3.TextButton(onClick = retry) { Text(stringResource(R.string.tool_body_retry)) }
-        } else if (connected && load == null && page?.cursor != null) {
+        } else if (connected && valid && load == null && page?.cursor != null) {
             androidx.compose.material3.TextButton(onClick = more) { Text(stringResource(R.string.agent_children_more)) }
         }
     }

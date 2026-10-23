@@ -372,6 +372,7 @@ class MissingToolBodyScreenTest {
             assertTrue(sent.none { it.type == "mark_conversation_read" })
             repo.authoritativeThreads.applyBatch("host", "c", "e", 24, listOf(tool(24)), 0)
             compose.waitUntil(5000) { reads().size == 2 }
+            compose.onNodeWithText("loaded contents").assertExists()
             inbound.trySend(
                 Envelope(
                     91,
@@ -383,6 +384,7 @@ class MissingToolBodyScreenTest {
             )
             compose.waitUntil(5000) { compose.onAllNodesWithText("Retry").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Couldn’t load tool details").assertExists()
+            compose.onNodeWithText("loaded contents").assertExists()
             compose.mainClock.advanceTimeBy(500)
             assertEquals(2, reads().size)
             compose.onNodeWithText("Retry").performClick()
@@ -397,7 +399,7 @@ class MissingToolBodyScreenTest {
             reply(false)
             reply(true)
             compose.waitForIdle()
-            compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
+            compose.onNodeWithText("loaded contents").assertExists()
         } finally {
             pressure?.close()
             compose.runOnIdle { vmStore.clear() }
