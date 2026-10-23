@@ -64,3 +64,20 @@ Pending documentation-stage review: `docs/knowledge/features/authoritative-reade
 linked `authoritative-reader-native-benchmarks.md` receipts. Preserve supported invocations,
 source/runtime identities, historical evidence and the unmeasured actual import boundary;
 retain the independent Linux evidence-authentication limitation until receipts are reviewed.
+
+## Revisions
+
+- 2026-10-23: verifier finding 1 on `4cce5dbd8a17` requires diagnosis of the
+  configured `stream` failure in
+  `interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply` at the held-prefix
+  checkpoint. Preserve verifier bundle `d08876824504c4d0936c943b15e14c5f8bc50b49972df6f8bb4c953e4ca190de`
+  (digest `3ef00b5512947781e6c073c22ea01935247d12445a4852e1ddcd67cab82bfac1`):
+  24 executed, 23 passed, 1 failed, no errors/skips. The rejected method selections
+  executed no comparison and establish no inherited-failure exemption. Main now
+  includes #2486's negotiated-route observer and current-source recovery assertions;
+  its separate accepted evidence does not prove the cause of this earlier failure.
+  Run the supported `python3 scripts/android-test-gate.py scripted stream` on this
+  macOS candidate, retain counted XML and phone/fixture/runtime receipts, and record
+  the outcome here and in the PR. Keep complete configured acceptance pending with
+  the dispatcher/verifier; request a wider sequence investigation if focused proof
+  cannot resolve the original acceptance result. No production change is planned.
