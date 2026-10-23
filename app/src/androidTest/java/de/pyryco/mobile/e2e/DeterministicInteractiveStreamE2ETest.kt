@@ -1037,7 +1037,7 @@ class DeterministicInteractiveStreamE2ETest {
                             .id
                     checkpoint = "held prefix"
                     val firstSent = repository.sendMessage(conversationId, SEND_PROMPT)
-                    val evidence = harnessThreadEvidence(repository)
+                    val evidence = harnessThreadEvidence(hostRepository)
 
                     fun currentEvidence(observed: ThreadEvidence? = null): ThreadEvidence? {
                         val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
