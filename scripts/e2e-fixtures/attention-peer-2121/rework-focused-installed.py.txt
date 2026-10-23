@@ -1,0 +1,13 @@
+"""Execute only session-error using the dispatcher's installed-app gate path."""
+import importlib.util
+import os
+from pathlib import Path
+import sys
+root = Path(os.environ['AGENTS_REPO_PATH']) / 'scripts'
+sys.path.insert(0, str(root))
+spec = importlib.util.spec_from_file_location('focused_gate', root / 'android-test-gate.py')
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+gate.SCENARIOS = ('session-error',)
+sys.argv = [str(root / 'android-test-gate.py'), 'scripted-all']
+raise SystemExit(gate.main())
