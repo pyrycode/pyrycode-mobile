@@ -351,6 +351,7 @@ class RemoteConversationRepository internal constructor(
             onCertified = { conversation, generation, reply ->
                 publishAuthoritativeCompletions(conversation, generation, certificate = reply)
             },
+            expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
         )
 
     /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
@@ -418,6 +419,14 @@ class RemoteConversationRepository internal constructor(
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
 
     internal fun acquireAuthoritativeThread(conversationId: String): java.io.Closeable? = authoritativeQueries.acquire(conversationId)
+
+    internal fun demandToolBodies(
+        conversationId: String,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+    ): java.io.Closeable? = authoritativeQueries.bodies(conversationId, consumer, snapshot, ids, retry)
 
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
 
@@ -845,7 +854,7 @@ class RemoteConversationRepository internal constructor(
 
     private fun onInbound(envelope: Envelope) {
         if (authoritativeLiveEnabled() &&
-            envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
+            envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
         ) {
             return
@@ -993,6 +1002,9 @@ class RemoteConversationRepository internal constructor(
             TYPE_TURN_STATE -> {
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeLiveSessionEvent(envelope)?.let { event ->
+                        if (event is LiveSessionEvent.TurnState) {
+                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
+                        }
                         stallProjection.clear(event.conversationId)
                         turnPhaseProjection.apply(event)
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {

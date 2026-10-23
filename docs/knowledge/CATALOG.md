@@ -219,6 +219,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
     - [Development verification — change surface, Gradle gates and where a test goes](features/development-verification-gates.md) — `Establish the change surface`, `Gradle and source checks`, `Where a screen test goes`, `Device gate`, moved verbatim from the parent on 2026-10-02.
     - [Development verification — Compose evidence](features/development-verification-compose-evidence.md) — `Compose evidence`, `Probe the evidence itself`, moved verbatim from the parent on 2026-10-02. `Compose evidence` also holds the shared `ViewportRule`/`@Viewport` and the `design-1220/` capture harness (`DesignCapture`, `DesignInputs`) from #1430.
     - [Development verification — test scheduling and harnesses](features/development-verification-test-scheduling.md) — `Test scheduling and harnesses`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — scenario report ownership](features/development-verification-report-ownership.md) — Stream and background-Agent execution boundaries, exact-byte retention and controlled causal/count evidence (#2455, #2481).
     - [Development verification — JVM logging, emulator and real evidence](features/development-verification-emulator-evidence.md) — `JVM logging and formatting`, `Emulator and real evidence`, `Documentation evidence`, `Archive refresh regression`, moved verbatim from the parent on 2026-10-02.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
@@ -257,5 +258,10 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 
 - [Caching conversation repository — state and concurrency](features/caching-conversation-repository-concurrency.md): restore generations, successful writer baselines, retirement, cancellation and final-flush custody; split for #2333.
 
+- [Authoritative saved-history reader paging](features/authoritative-reader-paging.md): bounded authoritative demand/retry, changed-placement recovery, fragmented-range traversal and counted Linux paging/reopen evidence; #2334.
+- [Early authoritative paging evidence](features/authoritative-reader-paging-early-evidence.md): original #2334 paging failures, committed-bound repair and manual JVM/native/runtime receipts, retained verbatim from the owning paging topic.
 - [Thread screen — Agent navigation evidence](features/thread-screen-agent-navigation-evidence.md) — proof-entry readiness and finished-marker generation/geometry controls, split from subagent tool-row nesting for #2373; counted Linux source/recording acceptance.
 - [Development verification — Agent reveal evidence](features/development-verification-agent-reveal-evidence.md) — Agent geometry, lazy disposal, readiness and atomic current-key scroll; split from Compose evidence for #2373.
+- [Final integrated reader paging acceptance (#2334)](features/authoritative-reader-paging-final-acceptance.md) — consolidated scoped review, exact-source full acceptance and reviewed integration.
+
+- [Thread screen — wiring](features/thread-screen-wiring.md): Koin and destination binding, host ownership and composer topic pointer; split from the thread overview for #2388.

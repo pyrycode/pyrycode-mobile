@@ -255,7 +255,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
-    /** Outside Activity teardown: close each test's owned daemon sessions even when its body fails. */
+    /** Close owned daemon sessions before releasing replacement Activities, even when the body fails. */
     @get:Rule(order = Int.MIN_VALUE)
     val sessionCleanup =
         LiveSessionCleanupRule(
@@ -4304,7 +4304,11 @@ class InteractiveStreamE2ETest {
             )
         val bypass = PermissionModeOption.Bypass
         val manual = PermissionModeOption.Default
-        try {
+        withOperatorBypassCleanup(
+            closePeer = peer::close,
+            beforeHostRemoval = { RecordedSuiteNative.beforeHostLinkClose(serverId) },
+            removeHost = { runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) } },
+        ) {
             // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
             pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
             val name = BYPASS_CHAT_NAME_PREFIX + RecordedSuiteNative.uniqueStamp()
@@ -4419,9 +4423,6 @@ class InteractiveStreamE2ETest {
                     e,
                 )
             }
-        } finally {
-            peer.close()
-            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
         }
     }
 
@@ -5457,30 +5458,25 @@ class InteractiveStreamE2ETest {
             )
             // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            var displayedEvidence: AgentReplyEvidence? = null
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                val current =
-                    runBlocking {
-                        withTimeoutOrNull(1000) {
-                            harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
-                                val support = phoneRepository.negotiatedThread?.support?.value
-                                reading.admitted && support is ThreadSupport.Supported && reading.owner.connection === support.connection
+            val evidence =
+                composeTestRule.revealHeldAgentRun(
+                    THREAD_TIMEOUT_MS,
+                    resolve = { remaining ->
+                        val current =
+                            runBlocking {
+                                withTimeoutOrNull(minOf(1000, remaining)) {
+                                    harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
+                                        val support = phoneRepository.negotiatedThread?.support?.value
+                                        reading.admitted &&
+                                            support is ThreadSupport.Supported &&
+                                            reading.owner.connection === support.connection
+                                    }
+                                }
                             }
-                        }
-                    }
-                val candidate = current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
-                val index =
-                    candidate?.let {
-                        list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
-                    } ?: -1
-                if (index < 0) {
-                    false
-                } else {
-                    displayedEvidence = candidate
-                    true
-                }
-            }
-            val evidence = checkNotNull(displayedEvidence) { "the held Agent must supply its own displayed tool run" }
+                        current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                    },
+                    evidence = { android.util.Log.i("AgentReplyReveal", it) },
+                )
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
@@ -5499,7 +5495,6 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("opened owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
                     }
-            list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
@@ -5553,7 +5548,11 @@ class InteractiveStreamE2ETest {
                     awaitChannelList()
                     awaitConnected()
                     openChatRow(name)
-                }, send = { sendFromPhone("Reply briefly to this new-session settlement check.") })
+                }, send = {
+                    sendFromPhone(
+                        "Reply briefly to this new-session settlement check.",
+                    )
+                }, withActivity = sessionCleanup::withRestartedActivity)
             }
         } catch (error: Throwable) {
             failure = error

@@ -85,6 +85,16 @@ retain their action order. Only named read-only queries may reorder within one a
 Daemon frames keep their recorded order and wait for their causal requests. Missing,
 extra, duplicate or changed requests fail, including requests after the last UI assertion.
 
+Test-driven close also waits for application consumption: after required requests and
+scheduled delivery drain, `SuiteConnections.beforeClose` snapshots the selected pump's
+queued inbound prefix and waits for each emission to return successfully from its
+existing downstream collector. Queuing a terminal reply does not prove the repository
+has certified its resumable checkpoint. This wait shares the existing 30-second close
+timeout. Cancelled or failed emissions cannot acknowledge consumption; another owner,
+peer or replacement pump cannot satisfy that prefix. The fence supplies no reply or
+checkpoint and preserves full-payload matching, causal delivery, connection ownership,
+observation boundaries and complete tape consumption.
+
 The standalone permission fixture and the full recorded Mobile suite use the actual
 production capability selection and negotiated thread route. The standalone screen
 receives that route through the production stable repository wrapper. The retired
@@ -114,6 +124,17 @@ baseline facts and rendered order. Across an actual epoch replacement, baseline 
 are rebound by their original session, turn, role, full producer text and user message
 identity, using only the newly received canonical rows. Same-epoch facts retain exact
 canonical identity. Neither path uses a legacy history request.
+
+Parent attribution remains part of that cross-epoch match. Omitted and explicit-zero
+parents both identify the main-thread root; compare nullable `Long` parents with
+`(left ?: 0L) == (right ?: 0L)`. Untyped `0` fallbacks can produce incompatible boxed
+numeric representations and reject an otherwise identical root row. Nonzero owned
+parents must still match exactly: neither a root nor a different parent can replace
+them. `DurableGapDiagnosticsTest.omittedAndExplicitRootParentsMatchWithoutErasingOwnedParents`
+guards this boundary (#2344). Terminal-turn certification and retained-baseline identity
+are separate predicates; finding the exact terminal does not prove baseline retention.
+The controlled regression passed after repair; the repaired native captures reused the
+epoch, so they do not establish native epoch-replacement coverage.
 
 The offscreen cache check proves the exact certified baseline family is saved. It does
 not require unrelated newer live facts to be certified. The same immutable saved snapshot
@@ -481,6 +502,29 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Downstream consumption before close (#2348)
+
+Keep the selected connection's repository collector alive through `beforeClose`, then
+cancel its scope and physically close the transport. `awaitIdle` alone drains delivery
+work into the pump's channel; it cannot prove the application processed those envelopes.
+The real-repository regression
+`SuiteCloseConsumptionTest.closeWaitsForTerminalConsumptionBeforeReplacementResumes`
+holds a terminal after its batch applies: checkpoint zero and the pending close must
+remain until release, then the replacement's exact recorded request resumes at 12.
+An unread peer frame neither releases nor blocks that phone fence.
+`cancelledCollectorCannotAcknowledgeTheClosePrefix` retains failure under the original
+deadline when the collector is cancelled while the terminal is held.
+
+Synthetic close fixtures also need an actual scoped inbound collector and a correlated
+receipt for the complete expected reply. `Flow.first` aborts emission before the
+post-emit consumption acknowledgement; merely observing the reply with it cannot
+establish close readiness. Keep consumers active through the fence for activity
+teardown, pairing removal and both generations of repeated graph restart. Check
+reply correlation and collector lifetime before physical close. Preserve missing-work,
+changed-payload/epoch/owner and complete-consumption negatives. No recording or
+production request contract changed for this repair. See the
+[diagnosis and counted macOS evidence](knowledge/features/development-verification-test-scheduling.md#background-permission-replay-consumption-2348).
+
 ### Explicit graph-restart readiness (#2347)
 
 An explicit `restartApp` destroys the Activity and rebuilds the graph inside the
@@ -514,6 +558,41 @@ and exclusion of independent peers/future generations with
 `phoneRestartStillRejectsAChangedQuery` retain missing-work and changed-checkpoint
 failures. See [counted restart evidence](knowledge/features/development-verification-gates.md#graph-restart-replay-evidence-2347)
 and [attachment recovery assertions](knowledge/features/attachment-retrieval.md#interrupted-retrieval-restart-replay-2347).
+
+Replacement Activity lifetime matters independently of the old graph's restart
+fence. In the interactive Agent restart proof, transfer the replacement to
+`LiveSessionCleanupRule.withRestartedActivity` before running its assertions.
+Keep its request producers and inbound consumers alive through fixture/peer
+cleanup and the rule's `end` callback, including `test-end`; only then close
+retained Activities once, in reverse registration order. Body failure remains
+primary, otherwise end failure, otherwise the first close failure; later failures
+are suppressed and every retained close is attempted. The standalone scripted
+caller keeps the proof's default lexical lifetime.
+
+An outer Activity teardown fence cannot protect a replacement already closed by
+an inner `.use`. [#2476](https://github.com/pyrycode/pyrycode-mobile/issues/2476)
+recovered that race at source `cfcb4083fb1425576ed18265309fd88f0fb7d2a1`:
+`LifecycleConnectionDriver.onStop` closed `phone/host-0/2` at lifecycle step 69
+with request 13/checkpoint 0 still unmapped and `thread_catch_up` and `test-end`
+required. Later cleanup exceptions repeated the first sticky mismatch. Waiting
+at this inner close for a boundary that requires the later end control would
+deadlock the ordering; retain ownership through cleanup instead. Payload, owner,
+checkpoint and complete-consumption checks, recording bytes and deadlines stay
+unchanged.
+
+`SuiteCloseConsumptionTest.replacementActivitySurvivesResetQueryAndOrderedSessionCleanup`
+holds a real repository's same-epoch reset query across proof return. Its reply
+must advance certification from 12 to 24, so terminal-tail normalization cannot
+stand in for the missing query. Cleanup releases the reply and consumes fixture
+cleanup and test-end before physical close. The controlled old lexical lifetime
+failed on premature `phone/host/2:close` (1 executed, 1 failed, 0 skipped); the
+ownership repair passed all three consumption tests (3 executed/passed, 0
+failed/errors/skipped), including the cancelled-collector negative control.
+`LiveSessionCleanupRuleTest` covers success and body/end/close failures with
+once-only cleanup. Raw XML and extraction patches were retained under agents
+`logs/evidence/2476/builder-lifetime-repair/{regression-red,regression-green}/`.
+See [counted Linux replay and configured acceptance](e2e-interactive-stream.md#negotiated-agent-restart-and-settlement-2246)
+for source revisions and the original failure/rerun evidence.
 
 ### Scenario host-removal readiness (#2349)
 
@@ -621,6 +700,88 @@ retains the verdict and counted dispatcher XML in `logs/verifier-gate__2349_5.lo
 and `_6.log`, plus comparison logs. These are review-time locations, not permanent
 build paths. No recording, production contract or current-daemon compatibility
 claim changed. Linux was outside this ticket's verification scope.
+
+#### Operator-bypass host removal (#2484)
+
+`RecordedMobileSuiteTest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+can render its exact witness token from a history batch before the phone's final
+catch-up finishes. In the #2462 macOS failure on `2db93ebd8a`, removing its dedicated
+host disposed the phone through `RelayConnectionRegistry.reconcile` while request
+82/checkpoint 33 was still unmatched (`consumed=false,mapped=false`). The first
+stored mismatch at lifecycle step 39 was `phone/host-3/0:close` instead of
+`thread_catch_up`; the later test-end exception rethrew it. Neither peer completion
+nor activity teardown protects a host removed inside the scenario.
+[The causal ticket evidence](https://github.com/pyrycode/pyrycode-mobile/issues/2484#issuecomment-6355086359)
+identifies retained #2462 bundle
+`db5461c8f6c2f795f941b095d278cb092cf3f6c602d586d56879963b8dcda166`,
+SHA-256 `6a6b24f31c0b914c6968c7d6cc0f1f10d35cc296709078899f7aaf85ad89e193`,
+and `logs/verifier-gate__2462_5.stderr.log`. Its failed gate had 333 executed,
+331 passed, 2 failed and 1 skipped; the same-worktree rerun passed 2/2 with no
+failures/skips, including this method. That rerun did not establish a repair.
+
+The scenario now uses `withOperatorBypassCleanup`, delegating to the existing
+peer/fence/host cleanup contract above. The fence runs while phone request producers
+and collectors remain alive. Required request delivery and downstream terminal
+consumption must both finish before removal. Permission-write classification,
+same-session mode readings, the rendered permission prompt, peer approval and exact
+witness-token reply assertions remain intact, as do capture bytes, strict matching
+and the existing deadline.
+
+`OperatorBypassCleanupTest` reuses the genuine capture's final request, correlated
+reply and close tail. Independent deferred gates hold request production after
+scenario return and downstream consumption after reply delivery. Both
+`finalCapturedCatchUpFinishesBeforeHostRemoval` and
+`scenarioFailureStillDrainsAndRemovesHost` must wait through both holds; the latter
+also preserves the original scenario throwable. `PermissionIsolationCleanupTest`
+continues to reject missing work and another host, connection, conversation, epoch
+or checkpoint. Delivery alone cannot authorize removal.
+
+macOS evidence for implementation `244aa1699f508aabc2b3cd0ac4d846d2fd410d2d`:
+
+| Run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Controlled original cleanup | 2 | 0 | 2 | 0 |
+| Controlled repaired cleanup, unchanged regression | 2 | 2 | 0 | 0 |
+| Focused permission cleanup class | 7 | 7 | 0 | 0 |
+| Focused close-consumption class | 3 | 3 | 0 | 0 |
+| Focused native operator-bypass method | 1 | 1 | 0 | 0 |
+| Configured JVM/build gate | 5353 | 5353 | 0 | 0 |
+| Configured UI gate | 333 | 332 | 1 | 1 |
+| Same-tree model-change rerun | 1 | 1 | 0 | 0 |
+| Configured scripted-all gate | 24 | 24 | 0 | 0 |
+
+The controlled runs used `python3 scripts/gradle-gate.py testDebugUnitTest --tests
+de.pyryco.mobile.e2e.OperatorBypassCleanupTest --console=plain` on working snapshots
+based on `fe630c6e3c6e1ba5c469ba1193d9a628847b44d7`. Both old-cleanup cases failed
+with `Host removal raced the final captured catch-up`. The identical pre/post test
+source hash is `78d52fe1e53a5fe436fe5dc37c9407804954c7512590112f47f798aa8fb40f8b`;
+final formatting only moved an import. Native replay used
+`python3 scripts/android-test-gate.py ui --tests` with the exact method named above.
+It passed focused (27.931 seconds) and in the configured UI gate (25.482 seconds),
+without failure or skip. The full JVM gate also passed both new regression methods,
+`missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` and
+`aReplayMismatchRemainsFirstThroughCleanup`.
+
+Configured acceptance used `python3 scripts/jvm-test-gate.py --with-build-checks`
+and `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py` with
+`ui` and `scripted-all`. The raw UI gate exited 1; only the unrelated model-change
+method failed. [Verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2487)
+accepted its passing same-worktree rerun under the dispatcher's flake policy,
+tracked on #2368. `RenameDialogCaptureTest#renameAtFigmaViewport` was skipped,
+never passed. Skips are additional to executed counts. This acceptance supersedes
+the PR body's earlier pending-gate note; later main sweeps remain dispatcher-owned.
+
+Raw XML, source snapshots/diffs, revision metadata and manifests were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2484/` in `controlled-before/`, `controlled-after/`,
+`permission-cleanup/`, `close-consumption/` and `native-244aa1699/`. The last also
+holds phone logs and phases; its native XML SHA-256 is
+`13a63d7f26ee5e7613a496daefe259b068b071f7396931cb721a78ff6b972597`.
+Accepted verifier bundle
+`64bef236585eb0531e7d614bb508ddd721e933390d16f2b961f8aab4152ac431`
+retains `handoff/verifier-2484.md`, counted gate XML in
+`logs/verifier-gate__2484_5.log` and `_6.log`, and the timestamped model rerun logs.
+These paths describe retention at review time. No fresh live Claude observation
+or visual change was required; Linux was outside this ticket's verification scope.
 
 #### In-flight read evidence (#2345)
 

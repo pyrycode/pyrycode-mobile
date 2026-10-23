@@ -9,6 +9,17 @@ class LiveSessionCleanupRule(
     private val begin: () -> Unit,
     private val end: () -> Unit,
 ) : TestRule {
+    private val restartedActivities = mutableListOf<AutoCloseable>()
+
+    /** Transfer ownership before the proof runs; fixture cleanup and test-end still need this Activity. */
+    fun withRestartedActivity(
+        activity: AutoCloseable,
+        proof: () -> Unit,
+    ) {
+        restartedActivities += activity
+        proof()
+    }
+
     override fun apply(
         base: Statement,
         description: Description,
@@ -17,19 +28,32 @@ class LiveSessionCleanupRule(
             override fun evaluate() {
                 begin()
                 var failure: Throwable? = null
+
+                fun preserve(error: Throwable) {
+                    val original = failure
+                    if (original == null) failure = error else original.addSuppressed(error)
+                }
+
                 try {
                     base.evaluate()
                 } catch (error: Throwable) {
-                    failure = error
-                    throw error
-                } finally {
+                    preserve(error)
+                }
+                try {
+                    end()
+                } catch (error: Throwable) {
+                    preserve(error)
+                }
+                val activities = restartedActivities.toList()
+                restartedActivities.clear()
+                for (activity in activities.asReversed()) {
                     try {
-                        end()
-                    } catch (cleanup: Throwable) {
-                        if (failure == null) throw cleanup
-                        failure.addSuppressed(cleanup)
+                        activity.close()
+                    } catch (error: Throwable) {
+                        preserve(error)
                     }
                 }
+                failure?.let { throw it }
             }
         }
 }

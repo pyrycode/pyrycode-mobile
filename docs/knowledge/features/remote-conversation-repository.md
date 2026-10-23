@@ -161,6 +161,59 @@ before acknowledgement, for Missing, and after retirement; only the current supp
 connection can resume them. Metadata/control traffic remains separate. Negotiation
 diagnostics use static verdicts without ids, epochs, capabilities or content.
 
+## Missing tool body queries (#2388)
+
+`NegotiatedThread` and the cache decorator forward expanded-row demand to the
+repository belonging to the presentation's exact authenticated connection. The
+remote repository independently requires granted `thread`, `interactive` and
+`thread_expansion` on that connection. Saved facts cannot grant support. This
+reader leaves compact-v1 unadvertised; selection and activation remain with
+\#2431–#2433. Complete delivery remains usable without expansion support.
+
+Body intents share `AuthoritativeThreadQueries`' serialized catch-up/page lane.
+Each consumer owns exact conversation, epoch, generation, incarnation, item,
+revision and kind targets within that host/connection. Equal queued or active
+demands coalesce; retained complete bodies bypass the lane. Admission and Retry
+require the current supplied snapshot. A still-current presentation binding can
+withdraw targets using an older snapshot, intersecting only its previously
+admitted keys. This matters when Loading publishes before the next display frame:
+collapsing queued B while A stays expanded must remove B immediately. Retiring one
+consumer does not cancel another's demand. Attention retry coalescing excludes
+body intents, so a catch-up retry cannot silently replace queued body work.
+
+The authoritative wire contract remains the sibling repository's
+`docs/protocol-mobile.md`, “Bounded expansion reads.” `thread_read_tool_body`
+requests the exact epoch, item and expected revision. Available object contents
+arrive with `final: false`; only a separate, content-free `final: true` marker
+can publish the staged body. Data, fragments and marker must agree on request
+correlation, captured version, identity and envelope conversation/session routing.
+Envelope routing is variable metadata, distinct from payload conversation
+identity; requiring equality between them rejects valid replies. Outer
+`ThreadUpdatePart` fragments have no kind: validate their identity/capture/routing,
+then validate kind on the assembled logical body and marker. Reuse existing
+assembly byte/part/digest/lifetime bounds, unsigned numeric tokens and inert
+unknown JSON. Unfinished assembly or missing/mismatched markers cannot complete.
+
+Successful bodies live separately in the host snapshot's ID/revision map, overlaid
+only during expanded conversion. Keep held DTOs, placement, newer metadata and
+complete saved facts intact; body-supplied unknown fields cannot establish a task
+roster or move rows. Overlay conversion uses `decodeReplacement` because live
+optional-field null clears are valid retained facts. Unchanged reopen/offline
+reuse is in-memory; fetched bodies add no disk schema or process-restore promise.
+Reset clears the map and changed revisions cannot consume old entries.
+
+Loading/Retry state is separate from retained availability and history coverage.
+Absence, private/wrong-kind refusal, malformed data, send failure and timeout do
+not certify empty contents or trigger automatic retries. Explicit Retry requires
+current demand. Collapse, navigation, background/disconnection, deletion and
+connection replacement fence publication. Abandonment discards staged content
+while preserving captured routing/version for validated terminal draining before
+slot reuse; drain timeout closes the connection. A fresh unseeded decoder could
+otherwise accept another capture's marker. Body replies never advance checkpoint,
+join watermark, completed history or read marks, and the shared evidence observers
+ignore them for history/read certification. See [screen states](thread-screen.md)
+and [counted Linux evidence](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
+
 ## Daemon conversation read marks
 
 `observeReadMarks` keeps confirmed read and supplied shown metadata separate.

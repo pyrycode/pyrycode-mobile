@@ -237,9 +237,11 @@ class NegotiatedThreadViewModelTest {
                 }
                 frames.send(2)
                 runCurrent()
+                val published = requireNotNull(vm.state.value.authoritativeThread)
+                val rendered = published.demandRows(published.rows, emptySet()).single() as ThreadRow.Delivered
                 assertEquals(
                     "revision-15",
-                    (requireNotNull(vm.state.value.authoritativeThread).items.single() as ThreadItem.MessageItem).message.content,
+                    (rendered.item as ThreadItem.MessageItem).message.content,
                 )
                 route.support.value = ThreadSupport.Missing(Any())
                 runCurrent()

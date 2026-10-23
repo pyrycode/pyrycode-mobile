@@ -40,7 +40,10 @@ or evidence tables. Explicit host/conversation removal retains scoped obsolete-f
 durable fences. See the [#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
 and [#2386 schema/reopen evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
 The remaining row/history APIs, models, owned mutations, paging/coverage wrappers and codecs
-were removed in #2387; there is no successful-empty legacy compatibility surface.
+were removed in #2387; there is no successful-empty legacy compatibility surface. The owner
+authorised complete retirement, superseding the daemon-built threads ADR's compatibility
+interval. Only metadata, supported read state and authoritative content remain supported storage contracts; provisional
+sends keep their independent in-memory identity and acceptance lifetime.
 Authoritative import keeps raw facts, identities, order, epoch, revisions, applied progress
 (including progress beyond the checkpoint), coverage and continuation.
 Local page exhaustion adds no certification and never supplies a daemon cursor.
@@ -206,8 +209,9 @@ Focused XML and raw preservation captures were at
 Accepted verifier bundle `1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`
 retains the verdict and gate logs; configured XML/counts above rely on the verifier's recorded
 inspection, not a documentation-stage rerun. Documentation inspected focused XML and phone
-output and ran no acceptance tests. #2364 owns the final integrated fold; #2447 owns
-saved-first-draw fixture restoration. Earlier accepted/failed evidence remains historical.
+output and ran no acceptance tests. The [integrated acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+records exact-source reuse and the parent cache/UI-skip limits. #2447 retains
+saved-first-draw fixture restoration; earlier accepted/failed evidence remains historical.
 
 ### Bounded authoritative display windows (#2333)
 
@@ -245,11 +249,19 @@ Initial and later unavailable supplemental reads withhold unchecked captures fro
 writer baselines. Observation-owned bounded retries retain the last validated view; stale owner,
 incarnation, generation or cache lifetime rejects application. Hydration may retain the committed
 certificate but cannot advance it over unapplied/unsaved facts, manufacture continuous coverage,
-or replace a daemon cursor with local position. Owned saves retain omitted facts. Until
-authoritative demand paging replaces it, reader movement or explicit retry can request a full
-compatibility restore in the observation lifetime; opening, reconnect and page arrival cannot.
-Failed/unapplied hydration forwards the original older demand to the negotiated route. See
-[repository validation and reader-only compatibility hydration](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+or replace a daemon cursor with local position. Owned saves retain omitted facts. Authoritative
+reader paging uses the bounded continuation below; full-file compatibility APIs remain separate.
+See [repository validation](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+
+#### Authoritative reader continuation (#2334)
+
+One reader movement/retry selects up to 200 older display contributions plus required extras,
+independently of held newest/catch-up. Committed owned placement changes extend storage-owned
+reader bounds using old/new metadata already visited by the writer. This retains access to
+moved older components regardless of boundary survival or distance. Retry belongs to its reader/generation; reset or replacement clears it. Local exhaustion cannot certify
+coverage, set daemon exhaustion or overwrite daemon continuation. Owned saves retain unloaded
+facts. The [reader paging contract, native mapping and evidence](authoritative-reader-paging.md) covers bounded
+metadata recovery, fragmented ranges, retirement and fresh reopen.
 
 #### Placement metadata and deep-parent availability
 

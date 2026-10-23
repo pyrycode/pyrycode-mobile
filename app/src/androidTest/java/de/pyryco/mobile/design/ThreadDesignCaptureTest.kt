@@ -102,6 +102,7 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
@@ -818,15 +819,18 @@ class ThreadDesignCaptureTest {
     /** Use the exact projected row identity that arms the production switch-back offer. */
     private fun emitRefusal(refusal: ThreadItem.ModelRefusal) {
         val vm = checkNotNull(inputs.thread.value)
-        rule.waitUntil(5_000) {
-            vm.state.value.items
-                .filterIsInstance<ThreadItem.ModelRefusal>()
-                .any { it.banner == refusal.banner }
+
+        fun resolvedRefusals(): List<ThreadItem.ModelRefusal> {
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
+            return presentation
+                .demandRows(presentation.rows, emptySet())
+                .filterIsInstance<ThreadRow.Delivered>()
+                .map {
+                    it.item
+                }.filterIsInstance<ThreadItem.ModelRefusal>()
         }
-        val shown =
-            vm.state.value.items
-                .filterIsInstance<ThreadItem.ModelRefusal>()
-                .single { it.banner == refusal.banner }
+        rule.waitUntil(5_000) { resolvedRefusals().any { it.banner == refusal.banner } }
+        val shown = resolvedRefusals().single { it.banner == refusal.banner }
         runBlocking { refusals.emit(LiveRefusalEvent.Refused(shown, "session")) }
     }
 

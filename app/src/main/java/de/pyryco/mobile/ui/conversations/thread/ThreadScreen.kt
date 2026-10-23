@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -166,6 +168,9 @@ internal val LocalThreadListCompositionObserver =
 /** Lets the cold-boundary regression distinguish unmeasured rows from merely offscreen rows. */
 internal val LocalThreadRowMeasurementObserver = staticCompositionLocalOf<((Any) -> Unit)?> { null }
 
+/** Counts mounted authoritative rows without observing frame-updated layout state. */
+internal val LocalAuthoritativeRowCompositionObserver = staticCompositionLocalOf<((String, Boolean) -> Unit)?> { null }
+
 /** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
 
@@ -223,6 +228,24 @@ private class AuthoritativeThreadActionPublisher {
     )
 
     private var published: Binding? = null
+    private var bodyKeys: Set<String> = emptySet()
+
+    fun demandBodies(
+        presentation: AuthoritativeThreadPresentation,
+        keys: Set<String>,
+        retry: String? = null,
+    ) {
+        val binding = published?.takeIf { it.presentation === presentation } ?: return
+        bodyKeys = keys
+        binding.receiver(ThreadEvent.ToolBodyDemand(presentation, keys, binding.token, retry))
+    }
+
+    fun retryBody(
+        presentation: AuthoritativeThreadPresentation,
+        key: String,
+    ) {
+        if (key in bodyKeys) demandBodies(presentation, bodyKeys, key)
+    }
 
     fun present(
         presentation: AuthoritativeThreadPresentation?,
@@ -734,8 +757,9 @@ fun ThreadScreen(
                     previousAgentRows = agentRows
                 }
                 val rows =
-                    remember(agentRows, collapseToolUses, retainedExpandedRuns) {
-                        if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
+                    remember(authoritative, agentRows, collapseToolUses, retainedExpandedRuns, expandedTools) {
+                        val folded = if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
+                        authoritative?.demandRows(folded, expandedTools) ?: folded
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -778,6 +802,36 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(authoritative, state.items) { authoritative?.depths ?: toolNestingDepths(state.items) }
                         val listState = key(interactionScope) { rememberLazyListState() }
+                        val bodyPresentation by rememberUpdatedState(authoritative)
+                        val bodyRows by rememberUpdatedState(rows)
+                        val bodyConnected by rememberUpdatedState(connected)
+                        LaunchedEffect(listState, destinationLifecycle) {
+                            destinationLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                                try {
+                                    snapshotFlow {
+                                        val p = bodyPresentation
+                                        val visibleKeys = listState.layoutInfo.visibleItemsInfo.mapTo(HashSet()) { it.key }
+                                        val keys =
+                                            if (!bodyConnected ||
+                                                p == null
+                                            ) {
+                                                emptySet()
+                                            } else {
+                                                bodyRows
+                                                    .filterIsInstance<ThreadRow.Delivered>()
+                                                    .filter { row ->
+                                                        row.listKey(0) in visibleKeys &&
+                                                            ((row.item as? ThreadItem.MessageItem)?.message?.id in expandedTools) &&
+                                                            p.missingBody(row.listKey(0))
+                                                    }.mapTo(mutableSetOf()) { it.listKey(0) }
+                                            }
+                                        p to keys
+                                    }.collect { (p, keys) -> if (p != null) actionPublisher.demandBodies(p, keys) }
+                                } finally {
+                                    bodyPresentation?.let { actionPublisher.demandBodies(it, emptySet()) }
+                                }
+                            }
+                        }
                         val readerViewport = remember(listState) { ThreadListViewport(listState) }
                         val compositionObserver = LocalThreadListCompositionObserver.current
                         SideEffect { compositionObserver?.invoke(listState) }
@@ -815,16 +869,23 @@ fun ThreadScreen(
                                 newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
                             }
                         val authoritativeCandidates =
-                            remember(authoritative, rows) {
+                            remember(authoritative, rows, expandedTools) {
                                 if (authoritative == null) {
                                     emptyList()
                                 } else {
-                                    rows.filterIsInstance<ThreadRow.Delivered>().map { row ->
-                                        val key = row.listKey(0)
-                                        ThreadReadCandidate(key, row.item, authoritative.shownRowRevisions[key]).apply {
-                                            if (row.summaryText != null) revealed = true
+                                    rows
+                                        .filterIsInstance<ThreadRow.Delivered>()
+                                        .filter {
+                                            authoritative.suppliesReadSight(
+                                                it,
+                                                expandedTools,
+                                            )
+                                        }.map { row ->
+                                            val key = row.listKey(0)
+                                            ThreadReadCandidate(key, row.item, authoritative.shownRowRevisions[key]).apply {
+                                                if (row.summaryText != null) revealed = true
+                                            }
                                         }
-                                    }
                                 }
                             }
                         val readCandidate =
@@ -919,7 +980,19 @@ fun ThreadScreen(
                             }
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
                         val rowMeasurementObserver = LocalThreadRowMeasurementObserver.current
+                        val rowCompositionObserver = LocalAuthoritativeRowCompositionObserver.current
+                        val demandedByKey =
+                            remember(authoritative, rows) {
+                                if (authoritative?.defersContents == true) rows.associateBy { it.listKey(0) } else null
+                            }
                         val renderRow: @Composable (ThreadRow, ThreadRow?, Boolean) -> Unit = { row, nextRow, measuring ->
+                            if (authoritative != null && rowCompositionObserver != null) {
+                                val compositionKey = if (measuring) "measurement:${row.listKey(0)}" else row.listKey(0)
+                                DisposableEffect(compositionKey, rowCompositionObserver) {
+                                    rowCompositionObserver(compositionKey, true)
+                                    onDispose { rowCompositionObserver(compositionKey, false) }
+                                }
+                            }
                             val candidate =
                                 if (measuring) {
                                     null
@@ -939,7 +1012,14 @@ fun ThreadScreen(
                                 (row as? ThreadRow.Delivered)?.agentBlockId?.takeIf { toolId != null && it != toolId }
                             val toolExpansion =
                                 toolId?.let { id ->
-                                    ToolCallExpansion(id in expandedTools) {
+                                    val source = authoritative?.bodyItem(row.listKey(0))
+                                    ToolCallExpansion(
+                                        id in expandedTools,
+                                        missingBody = authoritative?.missingBody(row.listKey(0)) == true,
+                                        bodyLoad = source?.let { authoritative.sourceSnapshot.bodyLoads[it.id to it.rev] },
+                                        offline = !connected,
+                                        retry = { authoritative?.let { actionPublisher.retryBody(it, row.listKey(0)) } },
+                                    ) {
                                         expandedTools =
                                             if (id in expandedTools) expandedTools - id else expandedTools + id
                                     }
@@ -1113,7 +1193,16 @@ fun ThreadScreen(
                         ThreadMessageList(
                             state = listState,
                             viewport = readerViewport,
-                            measureBoundaryRow = { row, next -> renderRow(row, next, true) },
+                            measureBoundaryRow = { row, next ->
+                                // Relocation cannot recompose a retired or newly closed body offscreen.
+                                if (demandedByKey == null) {
+                                    renderRow(row, next, true)
+                                } else {
+                                    demandedByKey[row.listKey(0)]?.let { current ->
+                                        renderRow(current, next?.let { demandedByKey[it.listKey(0)] }, true)
+                                    }
+                                }
+                            },
                             modifier =
                                 Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
                                     val origin = it.positionInWindow()
