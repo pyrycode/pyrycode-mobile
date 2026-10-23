@@ -331,16 +331,20 @@ internal object RecordedSuiteNative {
     }
 
     /** Keep the real screen active while a replay catches up with its captured pre-close requests. */
-    fun beforePhoneTeardown() {
+    fun beforePhoneTeardown(endSession: () -> Unit) {
         val session = current ?: return
         if (session.document == null || session.document.document["checkpointPolicy"] != JsonPrimitive("test-observations-v1")) return
+        android.util.Log.i("RecordedSuite", "event=terminal_preparation_started")
         runBlocking { session.hub.beforePhoneTeardown() }
+        endSession()
+        session.scenarioCompletePrepared = runBlocking { session.hub.completeBeforePhoneTeardown() }
+        android.util.Log.i("RecordedSuite", "event=terminal_preparation_finished early_checkpoint=${session.scenarioCompletePrepared}")
     }
 
     fun finish(success: Boolean) {
         val session = current ?: return
         try {
-            if (success) checkpoint("scenario-complete")
+            if (success && !session.scenarioCompletePrepared) checkpoint("scenario-complete")
             GlobalContext.get().get<RelayConnectionRegistry>().dispose()
             runBlocking {
                 withTimeout(10000) {
@@ -440,6 +444,7 @@ internal object RecordedSuiteNative {
         args: Bundle,
     ) {
         val originalArguments = Bundle(args)
+        var scenarioCompletePrepared = false
         var originalPreferences: Preferences? = null
         var originalPairings: List<PairedServer>? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

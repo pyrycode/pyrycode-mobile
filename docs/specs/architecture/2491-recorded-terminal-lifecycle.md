@@ -38,12 +38,13 @@ JUnit's instrumentation thread sequences successful preparation before Activity 
 
 | Event | Required proof |
 | --- | --- |
-| Successful return with delayed queries after test-end | Controlled terminal regression keeps Activity alive through actual requests, correlated replies, and scenario-complete. |
-| Activity destruction followed by delayed process stop | Controlled regression closes only after the terminal prefix; the old rule order fails early-close matching. |
-| Close recorded before final checkpoint | Regression retains close-before-checkpoint ordering and leaves checkpoint to finish. |
-| Repeated query payload | Both captured requests and their separate replies remain required; no duplicate or foreign-owner substitution. |
-| Body/end/preparation failure | Original failure remains primary, end executes once, every owned Activity is released; failed preparation cannot mark completion. |
-| Repeated evaluation/new session | Cleanup state resets on begin; no prior terminal completion can satisfy a later scenario. |
+| Successful return with delayed queries after test-end | `RecordedTerminalLifecycleTest.successfulReturnKeepsRepeatedPostEndQueriesAndRepliesBeforeCompleteAndProcessStop` retains actual requests, correlated replies, and scenario-complete. |
+| Activity destruction followed by delayed process stop | The same regression closes only after the terminal prefix; the old rule order fails early-close matching. |
+| Close recorded before final checkpoint | `RecordedTerminalLifecycleTest.aRecordedCloseBeforeCompleteStillPrecedesTheObservation` leaves checkpoint emission to finish. |
+| Repeated query payload / foreign owner / observation | The success regression requires both correlated replies; `terminalQueriesCannotBorrowAnotherHostOrGenerationOrCrossTheObservation` rejects substitutions and early queries. |
+| Missing required work | `RecordedTerminalLifecycleTest.missingTerminalWorkTimesOutAndEarlyCloseStillFails` retains the deadline and strict close failure. |
+| Body/end/preparation failure | `RecordedTerminalFailureTest.earlyEndAndPreparationFailuresStayPrimaryAndReleaseEveryActivityExactlyOnce` preserves primary errors and cleanup. |
+| Repeated evaluation/new session | `RecordedTerminalFailureTest.anotherEvaluationCannotReuseThePreviousEarlyEnd` resets cleanup ownership. |
 
 ## Error handling
 
@@ -62,3 +63,9 @@ The controlled probe and focused native run must verify the boundary and whether
 ## Scope assessment
 
 One independently useful repair with its regressions; forecast about 650 written lines across test helpers, regressions and this plan, zero production exports, fewer than ten updated consumers, three acceptance criteria and fewer than ten new failure branches. This remains below the 1600-line ceiling. Recount after implementation.
+
+## Revisions
+
+2026-10-23: The two controlled lifecycle probes both reproduced the old early-close mismatch with test-end and repeated queries pending (2 executed, 0 passed, 2 failed, 0 skipped). Temporary test-local API bridges retained the old callback's no-op terminal preparation; their source and raw XML are retained privately and the bridges are removed from the repair. Two cleanup probes also failed before implementation. The fresh native baseline at plan revision `7835ac552` independently executed once and failed once after test-end, with the three phone queries and final checkpoint still pending. It is distinct from the retained focused-main failure before test-end and the older full-gate checkpoint-only variant. This confirms both sides of the terminal boundary without a preceding-test or load sweep.
+
+The explicit entry points are `LiveSessionCleanupRule.endWhileActivityAlive` and `SuiteConnections.completeBeforePhoneTeardown`. `RecordedSuiteTape.scenarioCompletesBeforePhoneClose` only inspects placement; existing `checkpoint` and `beforeClose` still validate and drain every required exchange, and the consumption fence runs before destruction. `RecordedActivityRule` additionally retains a body/preparation error when the underlying Activity rule throws during destruction; outer session cleanup still releases replacement Activities. Capture and legacy-policy paths remain unchanged.
