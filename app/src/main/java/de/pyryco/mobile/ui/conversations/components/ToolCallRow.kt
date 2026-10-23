@@ -104,6 +104,7 @@ internal data class ToolCallExpansion(
     val bodyLoad: de.pyryco.mobile.data.repository.BodyLoad? = null,
     val offline: Boolean = false,
     val retry: () -> Unit = {},
+    val headline: String? = null,
     val toggle: () -> Unit,
 )
 
@@ -227,7 +228,9 @@ private fun HeaderRow(
     toolCall: ToolCall,
     expanded: Boolean,
 ) {
-    val headline = toolHeadline(toolCall.toolName, toolCall.inputFields, toolCall.input)
+    val headline =
+        LocalToolCallExpansion.current?.headline?.let { ToolHeadline.Simple(toolCall.toolName, it) }
+            ?: toolHeadline(toolCall.toolName, toolCall.inputFields, toolCall.input)
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = ToolCallHeaderMinHeight),
         verticalAlignment = Alignment.CenterVertically,
