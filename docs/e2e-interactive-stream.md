@@ -4601,6 +4601,56 @@ remains `python3 scripts/android-test-gate.py live`.
 
 ### Offline Retry registration evidence (#2137)
 
+#### Chunked registration proof (#2500)
+
+The controller's chunk-boundary regression previously raced child startup against
+its 250 ms test readiness deadline. A controlled 750 ms startup delay on base
+`45b86ff05dd71c8904a006c8b8c8a7c6489616c7` returned HTTP 503 with a living
+generation and zero child-output bytes. The repaired fixture waits boundedly for
+the partial token at exactly 4096 bytes, requires 503, releases the suffix, then
+requires 200 at 4113 bytes with unchanged PID/generation and a living, ready child.
+Removing scanner suffix carry still fails with the complete output present.
+The [harness guidance](knowledge/features/development-verification-test-scheduling.md#subprocess-startup-and-chunk-scanner-proofs)
+explains why startup setup and scanning need separate bounds. Production
+registration behavior and the Offline Retry scenario deadlines are unchanged.
+
+[Retained Linux evidence](../scripts/e2e-fixtures/readiness-2500/evidence.json)
+records commands, full revisions, source hashes and raw reports. Focused green
+results use repair `96763389302e9581312689b2ec615b83566193ae`:
+
+| Check | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold baseline named method | 1 | 1 | 0 | 0 | 0 |
+| Original proof with controlled startup delay | 1 | 0 | 1 | 0 | 0 |
+| Added delayed regression before repair | 1 | 0 | 1 | 0 | 0 |
+| Repaired delayed proof with raw exchanges | 1 | 1 | 0 | 0 | 0 |
+| Suffix-carry negative control | 1 | 0 | 1 | 0 | 0 |
+| Final `GenerationReadinessTest` class | 12 | 12 | 0 | 0 | 0 |
+| Complete Linux dispatcher scripts gate | 219 | 219 | 0 | 0 | 0 |
+
+The accepted verifier result at `46de5b203c83cea6d458bffc679dd080e75e1875`
+confirms `python3 -m unittest discover -s scripts` completed in 19.266 seconds,
+exit 0. Both `GenerationReadinessTest.test_registration_token_across_chunks`
+and `test_registration_token_across_chunks_after_delayed_startup` executed and
+passed: the verifier checked their discovery membership against the complete
+219-test run with no failures, errors or skips. This satisfies the pending
+dispatcher acceptance in PR #2501 and the plan; the `pending` field in the
+builder's retained evidence is its original handoff state. Verifier bundle
+`99ef5d928b7454319dd9aa824237662a35f9329cf85128dc6e426ef5d7288a8f`
+retains `handoff/verifier-2500.md` and
+`logs/verifier-gate__2500_3.stderr.log`.
+
+The original macOS gate at `00055df3565663f87e0ec378fd5b3bc793a9b833`
+remains failed: **218 executed, 217 passed, 1 failed, 0 errors/skips**.
+Its retained `historical-gate-stderr.txt` (from #2491 bundle
+`029ebb9efcb37b5357941798675118624034d794fc3c76b24c5d8e3e1bfcda1e`)
+contains the 503 assertion without controller/child snapshots. The controlled
+reproduction establishes the fixture race without identifying that historical
+scheduling event. Fresh macOS execution is outside this Linux ticket's scope.
+No live-provider scenario changed or ran for this repair.
+
+#### Generation readiness and live evidence
+
 The established controller defect is independent of historical live causation:
 on base Mobile `427640d577b3aec8a15bd5f44ae22c881f194da2`, an owned child that
 stays alive without the readiness token yields stop **200**, first start **503**,

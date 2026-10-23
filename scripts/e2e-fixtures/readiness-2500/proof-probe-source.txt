@@ -1,0 +1,41 @@
+import contextlib
+import json
+from pathlib import Path
+import shutil
+import sys
+import time
+import unittest
+
+sys.path.insert(0, str(Path.cwd() / 'scripts'))
+import test_e2e_daemon_fault as tests
+
+destination = Path(sys.argv[1])
+destination.mkdir(parents=True, exist_ok=True)
+original = tests.GenerationReadinessTest.controller
+if len(sys.argv) > 2:
+    tests.ROOT = Path(sys.argv[2])
+
+@contextlib.contextmanager
+def capture(self, script, **kwargs):
+    with original(self, script, **kwargs) as (request, path):
+        def observed(action):
+            status, payload = request(action)
+            row = {'action': action, 'status': status, 'payload': payload,
+                   'time': time.monotonic(), 'child_bytes': (path / 'child.log').stat().st_size}
+            print(json.dumps(row), flush=True)
+            with (destination / 'responses.jsonl').open('a') as out:
+                out.write(json.dumps(row) + '\n')
+            return status, payload
+        try:
+            yield observed, path
+        finally:
+            for name in ('controller.log', 'child.log'):
+                shutil.copy2(path / name, destination / name)
+
+tests.GenerationReadinessTest.controller = capture
+suite = unittest.TestSuite([tests.GenerationReadinessTest('test_registration_token_across_chunks_after_delayed_startup')])
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+print(json.dumps({'executed': result.testsRun,
+                  'passed': result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped),
+                  'failed': len(result.failures), 'errors': len(result.errors), 'skipped': len(result.skipped)}))
+sys.exit(not result.wasSuccessful())
