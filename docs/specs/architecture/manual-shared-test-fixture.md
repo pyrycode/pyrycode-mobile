@@ -22,4 +22,21 @@ Current main is integrated without rewriting the preserved history. The original
 
 The candidate generalizes the attention acquisition gate into `ThreadAcquisitionGate` and reuses it for the model scenario's X reopen. `ThreadQueryReadiness` passively observes the actual phone pump, accepted queries and downstream-consumed replies. It reuses the production decoder and existing current-source reader. Partial batches, another conversation, refused or malformed work and cancelled collectors cannot establish completion. Scope closure and a retired negotiated owner cancel the acquisition. After the real acquisition, the model scenario also waits for that destination's own query before Back can cancel its producer. Both waits share the existing timeout. The original assertions, requests and recordings stay intact.
 
-Focused query and lifecycle validation is pending the current shared host admission. Native acceptance will use the isolated released daemon rather than the older saved worker source. Existing independent repairs and all ten scoped holds remain.
+## Validation
+
+At source `85e7b20859a6eef96e277ef962b6c7b66bc3a5e0`, the affected JVM checks executed and passed 80 methods with no failures, errors or skips. The native recorded selection executed and passed the four exact methods below with no failures, errors or skips. Both maintained gates exited zero.
+
+- `RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+- `RecordedMobileSuiteTest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`
+- `RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent`
+- `RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+
+Raw JVM XML and output are retained in `build/manual-shared-fixture/green`. Native XML, per-method phone logs, command output and built APK hashes are retained in `build/dispatcher-tests/ui-rh2qed69`. The native gate used the clean committed source. The original failing JVM assertion remains in `build/manual-shared-fixture/red`.
+
+An earlier formatting attempt and the next compile attempt ran no test. The formatter caught a long line. Compilation caught an existing decorator regression still using the renamed gate. Both were corrected before the passing run. Repository documentation and pre-verification guards passed.
+
+Four selected scripted methods also executed and passed with no failures, errors or skips. They cover reconnect replay, refusal recovery, context-overflow compact recovery and reply suggestions. The maintained gate built the isolated daemon v0.42.0 source and exited zero. Its raw XML and output are retained in `build/dispatcher-tests/scripted-all-fkg6z3g3`. The harness retained each scenario's daemon and relay logs in the agents repository's evidence directory. The harness reports the custom binary's embedded daemon revision as unavailable. The clean source revision and binary hash are retained separately in the gate identity record.
+
+The red, green and both phone gate bundles are also preserved under `$AGENTS_REPO_PATH/logs/evidence/manual-shared-fixture-20261023-85e7b2085` for review outside the temporary checkout.
+
+Configured dispatcher acceptance and independent review remain pending. Existing independent repairs and all ten scoped holds remain. Focused passes do not establish one cause for every historical flake.
