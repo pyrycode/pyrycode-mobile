@@ -1,0 +1,5 @@
+Controlled real-screen regression; former composed-node-only locator
+Command: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RenameChatSetupTest.connectedTargetBelowChannelsIsLocatedAndClickedOnce --console=plain
+Executed: 1; failed: 1; skipped: 0
+java.lang.AssertionError: rename setup failed before creation; stage=failed time_ms=1791715156861 target_present=true relay_connected=true daemon_connected=true rows_loaded=true channels=30 chats=0 plus_composed=false
+Cause: ComposeTimeoutException after 1000 ms, before creation or rename.

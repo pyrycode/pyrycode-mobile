@@ -1,0 +1,9 @@
+Controlled real-screen regressions; target-readiness and scrolling locator
+Command: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.RenameChatSetupTest --tests de.pyryco.mobile.e2e.ArchiveRoundTripChatTest --tests de.pyryco.mobile.e2e.EmptyHostChannelSetupTest --console=plain
+RenameChatSetupTest: executed=8; failed=0; errors=0; skipped=0
+event=rename_setup stage=start time_ms=1791715304959 target_present=true relay_connected=true daemon_connected=true rows_loaded=true channels=30 chats=0 plus_composed=false list_composed=true
+event=rename_setup stage=ready time_ms=1791715304961 target_present=true relay_connected=true daemon_connected=true rows_loaded=true channels=30 chats=0 plus_composed=false list_composed=true
+event=rename_setup stage=located time_ms=1791715305010 target_present=true relay_connected=true daemon_connected=true rows_loaded=true channels=30 chats=0 plus_composed=true list_composed=true
+ArchiveRoundTripChatTest: executed=2; failed=0; errors=0; skipped=0
+EmptyHostChannelSetupTest: executed=4; failed=0; errors=0; skipped=0
+Live daemon acceptance is pending the dispatcher full live gate.
