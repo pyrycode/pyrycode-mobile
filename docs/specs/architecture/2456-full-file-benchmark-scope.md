@@ -81,3 +81,19 @@ retain the independent Linux evidence-authentication limitation until receipts a
   the outcome here and in the PR. Keep complete configured acceptance pending with
   the dispatcher/verifier; request a wider sequence investigation if focused proof
   cannot resolve the original acceptance result. No production change is planned.
+- 2026-10-23 focused result on pushed `502e6e75e7b415ba20cf2799d7f10418ff53c5a8`:
+  supported `scripted stream` exited 0, with 2 executed/passed, 0 failures/errors/skips
+  on macOS ARM64 / API 33 Google ATD arm64-v8a revision 1. Queued-echo's phone log
+  proves queued admission, explicit release, authenticated replacement and completion
+  with `source_replaced=true`. Both isolated fixture cleanups exited 0. Raw XML for
+  both methods, queued-echo phone log, fixture diagnostics, image and binary/APK hashes
+  are retained beside the original verifier bundle under agents
+  `logs/evidence/2456/builder-rework-20261023-stream/` (312 verified files; manifest
+  SHA-256 `2a45422182988628bb75f69f2809b281e255b7fe8270cb8c10812fdc1423b1c5`).
+  The launcher did not retain the ordinary method's phone log; its counted original
+  XML remains available. This focused pass neither establishes inheritance nor proves
+  the cause of the earlier configured-gate failure. Wider sequence assessment and
+  complete configured acceptance remain pending with the dispatcher/verifier.
+  Investigation `0fc66f56096d11c833d1bc37319df561e8e22e54fdbbfeed6c7a4eb80e4d7505`
+  is assessment-queued (zero executed), requesting the preceding ping/stream sequence
+  with the original reused connected-device lifecycle. It supplies no acceptance pass.
