@@ -76,6 +76,7 @@ must not combine independent mutable probe snapshots across an admission point.
 | Reset with reused epoch, then fresh replacement and stale old response | `resetKeepsOldRequestsAndRequiresReplacementCertification` |
 | Wrong connection/epoch/generation | `staleSourceCannotSupplyReceipt`, `staleGenerationCannotRetainEarlierReadiness` |
 | Actual native recovery and unchanged ordinary ping | original `scripted ping` pair |
+| Passive terminal precedes production application of the same frame | `passiveTerminalWaitsForProductionCertification` |
 
 ## Error handling
 
@@ -142,6 +143,25 @@ against the store's actual epoch and generation, and compare the captured probe
 owner with the repository evidence owner during admission. The snapshot token
 also remains invalid after a later request completes; it cannot become current
 again merely because counts happen to match.
+
+### 2026-10-23 — passive delivery precedes production certification
+
+The composed `3c86f06b5e74bd068c4814a2572aa199bd8c0382` pair executed 2,
+passed 1 and failed 1 (0 errors/skips). It failed the unchanged `current source
+certifies every actual recovery` assertion. Exact receipts alone are insufficient:
+`OwnedReplyProbe.wrap` calls the passive observer before `emit` delivers the
+terminal to production. Recovery ordinal 1 certified 495 passively at
+17:25:59.493; production completed at 17:25:59.606. The content-bearing snapshot
+still held checkpoint 2 during that interval. Private raw evidence and effective
+identities are in `production-boundary-red/` beside `diagnostic-red/`.
+
+Move source admission into the shared `Observation.admits` seam and probe this
+ordering with a real decoder certificate and a held production snapshot. In the
+existing wait, require the production checkpoint to cover the greatest observed
+terminal version and its own completed version, in addition to exact owner and
+receipt identity. Keep both original assertions after admission. This adds no
+retry, timeout or production behavior; it completes the coherence boundary that
+the final proof already asserts.
 
 ## Security review
 

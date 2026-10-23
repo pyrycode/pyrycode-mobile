@@ -246,7 +246,9 @@ internal class OwnedThreadQueryObservation(
 
     fun owner(): ThreadEvidenceOwner? =
         expected.takeIf {
-            !closed && current() && !awaitingCertification &&
+            !closed &&
+                current() &&
+                !awaitingCertification &&
                 expected.epoch == store.current(host, before.conversation).epoch &&
                 expected.generation == checkNotNull(before.generation) + store.current(host, before.conversation).generation &&
                 queries.values.all { query ->

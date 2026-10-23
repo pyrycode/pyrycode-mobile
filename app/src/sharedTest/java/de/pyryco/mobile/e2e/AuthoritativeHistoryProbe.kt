@@ -40,6 +40,16 @@ internal object AuthoritativeHistoryProbe {
                 }
         val ready: Boolean = current && certificates.isNotEmpty() && exactlyAccounted
 
+        fun admits(evidence: ThreadEvidence): Boolean {
+            val source = owner ?: return false
+            val snapshot = evidence.sourceSnapshot ?: return false
+            return ready && evidence.admitted && source.host == evidence.owner.host &&
+                source.conversation == evidence.owner.conversation && source.epoch == evidence.owner.epoch &&
+                source.generation == evidence.owner.generation &&
+                snapshot.checkpoint.toULong() >= certificates.maxOf { it.reply.checkpoint.version } &&
+                snapshot.checkpoint >= snapshot.completedVersion
+        }
+
         override fun toString(): String = "HistoryObservation(redacted)"
     }
 

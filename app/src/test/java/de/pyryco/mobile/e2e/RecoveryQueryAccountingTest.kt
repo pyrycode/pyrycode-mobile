@@ -87,6 +87,30 @@ class RecoveryQueryAccountingTest {
         assertEquals("HistoryObservation(redacted)", complete.toString())
     }
 
+    @Test fun passiveTerminalWaitsForProductionCertification() {
+        val request = query(10)
+        accept(request)
+        // The pump notifies the passive observer before emitting this terminal to production.
+        receive(terminal(request, version = 2))
+        val observation = AuthoritativeHistoryProbe.snapshot()
+        assertTrue(observation.ready)
+
+        fun evidence(
+            checkpoint: Long,
+            completed: Long,
+        ) = authoritativeThreadEvidence(
+            "private-host",
+            "private-chat",
+            pump,
+            saved.copy(checkpoint = checkpoint, completedVersion = completed),
+        )
+        val held = evidence(1, 2)
+        assertTrue("the old content predicate can already admit the batches", held.admitted)
+        assertFalse("the passive receipt cannot stand in for production certification", observation.admits(held))
+        assertFalse("later uncertified live facts still block admission", observation.admits(evidence(2, 3)))
+        assertTrue(observation.admits(evidence(2, 2)))
+    }
+
     @Test fun oneSuccessCannotCompleteAnotherRequest() {
         for (reverse in listOf(false, true)) {
             AuthoritativeHistoryProbe.begin("private-host", "private-chat", saved)
@@ -304,6 +328,7 @@ class RecoveryQueryAccountingTest {
         request: Envelope,
         from: Long? = 1,
         epoch: String = "private-epoch",
+        version: Long = 1,
     ) = Envelope(
         100,
         "thread_items",
@@ -311,7 +336,7 @@ class RecoveryQueryAccountingTest {
         buildJsonObject {
             put("conversation_id", "private-chat")
             put("epoch", epoch)
-            put("version", 1)
+            put("version", version)
             put("items", JsonArray(emptyList()))
             put("final", true)
             if (from != null) {

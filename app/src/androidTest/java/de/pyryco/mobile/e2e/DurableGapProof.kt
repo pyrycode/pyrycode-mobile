@@ -417,13 +417,13 @@ internal class DurableGapProof(
         val observation = AuthoritativeHistoryProbe.snapshot()
         if (!observation.ready) return null
         val evidence = authoritativeEvidence() ?: return null
-        val owner = checkNotNull(observation.owner)
-        if (owner.host != evidence.owner.host || owner.conversation != evidence.owner.conversation ||
-            owner.epoch != evidence.owner.epoch || owner.generation != evidence.owner.generation
-        ) {
-            return null
-        }
-        if (!accept(evidence) || !AuthoritativeHistoryProbe.isCurrent(observation)) return null
+        if (!observation.admits(evidence) || !accept(evidence) || !AuthoritativeHistoryProbe.isCurrent(observation)) return null
+        Log.i(
+            "DurableGapProof",
+            "event=phone_recovery_admitted accepted=${observation.requests.size} certificates=${observation.certificates.size} " +
+                "resets=${observation.resets.size} generation=${evidence.owner.generation} " +
+                "checkpoint=${evidence.sourceSnapshot?.checkpoint} completed=${evidence.sourceSnapshot?.completedVersion}",
+        )
         return observation to evidence
     }
 
