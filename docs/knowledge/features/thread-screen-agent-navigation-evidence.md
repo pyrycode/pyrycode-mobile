@@ -201,9 +201,42 @@ report includes `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` a
 both executed/passed. These gates use zero real Claude turns. They establish counted
 execution on this candidate, not a fresh independent verifier verdict.
 
-Current raw XML, phone/daemon/relay logs, command lines, source/runtime identities and
+Manual-acceptance raw XML, phone/daemon/relay logs, command lines, source/runtime identities and
 prior failed attempts are under agents `logs/evidence/2373/manual-20261023/`; its
 1536-file `SHA256SUMS` digest is
 `a5678adea178f1a5daf16bef9aa42546934afcad33c0e5500e9b4dafc9fa8c62`.
 The device used the Android 13/API 33 x86_64 Google ATD image revision 1. The retained
 metadata distinguishes the tested code candidate from later documentation-only commits.
+
+The first manual script discovery executed 218 tests with three failures caused by the
+runner exporting Android-only `PYRY_GATE_EVIDENCE_DIR` into script fixtures. Removing
+that setting passed the same three checks, then the full 218-test run on unchanged
+source. Those failed captures and the earlier #2455 failure remain failures.
+
+The [independent verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2454#issuecomment-6360402269)
+reviews `a32c07ca8450d4b2065c2bb0b3366e94d4cdb63d` on Linux. All six configured
+gates passed: pre-verify, docs guard, 218 script tests, JVM with build/static checks,
+UI and scripted-all. Counted reports record 5388 JVM methods executed/passed, zero
+failures/errors/skips; 333 device methods executed/passed, zero failures/errors and
+one additional skip (`RenameDialogCaptureTest.renameAtFigmaViewport`); and 24 scripted
+methods executed/passed, zero failures/errors/skips. These are separate from the
+5359-method manual JVM run above.
+
+Both `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` and
+`resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` executed/passed in the full JVM
+gate, alongside the earlier reset, growth, generation/dispatch and ownership controls.
+The required `RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+executed/passed once in the full UI gate; the verifier confirmed `keyed-ready` and final
+`closed-confirmed` phone stages. Both named scripted background-Agent methods above
+executed/passed in scripted-all. No separate focused verifier run is implied.
+
+The verifier confirmed both changed Kotlin files match manual candidate `67146d2` byte
+for byte and the recording retains the hash above. It verified the 1536-file manual
+manifest, causal red/green controls, five historical native manifests and the original
+138-file recurrence manifest. Verifier bundle:
+`b491f708417bb0d55152ecd5795b5f14210cdf98c8feca32d2f8993bbc6e7010`.
+Counted XML was retained in agents `logs/verifier-gate_#2373_4.log`,
+`logs/verifier-gate_#2373_5.log` and `logs/verifier-gate_#2373_6.log` at documentation
+time; the bundle retains the JVM log tail and a pointer to its complete host log.
+No fresh live-Claude observation is claimed. Historical geometry/timeline limits
+remain unresolved by these passes; macOS is outside this Linux verification scope.

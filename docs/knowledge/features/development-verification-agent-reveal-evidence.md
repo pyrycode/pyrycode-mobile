@@ -163,6 +163,19 @@ These controls cover the gap after atomic dispatch; they do not replace the earl
 growth, generation, missing-list and wrong-owner probes. See the
 [post-reveal cause and evidence](thread-screen-agent-navigation-evidence.md#post-keyed-reveal-reset-recurrence-2373).
 
+Independent Linux acceptance at `a32c07ca8450d4b2065c2bb0b3366e94d4cdb63d`
+executed/passed both post-reveal controls in the full JVM gate: 5388 executed/passed,
+zero failures/errors/skips. The configured UI gate executed/passed the original recorded
+Agent method once among 333 executed/passed, zero failures/errors and one unrelated
+rename-capture skip. Scripted-all executed/passed 24 methods, zero failures/errors/skips,
+including both background-Agent placement/settlement and restart/reconnect scenarios.
+The [independent verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2454#issuecomment-6360402269)
+confirms unchanged helper defaults, absolute deadline, three geometry measurements,
+owned finished-label assertion and tap count. These full-gate results are separate
+from the earlier manual acceptance and five historical native passes. Source/recording
+identities, retained failed controls and the unavailable historical timeline remain in
+the linked navigation evidence.
+
 The controlled growth, generation-during-measurement and readiness-to-scroll probes each
 failed once before repair, with zero errors/skips, then passed in the final 27-method
 block class. Preserve the reset and wrong-Agent/running-label negatives. A keyed reveal
