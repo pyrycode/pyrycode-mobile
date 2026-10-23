@@ -318,6 +318,7 @@ class AgentChildrenScreenTest {
                 connection.emit(ConnectionState.Offline)
             }
             toggle("Agent 17")
+            compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 53").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Nested 53").assertExists()
             assertEquals(4, reads().size)
             toggle("Agent 18")
