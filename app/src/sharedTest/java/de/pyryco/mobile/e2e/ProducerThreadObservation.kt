@@ -19,6 +19,19 @@ internal class ProducerThreadObservation(
     capabilities: Set<String>,
     current: () -> Boolean,
 ) {
+    companion object {
+        fun acquire(
+            host: String,
+            conversation: String,
+            source: Any,
+            capabilities: Set<String>?,
+            current: () -> Boolean,
+        ): ProducerThreadObservation? {
+            if (capabilities == null || !current()) return null
+            return ProducerThreadObservation(host, conversation, source, capabilities, current).takeIf { current() }
+        }
+    }
+
     var connection: Any = connection
         private set
     private var current = current
@@ -42,13 +55,28 @@ internal class ProducerThreadObservation(
     private var completedId: Long? = null
     private var retired = false
     private var reply: OwnedReplyObservation? = null
-    private var sendId: Long? = null
     private var beforeReply: ThreadEvidence? = null
     private var sendReceipt: Pair<Any, Envelope>? = null
     private var sendAccepted: Boolean? = null
     private var rejected = false
 
     private fun owns(source: Any) = source === connection && !retired && current()
+
+    @Synchronized fun bindConnection(
+        source: Any,
+        capabilities: Set<String>?,
+        isCurrent: () -> Boolean,
+    ): Boolean {
+        check(!rejected) { "producer query rejected" }
+        if (capabilities == null || !isCurrent()) return false
+        if (source !== connection) replaceConnection(source, capabilities, isCurrent)
+        return owns(source)
+    }
+
+    @Synchronized fun queryIfCurrent(): ThreadQueryRequest? {
+        check(!rejected) { "producer query rejected" }
+        return if (owns(connection)) queryRequest() else null
+    }
 
     /** Retained facts are unqualified until a fresh query on the replacement completes. */
     @Synchronized fun replaceConnection(
@@ -71,7 +99,12 @@ internal class ProducerThreadObservation(
     }
 
     @Synchronized fun nextQuery(): ThreadQueryRequest {
-        check(owns(connection) && pending == null) { "producer source unavailable or query incomplete" }
+        check(owns(connection)) { "producer source unavailable" }
+        return queryRequest()
+    }
+
+    private fun queryRequest(): ThreadQueryRequest {
+        check(pending == null) { "producer query incomplete" }
         val snapshot = store.current(host, conversation)
         val coverage = snapshot.coverage
         return if (coverage?.olderExists == true) {
@@ -88,13 +121,13 @@ internal class ProducerThreadObservation(
         if (!owns(source)) return
         if (envelope.type == "send_message") {
             if (reply?.sending(source, envelope, current) == true) {
-                sendId = envelope.id
                 sendReceipt = source to envelope
+                sendAccepted = null
             }
             return
         }
         if (envelope.type !in setOf("thread_catch_up", "thread_page")) return
-        val expected = nextQuery()
+        val expected = queryRequest()
         check(expected.type == envelope.type && expected.payload() == envelope.payload) { "producer query changed" }
         pending = Query(envelope, ThreadQueryDecoder(host, "owned-producer", envelope.id, expected))
         reply?.phoneSending(source, envelope)
@@ -105,11 +138,21 @@ internal class ProducerThreadObservation(
         envelope: Envelope,
         accepted: Boolean,
     ) {
-        if (!owns(source)) return
-        if (envelope.type == "send_message" && sendId == envelope.id) {
+        if (envelope.type == "send_message") {
+            val (sender, request) = sendReceipt ?: return
+            // This is a historical transport result, independent of current query ownership.
+            if (source !== sender || envelope != request || sendAccepted != null) return
             sendAccepted = accepted
-            reply?.sent(source, accepted)
+            if (accepted) {
+                reply?.sent(source, true)
+            } else {
+                sendReceipt = null
+                sendAccepted = null
+                rebuildReply()
+            }
+            return
         }
+        if (!owns(source)) return
         val query = pending?.takeIf { it.envelope.id == envelope.id } ?: return
         reply?.phoneSent(source, envelope, accepted)
         query.accepted = accepted

@@ -3,6 +3,13 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadQueryRequest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -205,6 +212,103 @@ class ProducerThreadObservationTest {
         }
     }
 
+    @Test fun lostSourceCannotAcquireBaseline() {
+        assertNull(ProducerThreadObservation.acquire("host", "chat", source, null) { true })
+        assertNull(ProducerThreadObservation.acquire("host", "chat", source, setOf("thread", "interactive")) { false })
+        var reads = 0
+        assertNull(ProducerThreadObservation.acquire("host", "chat", source, setOf("thread", "interactive")) { ++reads == 1 })
+        assertThrows(IllegalArgumentException::class.java) {
+            ProducerThreadObservation.acquire("host", "chat", source, setOf("interactive")) { true }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun baselineAcquisitionWaitsForRedialWithinOriginalDeadline() =
+        runTest {
+            val ended = CompletableDeferred<String>()
+            val replacementEnd = CompletableDeferred<String>()
+            val replacement = Any()
+            var dials = 0
+            val link =
+                RedialingLink(
+                    backgroundScope,
+                    { if (++dials == 1) source else replacement },
+                    { if (it === source) ended.await() else replacementEnd.await() },
+                    {},
+                )
+            link.start()
+            ended.complete("closed before baseline")
+            runCurrent()
+            assertNull(link.current.value)
+            val baseline =
+                async {
+                    withTimeout(5_000) {
+                        link.request("producer baseline", resend = true) { live ->
+                            val observation =
+                                ProducerThreadObservation.acquire("host", "chat", live, setOf("thread", "interactive")) {
+                                    link.current.value === live
+                                } ?: return@request RedialingLink.Attempt.Ended
+                            RedialingLink.Attempt.Answered(observation)
+                        }
+                    }
+                }
+            runCurrent()
+            assertFalse(baseline.isCompleted)
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertTrue(baseline.await().connection === replacement)
+            link.close()
+        }
+
+    @Test fun sourceLossBetweenPreparationStepsReturnsNoQueryWithoutHidingInvariants() {
+        val target = observer()
+        baseline(target)
+        val replacement = Any()
+        assertFalse(target.bindConnection(source, null) { false })
+        assertFalse(target.bindConnection(replacement, null) { true })
+        assertTrue(target.connection === source)
+        var open = true
+        assertTrue(target.bindConnection(replacement, setOf("thread", "interactive")) { open })
+        open = false
+        assertNull(target.queryIfCurrent())
+        open = true
+        val query = checkNotNull(target.queryIfCurrent()).let { Envelope(++sequence, it.type, "", it.payload()) }
+        open = false
+        target.sending(replacement, query)
+        target.sent(replacement, query, false)
+        assertNull(target.evidence())
+        open = true
+        target.sending(replacement, query)
+        assertThrows(IllegalStateException::class.java) { target.queryIfCurrent() }
+        val invalid = observer()
+        assertThrows(IllegalArgumentException::class.java) {
+            invalid.bindConnection(Any(), setOf("interactive")) { true }
+        }
+    }
+
+    @Test fun closureAfterSendingOwnershipCheckCannotThrowDuringQueryPreparation() {
+        val target = observer()
+        baseline(target)
+        val replacement = Any()
+        var closing = false
+        var reads = 0
+        target.bindConnection(replacement, setOf("thread", "interactive")) { !closing || ++reads == 1 }
+        val query = checkNotNull(target.queryIfCurrent()).let { Envelope(++sequence, it.type, "", it.payload()) }
+        closing = true
+        target.sending(replacement, query)
+        target.sent(replacement, query, false)
+        assertNull(target.evidence())
+    }
+
+    @Test fun sourceClosingDuringBindCannotPrepareAQuery() {
+        val target = observer()
+        baseline(target)
+        var reads = 0
+        assertFalse(target.bindConnection(Any(), setOf("thread", "interactive")) { ++reads == 1 })
+        assertNull(target.queryIfCurrent())
+    }
+
     @Test fun replacementDiscardsPartialBatchesAndRequiresItsOwnCatchUp() {
         val target = observer()
         baseline(target)
@@ -250,6 +354,77 @@ class ProducerThreadObservationTest {
         target.ended(source)
         assertNotNull(target.produced())
     }
+
+    @Test fun refusedSendDoesNotOccupyReplacementReceipt() {
+        val target = observer()
+        baseline(target)
+        target.expectReply()
+        val refused = sendEnvelope("send-id")
+        target.sending(source, refused)
+        target.sent(source, refused, false)
+        target.ended(source)
+        val replacement = Any()
+        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+        val accepted = sendEnvelope("send-id")
+        target.sending(replacement, accepted)
+        target.sent(replacement, accepted, true)
+        // Delayed callbacks for the refused attempt cannot replace the actual receipt.
+        target.sent(source, refused, true)
+        assertNull(target.produced())
+        val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+        target.sending(replacement, query)
+        target.sent(replacement, query, true)
+        target.received(replacement, batch(query, reply(), 4))
+        assertNull(target.produced())
+        target.received(replacement, batch(query, emptyList(), 4, final = true))
+        assertEquals("send-id", target.produced()?.messageId)
+        assertEquals("ping", target.produced()?.text)
+    }
+
+    @Test fun acceptedSendCallbackSurvivesRetirementButForeignCallbacksCannotAcceptIt() {
+        for (callbackAfterReplacement in listOf(false, true)) {
+            current = true
+            val target = observer()
+            baseline(target)
+            target.expectReply()
+            val accepted = sendEnvelope("send-id")
+            target.sending(source, accepted)
+            // The pump accepted the frame, but its collector closes before sent returns.
+            current = false
+            target.ended(source)
+            val replacement = Any()
+            if (!callbackAfterReplacement) target.sent(source, accepted, true)
+            target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+            val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+            target.sending(replacement, query)
+            target.sent(replacement, query, true)
+            target.received(replacement, batch(query, reply(), 4))
+            assertNull(target.produced())
+            target.received(replacement, batch(query, emptyList(), 4, final = true))
+            if (callbackAfterReplacement) {
+                target.sent(Any(), accepted, true)
+                target.sent(source, accepted.copy(id = accepted.id + 100), true)
+                target.sent(source, accepted.copy(payload = JsonObject(emptyMap())), true)
+                assertNull(target.produced())
+                target.sent(source, accepted, true)
+            }
+            target.sent(source, accepted, false)
+            assertEquals("send-id", target.produced()?.messageId)
+            assertEquals("ping", target.produced()?.text)
+        }
+    }
+
+    private fun sendEnvelope(messageId: String) =
+        Envelope(
+            ++sequence,
+            "send_message",
+            "",
+            buildJsonObject {
+                put("conversation_id", "chat")
+                put("message_id", messageId)
+                put("text", "prompt")
+            },
+        )
 
     @Test fun sessionlessCanonicalPostStillNeedsItsOwnCompletion() {
         val target = observer()

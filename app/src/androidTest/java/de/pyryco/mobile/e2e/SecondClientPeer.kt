@@ -113,11 +113,19 @@ class SecondClientPeer(
         awaiting("producer baseline", timeoutMs) {
             check(threadEnabled) { "producer thread was not negotiated" }
             check(productionObservation == null) { "producer observation already started" }
-            val pump = checkNotNull(link.current.value).pump
-            val opened = checkNotNull(pump.state.value as? PumpState.Open)
             val observation =
-                ProducerThreadObservation(pairing.serverId, conversationId, pump, opened.capabilities.toSet()) {
-                    !closed.value && link.current.value?.pump === pump && pump.state.value is PumpState.Open
+                link.request("producer baseline", resend = true) { live ->
+                    val pump = live.pump
+                    val acquired =
+                        ProducerThreadObservation.acquire(
+                            pairing.serverId,
+                            conversationId,
+                            pump,
+                            (pump.state.value as? PumpState.Open)?.capabilities?.toSet(),
+                        ) {
+                            !closed.value && link.current.value?.pump === pump && pump.state.value is PumpState.Open
+                        } ?: return@request RedialingLink.Attempt.Ended
+                    RedialingLink.Attempt.Answered(acquired)
                 }
             productionObservation = observation
             do {
@@ -126,16 +134,15 @@ class SecondClientPeer(
             observation
         }
 
-    /** Only read queries repeat. A replacement source cannot complete this producer's proof. */
+    /** Only read queries repeat; each replacement must certify its own catch-up. */
     internal suspend fun catchUpProduction(
         observation: ProducerThreadObservation,
         timeoutMs: Long,
     ) {
         awaiting("producer catch-up", timeoutMs) {
             link.request("producer catch-up", resend = true) { live ->
-                if (live.pump.state.value !is PumpState.Open) return@request RedialingLink.Attempt.Ended
-                bindProduction(observation, live)
-                val query = observation.nextQuery()
+                if (!bindProduction(observation, live)) return@request RedialingLink.Attempt.Ended
+                val query = observation.queryIfCurrent() ?: return@request RedialingLink.Attempt.Ended
                 attempt(live, query.type, query.payload()) { id -> inReplyTo == id && observation.completed(id) }
             }
         }
@@ -144,13 +151,10 @@ class SecondClientPeer(
     private fun bindProduction(
         observation: ProducerThreadObservation,
         live: Link,
-    ) {
-        if (live.pump === observation.connection) return
-        val opened = checkNotNull(live.pump.state.value as? PumpState.Open)
-        observation.replaceConnection(live.pump, opened.capabilities.toSet()) {
+    ): Boolean =
+        observation.bindConnection(live.pump, (live.pump.state.value as? PumpState.Open)?.capabilities?.toSet()) {
             !closed.value && link.current.value?.pump === live.pump && live.pump.state.value is PumpState.Open
         }
-    }
 
     /**
      * Post [text] to [conversationId] as this device, naming [attachmentIds] if any (#1016), and wait for the
@@ -642,7 +646,7 @@ class SecondClientPeer(
         val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
         val observation = replyObservation
         val production = productionObservation
-        if (production != null && type == "send_message") bindProduction(production, live)
+        if (production != null && type == "send_message" && !bindProduction(production, live)) return RedialingLink.Attempt.NotSent
         production?.sending(live.pump, envelope)
         val targeted = observation?.sending(this, envelope) { !closed.value && live.pump.state.value is PumpState.Open } == true
         if (type == "modal_answer" && envelope.payloadField("option_id") == "allow_once") {
