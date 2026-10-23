@@ -19,10 +19,12 @@ import java.io.Closeable
 
 /** Fresh offscreen conversations must finish their attention query before the scenario acquires them. */
 internal suspend fun awaitInitialAttentionQuery(snapshots: Flow<AuthoritativeThreadSnapshot>) {
-    snapshots.first {
-        !it.epoch.isNullOrEmpty() && it.checkpoint > 0 && it.coverage != null && !it.repairNeeded && !it.resetNeeded
-    }
+    snapshots.first(::hasInitialQueryCertificate)
 }
+
+private fun hasInitialQueryCertificate(snapshot: AuthoritativeThreadSnapshot): Boolean =
+    !snapshot.epoch.isNullOrEmpty() && snapshot.checkpoint > 0 && snapshot.coverage != null && !snapshot.repairNeeded &&
+        !snapshot.resetNeeded
 
 /** Only the armed scenario delays acquisition; destination setup and all provider admission stay real. */
 internal class ThreadAcquisitionGate private constructor(
@@ -97,54 +99,59 @@ internal class ThreadAcquisitionGate private constructor(
                         }
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
-                        val receipt =
-                            withTimeout(gate.timeoutMillis) {
-                                coroutineScope {
-                                    val observation =
-                                        async(start = CoroutineStart.UNDISPATCHED) {
-                                            val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
-                                            awaitInitialAttentionQuery(
-                                                store.observe(host, conversationId).filter { it.generation == gate.generation },
-                                            )
-                                            receipt.takeIf { it.isCurrent() }
+                        return withTimeout(gate.timeoutMillis) {
+                            var receipt: ThreadQueryReadiness.Receipt? = null
+                            while (receipt == null) {
+                                val ready =
+                                    coroutineScope {
+                                        val observation =
+                                            async(start = CoroutineStart.UNDISPATCHED) {
+                                                ThreadQueryReadiness.awaitCurrent(host, conversationId)
+                                                awaitInitialAttentionQuery(
+                                                    store.observe(host, conversationId).filter { it.generation == gate.generation },
+                                                )
+                                            }
+                                        val retired =
+                                            async(start = CoroutineStart.UNDISPATCHED) {
+                                                combine(support, gate.closed) { verdict, closed ->
+                                                    closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
+                                                }.first { it }
+                                            }
+                                        try {
+                                            select<Boolean> {
+                                                observation.onAwait { true }
+                                                retired.onAwait { false }
+                                            }
+                                        } finally {
+                                            observation.cancel()
+                                            retired.cancel()
                                         }
-                                    val retired =
-                                        async(start = CoroutineStart.UNDISPATCHED) {
-                                            combine(support, gate.closed) { verdict, closed ->
-                                                closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
-                                            }.first { it }
-                                        }
-                                    try {
-                                        select<ThreadQueryReadiness.Receipt?> {
-                                            observation.onAwait { it }
-                                            retired.onAwait { null }
-                                        }
-                                    } finally {
-                                        observation.cancel()
-                                        retired.cancel()
                                     }
+                                val snapshot = store.current(host, conversationId)
+                                val refusal =
+                                    when {
+                                        !ready -> "connection or scope retired"
+                                        synchronized(Companion) { active !== gate } -> "scope replaced"
+                                        (support.value as? ThreadSupport.Supported)?.connection !== connection -> "connection retired"
+                                        snapshot.generation != gate.generation -> "generation changed"
+                                        else -> null
+                                    }
+                                if (refusal != null) {
+                                    gate.acquired.cancel(CancellationException("Thread acquisition rejected: $refusal"))
+                                    return@withTimeout null
                                 }
+                                // Joining observers may advance completion or start another query.
+                                // Capture only after that cleanup, without yielding before acquisition.
+                                if (hasInitialQueryCertificate(snapshot)) receipt = ThreadQueryReadiness.current(host, conversationId)
                             }
-                        val refusal =
-                            when {
-                                receipt == null -> "query readiness lost"
-                                !receipt.isCurrent() -> "completion changed before acquisition"
-                                synchronized(Companion) { active !== gate } -> "scope replaced"
-                                (support.value as? ThreadSupport.Supported)?.connection !== connection -> "connection retired"
-                                store.current(host, conversationId).generation != gate.generation -> "generation changed"
-                                else -> null
+                            val lease = delegate.acquire(conversationId, connection)
+                            if (lease == null) {
+                                gate.acquired.cancel(CancellationException("Thread acquisition delegate refused its lease"))
+                            } else {
+                                gate.acquired.complete(receipt)
                             }
-                        if (refusal != null) {
-                            gate.acquired.cancel(CancellationException("Thread acquisition rejected: $refusal"))
-                            return null
+                            lease
                         }
-                        val lease = delegate.acquire(conversationId, connection)
-                        if (lease == null) {
-                            gate.acquired.cancel(CancellationException("Thread acquisition delegate refused its lease"))
-                        } else {
-                            gate.acquired.complete(checkNotNull(receipt))
-                        }
-                        return lease
                     } catch (failure: Exception) {
                         gate.acquired.completeExceptionally(failure)
                         throw failure

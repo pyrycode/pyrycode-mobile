@@ -12,9 +12,11 @@ import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -32,7 +34,7 @@ import org.junit.Before
 import org.junit.Test
 import java.io.Closeable
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, InternalCoroutinesApi::class)
 class ThreadQueryReadinessTest {
     private val savedLogSink = RelayLog.sink
 
@@ -184,6 +186,92 @@ class ThreadQueryReadinessTest {
                     assertEquals(3, sent.size)
                     assertFalse("dispatch alone cannot finish X's new request", reopened.isCompleted)
                     complete(3, CHAT, false)
+                    runCurrent()
+                    assertTrue(reopened.await().isCurrent())
+                    lease.close()
+                }
+            } finally {
+                queries.abandon()
+                progress.close()
+            }
+        }
+
+    @Test fun completionAdvancingDuringObserverCleanupCannotCancelOrReleaseAcquisition() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            val connection = Any()
+            val progress = ThreadQueryReadiness.register(HOST) { true }
+            val sent = mutableListOf<Envelope>()
+            var next = 0L
+            val queries =
+                AuthoritativeThreadQueries(HOST, store, AuthoritativeThreadRoute(HOST, store), { true }, { ++next }, {
+                    progress.sending(it)
+                    sent += it
+                    progress.sent(it.id, true)
+                    true
+                }, { 0L })
+            val backing = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(connection))
+            var advanced = false
+            val support =
+                object : StateFlow<ThreadSupport> by backing {
+                    override suspend fun collect(collector: FlowCollector<ThreadSupport>): Nothing {
+                        try {
+                            backing.collect(collector)
+                        } finally {
+                            // Reproduce a query starting while the gate joins its cancelled owner observer.
+                            if (!advanced) {
+                                advanced = true
+                                queries.open(CHAT)
+                            }
+                        }
+                    }
+                }
+            val thread =
+                object : NegotiatedThread() {
+                    override val host = HOST
+                    override val store = store
+                    override val support = support
+
+                    override fun observe(conversationId: String) = store.observe(host, conversationId)
+
+                    override suspend fun acquire(
+                        conversationId: String,
+                        connection: Any,
+                    ) = queries.acquire(conversationId)
+
+                    override suspend fun open(conversationId: String) = queries.open(conversationId)
+
+                    override fun older(conversationId: String) = queries.older(conversationId)
+
+                    override fun cancel(conversationId: String) = queries.cancel(conversationId)
+                }
+
+            fun complete(
+                id: Long,
+                initial: Boolean = false,
+            ) {
+                val reply = terminal(id, initial)
+                queries.accept(reply)
+                progress.consumed(reply)
+            }
+            try {
+                queries.open(CHAT)
+                complete(1, true)
+                ThreadAcquisitionGate.arm(thread, CHAT, 30000).use { gate ->
+                    val acquisition = async { ThreadAcquisitionGate.negotiated(thread).acquire(CHAT, connection) }
+                    runCurrent()
+                    assertTrue(advanced)
+                    assertEquals(2, sent.size)
+                    assertFalse("observer cleanup must not reject or spend an active query", acquisition.isCompleted)
+                    complete(2)
+                    runCurrent()
+                    val lease = checkNotNull(acquisition.await())
+                    assertEquals("acquisition must retain its own request", 3, sent.size)
+                    val previous = gate.awaitAcquired()
+                    val reopened = async { previous.awaitNext() }
+                    runCurrent()
+                    assertFalse("the completion before acquisition cannot finish its new request", reopened.isCompleted)
+                    complete(3)
                     runCurrent()
                     assertTrue(reopened.await().isCurrent())
                     lease.close()

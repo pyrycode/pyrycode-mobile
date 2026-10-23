@@ -44,6 +44,15 @@ internal object ThreadQueryReadiness {
         sources[source.host]?.let { if (it.value === source) it.value = null }
     }
 
+    /** Capture after asynchronous observers have joined, immediately before the real acquisition. */
+    fun current(
+        host: String,
+        conversation: String,
+    ): Receipt? =
+        sources[host]?.value?.let { source ->
+            source.ready(conversation)?.let { Receipt(source, conversation, it) }?.takeIf { it.isCurrent() }
+        }
+
     suspend fun awaitCurrent(
         host: String,
         conversation: String,

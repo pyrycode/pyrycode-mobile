@@ -529,7 +529,10 @@ shared wait requires the newer terminal to be consumed before acquisition can is
 its own real query. Retired-owner and incomplete-consumption checks remain separate.
 
 Acquisition also returns the completion receipt captured before the destination
-opens. The model scenario waits for a different successfully consumed request for
+opens. Capture that receipt synchronously after the temporary observers have joined.
+If their cleanup starts another query, wait again within the original timeout.
+Recheck the current source, owner, generation and certified snapshot before capture.
+The model scenario waits for a different successfully consumed request for
 that same conversation on the same current physical source. Its old receipt cannot
 satisfy the wait while the new request is queued behind another conversation. Merely
 dispatching the new request is insufficient. A replacement connection cannot finish

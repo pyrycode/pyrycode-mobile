@@ -64,3 +64,9 @@ Written before implementing the review repair. Preserve the original failing gat
 At e2f788962, all 22 focused query/acquisition methods passed. The full JVM/build invocation executed 5453 methods with one notification logging-cleanup ConcurrentModificationException. Its single exact same-source comparison passed. The original full run remains red and retained. No causal link to the query repair is established.
 
 The exact recorded model method then failed twice on the same source with a generic cancelled acquisition and pending replay work at step 29. This is not accepted as a pass or assigned to the historical model flake. Before changing further behavior, add distinct cancellation reasons to identify readiness, owner, generation, scope or delegate refusal. Preserve both failures and rerun only after that diagnostic change.
+
+## Observer-cleanup race diagnosed
+
+The diagnostic phone run at 0f9d27d1a identifies the added final exact-receipt check as the cancellation cause: completion changed before acquisition. A newer completion can arrive while the gate joins cancelled observers. Rejecting that advancement is incorrect. Simply using the old receipt would also permit that newer pre-acquisition result to satisfy the post-acquisition wait.
+
+Before implementing the correction, reproduce a real queued query starting during owner-observer cancellation. Then capture the current completion synchronously after observer cleanup. If a query is active, repeat the wait within the same original timeout. Keep scope, owner, generation and certified-snapshot checks. Acquire only after that final marker, then require a different completion from the same source. Preserve the diagnostic failure and both earlier native failures.
