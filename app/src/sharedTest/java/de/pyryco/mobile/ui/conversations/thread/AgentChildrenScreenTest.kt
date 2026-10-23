@@ -359,6 +359,8 @@ class AgentChildrenScreenTest {
                         currentRepo = fresh
                         supported.value = ThreadSupport.Supported(fresh)
                         (owner.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.RESUMED
+                        // This fixture's acquire is inert; supply the new connection's source observation.
+                        repo.authoritativeThreads.applyBatch("host", "c", "e", 46, listOf(agent(17, 44)), 0)
                     }
                     try {
                         compose.waitUntil(5000) {
