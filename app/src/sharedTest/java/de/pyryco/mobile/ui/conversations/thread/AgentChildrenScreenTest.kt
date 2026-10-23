@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -9,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.printToString
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -184,7 +186,10 @@ class AgentChildrenScreenTest {
         fun reads() = sent.filter { it.type == "thread_read_children" }
 
         fun toggle(text: String) {
-            compose.onNode(hasClickAction() and hasText(text)).performClick()
+            compose.onNode(hasClickAction() and hasText(text)).performTouchInput {
+                // The offline Retry pill overlaps the header's right half.
+                click(Offset(20f, centerY))
+            }
             compose.waitForIdle()
         }
 
