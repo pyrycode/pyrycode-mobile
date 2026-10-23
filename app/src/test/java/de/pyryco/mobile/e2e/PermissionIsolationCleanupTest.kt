@@ -184,6 +184,8 @@ class PermissionIsolationCleanupTest {
             val wrongRequests =
                 listOf(
                     "peer/host/0" to request,
+                    "phone/other-host/0" to request,
+                    "phone/host/1" to request,
                     owner to frame(90, "thread_catch_up", """{"conversation_id":"A","epoch":"epoch-b","version":13}"""),
                     owner to frame(90, "thread_catch_up", """{"conversation_id":"B","epoch":"epoch-a","version":13}"""),
                     owner to frame(90, "thread_catch_up", """{"conversation_id":"B","epoch":"epoch-b","version":12}"""),
