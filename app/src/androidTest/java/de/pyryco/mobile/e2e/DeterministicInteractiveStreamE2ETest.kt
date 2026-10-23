@@ -1541,9 +1541,7 @@ class DeterministicInteractiveStreamE2ETest {
             try {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
-                        evidence.observe(conversationId).onEach { pendingSettlement = it }.first {
-                            it.settledAgentAfterRecovery(launched, family, "after1783", route.support.value) != null
-                        }
+                        awaitCertifiedAgentSettlement(route, conversationId, launched, family, "after1783") { pendingSettlement = it }
                     }
                 }
             } catch (failure: Throwable) {

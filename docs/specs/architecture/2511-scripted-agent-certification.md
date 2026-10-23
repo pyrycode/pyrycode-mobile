@@ -7,6 +7,7 @@
 - `NegotiatedThread.kt`, `RelayRepositoryCoordinator.kt`: `acquire` captures the supported connection and releases only that consumer's interest.
 - `AuthoritativeThreadQueries.kt`, `AuthoritativeThreadStore.kt`: `reset` starts a newest-window query; ordinary catch-up certification preserves existing order coverage.
 - `RemoteConversationRepository.kt`: `resetAuthoritativeThread` is the existing connection-owned recovery entry.
+- `CachingConversationRepository.kt`: `observeAuthoritativeThread` owns a cache reader; assertions must observe the store passively.
 - `RecoveredAgentFamilyTest.kt`, `QueueRecoveryAgentFixtures.kt`, `AuthoritativeThreadQueriesTest.kt`: existing strict negatives, family fixtures and real query decoder test patterns.
 - `scripts/e2e-background-agent-scenarios.py`, `scripts/test_e2e_background_agent_scenarios.py`: the wrapper retains XML but loses the first phone/UTP output.
 - `docs/knowledge/features/remote-conversation-repository.md`, `remote-conversation-repository-reads-and-thread-store.md`: accepted query terminals alone certify coverage; checkpoint progress is separate.
@@ -50,3 +51,6 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Retaine
 
 ## Open Questions
 None.
+
+## Revisions
+- 2026-10-23: `CachingConversationRepository.observeAuthoritativeThread` registers a cache reader and replaces the previous reader's hydration ownership. Keep the proof on `route.store.observe`, as the passive evidence source does, and acquire only query synchronization interest. Added `proofDoesNotReplaceTheDestinationsCacheReader` to guard this ownership boundary; the query/settlement and original deadline contracts stay unchanged.
