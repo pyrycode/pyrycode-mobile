@@ -3870,6 +3870,135 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Direct-child page evidence (#2389)
+
+This is the direct-child contribution to #2376's original documentation handoff,
+accepted by [PR #2488's verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2488#issuecomment-6359111511).
+Mobile candidate `034ceb050039f50fe384fd6b1a1891d883165c5f` was tested on
+Linux (`Linux 7.0.0-38-generic x86_64`); macOS is outside this ticket's scope.
+
+| Retained run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Builder final focused repair, 13 classes | 181 | 181 | 0 | 0 |
+| Builder focused scripted `tool` | 1 | 1 | 0 | 0 |
+| Dispatcher JVM/build gate | 5386 | 5386 | 0 | 0 |
+| Dispatcher device UI | 333 | 333 | 0 | 1 |
+| Dispatcher scripted-all | 24 | 24 | 0 | 0 |
+
+Failures include errors. The configured gates passed at
+`2026-10-23T06:36:13.395Z` on that candidate, including pre-verify, docs guard,
+script unit checks and the JVM build checks. The UI's skipped
+`RenameDialogCaptureTest.renameAtFigmaViewport` never executed or passed.
+There was no dedicated rendered pagination-control capture. These results do not
+claim a genuine paired compact expansion run.
+
+Final focused XML contains `AgentChildrenQueriesTest` (16),
+`AuthoritativeThreadCacheTest` (23), `AuthoritativeThreadQueriesTest` (23),
+`AuthoritativeThreadStoreTest` (18), `ToolBodyQueriesTest` (16),
+`AuthoritativeThreadProjectionTest` (28), `AuthoritativeReadSightTest` (12),
+`DeferredAuthoritativePresentationTest` (11), `AgentChildrenScreenTest` (3),
+`DeferredAuthoritativeScreenTest` (3), `MissingToolBodyScreenTest` (3),
+`QueueRecoveryAgentEvidenceTest` (8) and `ThreadEvidenceTest` (17). Each class ran
+separately through `python3 scripts/gradle-gate.py testDebugUnitTest --tests
+<qualified-class> --console=plain`, with no skips or failures.
+
+The passing mounted methods are
+`AgentChildrenScreenTest.mountedAgentExpansionPagesNestedSummariesRetriesAndReopensOffline`,
+`collapsedConsumerWithdrawsBeforeLoadingFrame` and
+`stoppedConsumerWithdrawsBeforeLoadingFrame`. They exercise the production consumer
+for first/nested/grouped expansion, Load more, Retry/offline, retained reopen and
+withdrawal before Loading displays. The retained 8,333-item probe
+`DeferredAuthoritativePresentationTest.closureInvariantDefersAll8333HeldContentsUntilDemanded`
+passed, preserving zero hidden-descendant conversions and closed-body demand
+assertions alongside the read-sight suite.
+
+The final lane class passed fifty-row/order-zero ties, exact owner collisions,
+coalescing, independent consumers, draining, rejected-cursor restart, sticky
+send-refusal/timeout and separate completion probes. It also passed
+`revisionInvariantRestartRejectsDowngradeAndKeepsFirstEqualSummary`,
+`ownershipInvariantFinalParentRevisionFencesBothPageOrders`,
+`identityInvariantSummaryCannotChangeFullOrSummaryKind` and
+`identityInvariantFullReplyCannotChangeRetainedSummaryKind`. These prove rejected
+restart downgrades, stable equal-revision facts, final-parent reachability in
+both page orders and immutable full/summary kinds in both arrival directions.
+`placementInvariantCertifiedPageCannotInventOrderForRetainedFullFact`,
+`visibilityInvariantQueuedAndLostChildSummariesNeverEnterRootWaitingTail` and
+`captureInvariantFutureChildCannotPoisonRetainedFullRevision` also passed.
+The unchanged `QueueRecoveryAgentEvidenceTest.newerRevisionsSurviveRecoveryForEveryScenario`,
+`ThreadEvidenceTest.userEchoCountRequiresExactlyOneDeliveredUser` and
+`DeferredAuthoritativePresentationTest.revisionInvariantExpansionOverlayKeepsHighestFullFactAndFirstEqualRevision`
+passed in this focused run. The dispatcher JVM gate independently passed all
+these named regressions; those full-suite executions are not separate focused
+invocations.
+
+Decoder-focused evidence from the previous repair is **9 executed/passed,
+0 failed/skipped** in `AgentChildrenDecoderTest`, including
+`captureInvariantFutureChildCannotStageOrComplete` and
+`captureInvariantFutureParentRejectsDataAndMarkerOnlySuccess`. It covers bounded
+pages, byte-limited short `more: true`, marker-only empty, malformed/duplicate/
+foreign data, changed-version cursor rejection and unsigned capture bounds.
+Both named capture methods also passed in the current 5,386-test JVM gate, as
+recorded by the dispatcher. This does not claim another focused decoder run on
+the final repair.
+
+The existing rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+passed once through `python3 scripts/android-test-gate.py scripted tool` and also
+within scripted-all. Native and normalized focused XML are the same execution;
+count them once. This preserves existing complete-delivery behavior; supplied
+expansion-support fixtures exercise child paging before compact activation.
+No new rung-3 or rung-4 scenario was added.
+
+Focused scripted identities from `identities.json`:
+
+| Artifact | Source or SHA-256 |
+| --- | --- |
+| Mobile | `034ceb050039f50fe384fd6b1a1891d883165c5f` |
+| Core daemon source | `647a4e7526f581f78d422195cb22b3e9b979e767` |
+| Core daemon binary | `871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a` |
+| App APK | `70abea0768f8090822d114e1cf9d6e14c92347d2cbe3fc86b900ead6e8002ab2` |
+| Test APK | `38e60a89166a7de4927d89cb66f8a092bc589f93895a4a2ea0979f847a7f1ce2` |
+
+At documentation time raw evidence was under
+`$AGENTS_REPO_PATH/logs/evidence/2389/builder-rework2-20261023T0541Z/`:
+`jvm/green/`, `jvm/red-*/`, `native-gate/`, `harness/`, `identities.json` and
+`SHA256SUMS`. These retain counted XML, phone logs, native phases, isolated-daemon
+logs and source/binary identities. The verifier checked all 39 manifest entries
+and the three changed-source hashes against the candidate. The accepted verifier
+bundle is run `a4afba5b385d7840d9a63ea83bdf653f1c5abf4e9bdf4f113d8ec0eb74f45664`,
+digest `c45c78d0a1f5db188f489c50e85585850c887f12712497d359068725594bfdbe`,
+with gate logs, pass metadata and verdict. Paths name retention locations at the
+time, not permanent availability or removed gate-worktree build outputs.
+
+Historical evidence remains evidence. The original builder's final focused run
+was **150 executed/passed, 0 failed/skipped**, with one scripted `tool` pass in
+`builder-20261023T0104Z/`. Its decoder-first **6 executed, 1 passed, 5 failed**,
+lane-first **9 executed, 8 passed, 1 failed**, mounted failures and red baseline
+remain there. The previous repair at Mobile
+`374ef678697055683e46aa8c88393090404a27e8` retained **208 executed/passed,
+0 failed/skipped** and one scripted pass in `builder-rework-20261023T0310Z/`;
+its red decoder **9/7/2**, future-child lane **1/0/1**, placement lane **11/9/2**
+and projection **11/10/1** are executed/passed/failed, all with zero skips.
+Final-repair `jvm/red-initial/` is **15 executed, 12 passed, 3 failed** (including
+the missing required fixture field); `red-kind/` and `red-full-kind/` each retain
+**1 executed, 0 passed, 1 failed**, without skips. Later green XML does not erase
+any failed result. The first verifier's 5,372-case gate with two confirmed
+regressions remains in bundle
+`b0ecfb6ef76fd9e554ee588e0c986f5f5cb297738005eb0309c122809334813a`.
+The [previous review](https://github.com/pyrycode/pyrycode-mobile/pull/2488#issuecomment-6357693896)
+recorded 5,382 JVM passes, 333 device passes with one skipped capture and 24
+scripted passes on the previous candidate; these do not certify the final repair.
+
+See [screen demand and inline controls](knowledge/features/thread-screen.md#what-it-does),
+[page admission/completion and restart](knowledge/features/remote-conversation-repository.md#direct-child-pages-2389)
+and [cache completeness and custody](knowledge/features/conversation-cache.md#the-contract).
+Compact-v1 remains unadvertised. #2390 owns retention budgets, #2391 subtree
+invalidation and #2431–#2433 compact application/activation. #2393 still owes
+genuine paired compact capture/replay before #2376 integrated acceptance; no
+paired outcome is supplied by this child. Historical approval/privacy holds and
+the existing `needs-human:sizing` disposition remain in force (2,012 measured
+source/test/plan lines). This child evidence does not release them.
+
 ### Missing tool body evidence (#2388)
 
 This is the body-reader contribution to #2376's original documentation handoff,
@@ -3952,7 +4081,8 @@ and [body-query contract](knowledge/features/remote-conversation-repository.md#m
 [cache custody](knowledge/features/conversation-cache.md#the-contract) distinguishes
 in-memory fetched details from persisted complete facts. Compact-v1 remains
 unadvertised here. #2393 still owns genuine paired compact capture and recorded
-replay before #2376 integrated acceptance; selection, child paging, budgets and
+replay before #2376 integrated acceptance; child paging is documented in the
+[#2389 evidence](#direct-child-page-evidence-2389), while selection, budgets and
 subtree invalidation remain with their allocated children. All historical failures
 and recorded approval/privacy holds remain binding. Deterministic evidence does
 not satisfy the pending paired-capture requirement.

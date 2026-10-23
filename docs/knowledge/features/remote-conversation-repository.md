@@ -214,6 +214,67 @@ join watermark, completed history or read marks, and the shared evidence observe
 ignore them for history/read certification. See [screen states](thread-screen.md)
 and [counted Linux evidence](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
 
+## Direct-child pages (#2389)
+
+Agent-child demand uses the same exact authenticated connection and granted
+`thread`, `interactive` and `thread_expansion` support as body demand. Compact-v1
+remains unadvertised and complete delivery remains usable without expansion
+support. Child and body consumer sets and completion state are independent, while
+both share the serialized catch-up/history/expansion lane. Only visible expanded
+agents request missing first pages; equal active/queued targets coalesce. Retained
+pages suppress refetch, including offline reopen. Child pages are in-memory only;
+they neither replace complete saved contents nor add a disk migration.
+
+The sibling protocol's “Bounded expansion reads” remains the wire authority.
+`thread_read_children` requests the exact epoch, parent ID/revision and limit 50,
+within the protocol ceiling of 256 including ties. The decoder stages at most one
+bounded `thread_children` data batch with `final: false`. Public direct-child
+summaries must ascend strictly by `(order, id)`, retaining order-zero ties, and
+contain neither bodies nor descendant inventory. Required zero/false facts,
+recorded attribution, optional unknown-versus-known facts, unsigned tokens and
+bounded inert headline/unknown metadata survive decoding. Count and aggregate
+byte limits include envelope overhead. Duplicate, unordered, foreign-parent,
+malformed or oversized replies cannot publish a page.
+
+Data and the separate empty-children `final: true` marker must agree on request,
+conversation, epoch, parent revision, captured consumed version and envelope
+routing/session metadata. Positive child revisions and the parent revision must
+not exceed that unsigned capture, including marker-only replies; a later valid
+marker cannot rescue rejected data. Only a validated marker with explicit
+`more: false` certifies the last page or authoritative empty result. `more: true` requires a validated cursor
+for exactly the last delivered `(order, id)` and the captured conversation,
+epoch, parent/revision and consumed version. A byte-limited short page can still
+have more; a changed consumed version invalidates continuation even when the
+parent revision stays equal.
+
+Load more selects one certified continuation explicitly. Refusal, send failure,
+timeout, partial replies or rejected cursors leave sticky Retry, never automatic
+recomposition retries or empty success. Retry starts at the current owner's first
+page and keeps the prior rows/cursor until validated success replaces them. It
+cannot downgrade the retained capture or summary revision. Equal-revision
+summaries preserve the first admitted fact and reject changed placement. Both
+summary admission and full-fact merge enforce immutable parent/kind across all
+retained full and summary identities, including unreachable pages and either
+arrival order. Otherwise a later full reply could bypass the summary identity
+fence.
+
+The projection preserves the highest full revision and first equal-revision fact.
+Resolve each parent's final winning revision before accepting its pages'
+descendants, independent of page insertion order; unresolved cyclic dependencies
+contribute nothing. A full fact with no order stays unplaced rather than borrowing
+an older summary's order. Certified zero-order children render only under their
+expanded ancestor. These overlays preserve newer/full held contents and supply no
+history coverage, recovery checkpoint, join watermark or read mark.
+
+Current bindings fence additions, Retry and publication by host, conversation,
+connection, epoch, generation/incarnation, parent and revision. Older presentations
+may only withdraw previously admitted targets. Collapse, navigation, background,
+disconnection, deletion and connection replacement retire that consumer without
+cancelling another's demand. Abandoned requests discard staged pages but retain
+captured routing/version for terminal draining before lane reuse; timeout closes
+the connection. See [inline controls](thread-screen.md#what-it-does) and
+[counted lane, decoder and mounted-consumer evidence](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
 ## Daemon conversation read marks
 
 `observeReadMarks` keeps confirmed read and supplied shown metadata separate.
