@@ -264,7 +264,7 @@ internal class DurableGapProof(
             val (observation, evidence) = checkNotNull(finalRecovery)
             val snapshot = checkNotNull(evidence.sourceSnapshot)
             val certificates = observation.certificates
-            val version = certificates.maxOf { it.reply.checkpoint.version }
+            val version = observation.currentCertificates.maxOf { it.reply.checkpoint.version }
             assertEquals("recovered source epoch", recoveryEpoch, snapshot.epoch)
             assertTrue("current source certifies every actual recovery", snapshot.checkpoint.toULong() >= version)
             assertTrue("current source is completely certified", snapshot.checkpoint >= snapshot.completedVersion)

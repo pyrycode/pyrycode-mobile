@@ -55,7 +55,6 @@ internal class OwnedThreadQueryObservation(
     private var current: () -> Boolean = { true }
     private var closed = false
     private var expected = before
-    private var awaitingCertification = false
     private val queries = mutableMapOf<Long, Query>()
     private var nextOrdinal = 0
 
@@ -136,7 +135,6 @@ internal class OwnedThreadQueryObservation(
             queries.remove(envelope.id)
             return
         }
-        awaitingCertification = true
         onAccepted(query.decoder.request)
         if (!owns(connection) || query.disposition != "pending") {
             abandon(query)
@@ -209,8 +207,8 @@ internal class OwnedThreadQueryObservation(
                             val certified = store.certifyQuery(host, query.decoder.request, reply, query.generation)
                             val snapshot = store.current(host, before.conversation)
                             trace(query, "certification_${certified.name}")
-                            if (certified == AuthoritativeThreadOutcome.Applied && !snapshot.repairNeeded && !snapshot.resetNeeded) {
-                                awaitingCertification = false
+                            // A valid captured terminal remains a receipt when newer live facts need catch-up.
+                            if (certified == AuthoritativeThreadOutcome.Applied) {
                                 query.disposition = "certified"
                                 trace(query, "certified")
                                 onCertified(query.decoder.request, reply, snapshot)
@@ -233,7 +231,6 @@ internal class OwnedThreadQueryObservation(
                                     generation =
                                         checkNotNull(before.generation) + store.current(host, before.conversation).generation,
                                 )
-                            awaitingCertification = true
                             onReset(query.decoder.request, reply)
                         }
                         is ThreadQueryReply.Failure -> {
@@ -244,18 +241,21 @@ internal class OwnedThreadQueryObservation(
         }
     }
 
-    fun owner(): ThreadEvidenceOwner? =
-        expected.takeIf {
+    fun owner(): ThreadEvidenceOwner? {
+        val snapshot = store.current(host, before.conversation)
+        return expected.takeIf {
             !closed &&
                 current() &&
-                !awaitingCertification &&
-                expected.epoch == store.current(host, before.conversation).epoch &&
-                expected.generation == checkNotNull(before.generation) + store.current(host, before.conversation).generation &&
+                !snapshot.repairNeeded &&
+                !snapshot.resetNeeded &&
+                expected.epoch == snapshot.epoch &&
+                expected.generation == checkNotNull(before.generation) + snapshot.generation &&
                 queries.values.all { query ->
                     query.accepted != null &&
                         (query.accepted == false || query.disposition in setOf("certified", "reset"))
                 }
         }
+    }
 
     fun receipts(): List<Receipt> =
         queries.values.filter { it.accepted == true }.map {
@@ -276,7 +276,6 @@ internal class OwnedThreadQueryObservation(
         query.disposition = "failed"
         trace(query, "rejected")
         query.decoder.abandon()
-        awaitingCertification = true
         store.requestRepair(host, before.conversation)
     }
 

@@ -279,6 +279,88 @@ class RecoveryQueryAccountingTest {
         assertNull("reusing epoch text does not reuse certification generation", witness.owner())
     }
 
+    @Test fun validCapturedTerminalSurvivesNewerLiveFactsAndFollowUp() {
+        val store = AuthoritativeThreadStore()
+        store.restore("private-host", "private-chat", saved, 0)
+        val certificates = mutableListOf<AuthoritativeHistoryProbe.Certificate>()
+        val witness =
+            OwnedThreadQueryObservation(
+                "private-host",
+                ThreadEvidenceOwner("private-host", "private-chat", pump, ThreadEvidenceKind.Authoritative, "private-epoch", 0),
+                store,
+                AuthoritativeThreadRoute("private-host", store),
+                onCertified = {
+                    request,
+                    reply,
+                    snapshot,
+                    ->
+                    certificates += AuthoritativeHistoryProbe.Certificate(request, reply, snapshot)
+                },
+            )
+        witness.bind(pump) { true }
+        val first = query(10)
+        witness.sending(pump, first)
+        witness.sent(pump, first, true)
+        // Complete newer live facts while the query's captured version 2 terminal is in flight.
+        store.applyBatch("private-host", "private-chat", "private-epoch", 3, emptyList(), 0)
+        witness.received(pump, terminal(first, version = 2))
+        assertTrue(store.current("private-host", "private-chat").repairNeeded)
+        assertEquals("certified", witness.receipts().single().disposition)
+        assertEquals(1, certificates.size)
+        assertNull("a valid terminal does not imply whole-source readiness", witness.owner())
+        witness.received(pump, terminal(first, version = 2))
+        assertEquals("a duplicate terminal does not create another receipt", 1, certificates.size)
+
+        val later = query(11)
+        witness.sending(pump, later)
+        witness.sent(pump, later, true)
+        witness.received(pump, terminal(later, version = 3))
+        assertFalse(store.current("private-host", "private-chat").repairNeeded)
+        assertEquals(3L, store.current("private-host", "private-chat").checkpoint)
+        assertEquals(listOf("certified", "certified"), witness.receipts().map { it.disposition })
+        assertEquals(listOf(10L, 11L), witness.receipts().map { it.requestId })
+        assertEquals(2, certificates.size)
+        assertNotNull(witness.owner())
+        store.requestRepair("private-host", "private-chat")
+        assertNull("later source repair cannot reuse earlier readiness", witness.owner())
+    }
+
+    @Test fun replacementEpochAdmissionIgnoresRetiredCertificateVersion() = resetAdmission("replacement-epoch")
+
+    @Test fun reusedEpochAdmissionIgnoresRetiredGenerationVersion() = resetAdmission("private-epoch")
+
+    private fun resetAdmission(epoch: String) {
+        val old = query(10)
+        accept(old)
+        receive(terminal(old, version = 100))
+        val oldObservation = AuthoritativeHistoryProbe.snapshot()
+        assertTrue(oldObservation.ready)
+        val resetting = query(11, version = 100)
+        accept(resetting)
+        receive(reset(resetting, epoch))
+        val replacement = query(12, version = 0, epoch = epoch)
+        accept(replacement)
+        assertFalse(AuthoritativeHistoryProbe.snapshot().ready)
+        receive(terminal(old, version = 100))
+        assertFalse("retired duplicate cannot certify the replacement", AuthoritativeHistoryProbe.snapshot().ready)
+        receive(terminal(replacement, from = null, epoch = epoch))
+        val observation = AuthoritativeHistoryProbe.snapshot()
+        assertTrue(observation.exactlyAccounted)
+        assertTrue(observation.ready)
+        assertEquals(listOf(100uL, 1uL), observation.certificates.map { it.reply.checkpoint.version })
+        assertEquals(listOf(1uL), observation.currentCertificates.map { it.reply.checkpoint.version })
+        assertEquals(listOf("certified", "reset", "certified"), observation.receipts.map { it.disposition })
+        assertEquals(listOf(0L, 0L, 1L), observation.receipts.map { it.generation })
+        val snapshot = observation.certificates.last().snapshot
+        assertEquals(1L, snapshot.checkpoint)
+        assertEquals(1L, snapshot.generation)
+        val evidence = authoritativeThreadEvidence("private-host", "private-chat", pump, snapshot)
+        assertTrue("retired version 100 cannot constrain replacement checkpoint 1", observation.admits(evidence))
+        val retired = authoritativeThreadEvidence("private-host", "private-chat", pump, observation.certificates.first().snapshot)
+        assertFalse("retired source remains inadmissible even with a greater version", observation.admits(retired))
+        assertFalse(AuthoritativeHistoryProbe.isCurrent(oldObservation))
+    }
+
     @Test fun replacementEpochCertificationBelongsToItsNewRequest() {
         val old = query(10)
         accept(old)

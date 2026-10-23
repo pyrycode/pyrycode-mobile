@@ -38,15 +38,22 @@ internal object AuthoritativeHistoryProbe {
                             else -> false
                         }
                 }
-        val ready: Boolean = current && certificates.isNotEmpty() && exactlyAccounted
+        val currentCertificates: List<Certificate> =
+            certificates.filter {
+                it.reply.checkpoint.epoch == owner?.epoch && it.snapshot.generation == owner?.generation
+            }
+        val ready: Boolean = current && currentCertificates.isNotEmpty() && exactlyAccounted
 
         fun admits(evidence: ThreadEvidence): Boolean {
             val source = owner ?: return false
             val snapshot = evidence.sourceSnapshot ?: return false
-            return ready && evidence.admitted && source.host == evidence.owner.host &&
-                source.conversation == evidence.owner.conversation && source.epoch == evidence.owner.epoch &&
+            return ready &&
+                evidence.admitted &&
+                source.host == evidence.owner.host &&
+                source.conversation == evidence.owner.conversation &&
+                source.epoch == evidence.owner.epoch &&
                 source.generation == evidence.owner.generation &&
-                snapshot.checkpoint.toULong() >= certificates.maxOf { it.reply.checkpoint.version } &&
+                snapshot.checkpoint.toULong() >= currentCertificates.maxOf { it.reply.checkpoint.version } &&
                 snapshot.checkpoint >= snapshot.completedVersion
         }
 

@@ -77,6 +77,8 @@ must not combine independent mutable probe snapshots across an admission point.
 | Wrong connection/epoch/generation | `staleSourceCannotSupplyReceipt`, `staleGenerationCannotRetainEarlierReadiness` |
 | Actual native recovery and unchanged ordinary ping | original `scripted ping` pair |
 | Passive terminal precedes production application of the same frame | `passiveTerminalWaitsForProductionCertification` |
+| Newer live facts overtake a valid captured terminal, then an exact follow-up repairs the source | `validCapturedTerminalSurvivesNewerLiveFactsAndFollowUp`, `capturedTerminalOvertakenByLiveReplyRetainsReceiptForFollowUp` |
+| Old source certifies version 100 before reset; replacement certifies version 1 | `replacementEpochAdmissionIgnoresRetiredCertificateVersion`, `reusedEpochAdmissionIgnoresRetiredGenerationVersion` |
 
 ## Error handling
 
@@ -181,6 +183,48 @@ page. Revalidate the same observation revision after the UI sample. Keep every
 original scroll, text, chronology and inert-demand assertion afterwards. This
 adds no acceptance loop or deadline and touches no production rendering code.
 
+### 2026-10-23 — verifier rework: terminal validity and current-source readiness
+
+Findings 2 and 3 expose the same exact-receipt invariant at additional supported
+orderings. `certifyQuery` returning `Applied` supplies that request's successful
+receipt even when newer completed live facts keep `repairNeeded` true. Retain
+the certificate; gate `owner` separately on the current store's repair/reset
+flags, epoch, generation and complete per-request accounting. The existing
+global awaiting flag is redundant with those conditions and is removed.
+An exact follow-up can then repair the source without losing the earlier receipt.
+
+Keep every historical certificate and reset in the ledger. Derive current-source
+certificates by both epoch and generation, and use only that subset for admission
+and the final source-version assertion. A replacement at version 1 must never be
+compared against retired version 100, including a reset that reuses its epoch text.
+Require a current-generation certificate before readiness. Negative controls
+retain duplicate, stale-source, pending, abandoned and failed rejection checks.
+
+This remains one behaviour with its regressions, approximately 1100 written
+lines overall, no additional exported types or changed consumer signatures, two
+observation consumers, five acceptance criteria and unchanged rejection classes.
+The #2311 overlap in `OwnedReplyObservationTest` is an older additive test file;
+the rework adds one local regression without reorganizing its tests. Production
+and all deadlines remain unchanged. Apply formatting for finding 1 and run the
+affected classes and original Linux scripted ping pair. Fresh complete configured
+acceptance remains pending with the dispatcher after this repair.
+
+Controlled red execution retained in agents
+`logs/evidence/2515/rework-linux-20261023/`: `accounting-red` executed 16,
+passed 13 and failed the three added probes at the intended receipt/admission
+assertions; `owned-reply-red` executed 42, passed 41 and failed the new follow-up
+completion assertion. Both had zero errors/skips. No production change is needed.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/development-verification-emulator-evidence.md`,
+  Emulator and real evidence: document exact receipts, reset/retirement retention,
+  revision revalidation, production/renderer admission boundaries and current
+  epoch/generation version scoping. Carry forward diagnostic ordering, controlled
+  red/green tests, composed producer/source identities and raw evidence/cleanup
+  references; distinguish focused and complete configured acceptance and historical
+  #2513 failures. No protocol changes.
+
 ## Security review
 
 **Verdict:** PASS
@@ -198,7 +242,9 @@ adds no acceptance loop or deadline and touches no production rendering code.
 - Errors/logs: SHOULD FIX in implementation: test the structural log redaction
   boundary and override receipt/snapshot stringification to redact identities.
 - Concurrency: coherent admission and retained accepted identities prevent a
-  success, reset, close or late send-return from erasing outstanding work.
+  success, reset, close or late send-return from erasing outstanding work. Valid
+  captured terminals retain receipts while current-store repair blocks readiness;
+  only current epoch/generation certificates constrain replacement versions.
 - Threat model: dropped/reordered relay delivery fails closed; hostile daemon
   frames retain decoder validation. Rooted-device token theft and UI capture
   protections are unchanged, outside this test-only repair's attack surface.
