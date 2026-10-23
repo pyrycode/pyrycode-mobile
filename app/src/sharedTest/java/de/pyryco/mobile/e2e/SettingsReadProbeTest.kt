@@ -16,6 +16,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -72,6 +73,61 @@ class SettingsReadProbeTest {
             assertTrue("a read was sent", fixture.pump.sent.any { it.type == "request_session_settings" })
             assertEquals(EffectiveEffort.Applied("high"), result.await().effectiveEffort)
             assertTrue("the repository consumed the immediate reply before send returned", fixture.pump.deliveredDuringSend)
+        }
+
+    @Test fun receiptEvidenceUsesOnlyTheExistingCorrelatedReadAndCollector() =
+        runTest {
+            val fixture = Fixture(this)
+            val receipts = mutableListOf<Pair<Long, Envelope>>()
+            val before = fixture.pump.sent.toList()
+            val result =
+                async {
+                    SettingsReadProbe.read(
+                        fixture.repo,
+                        "c",
+                        { fixture.current },
+                        session = { fixture.readings.liveSessionBindings["c"] },
+                        onReceipt = { request, reply -> receipts += request to reply },
+                    )
+                }
+            runCurrent()
+            val request = fixture.request()
+            fixture.deliver(fixture.reply(request.id - 1))
+            runCurrent()
+            assertTrue("uncorrelated settings are not diagnostic success", receipts.isEmpty())
+            val reply = fixture.reply(request.id, "high")
+            fixture.deliver(reply)
+            val saved = result.await()
+            fixture.deliver(fixture.reply())
+            runCurrent()
+            assertEquals(listOf(request.id to reply), receipts)
+            assertEquals("high", saved.effort)
+            assertEquals("one additional request with its complete payload", before + request, fixture.pump.sent)
+            assertEquals(JsonObject(mapOf("conversation_id" to JsonPrimitive("c"))), request.payload)
+            assertEquals("the repository remains the only inbound collector", 1, fixture.pump.collections)
+        }
+
+    @Test fun replacedOwnerCannotPublishReceiptEvidence() =
+        runTest {
+            val fixture = Fixture(this)
+            val receipts = mutableListOf<Long>()
+            val result =
+                async {
+                    runCatching {
+                        SettingsReadProbe.read(
+                            fixture.repo,
+                            "c",
+                            { fixture.current },
+                            session = { fixture.readings.liveSessionBindings["c"] },
+                            onReceipt = { request, _ -> receipts += request },
+                        )
+                    }
+                }
+            runCurrent()
+            fixture.current = false
+            fixture.deliver(fixture.reply(fixture.request().id, "high"))
+            assertTrue(result.await().isFailure)
+            assertTrue(receipts.isEmpty())
         }
 
     @Test fun equalValuedReplyCompletes() =
@@ -353,7 +409,8 @@ class SettingsReadProbeTest {
         var accepted = true
         private var sending = false
         var deliveredDuringSend = false
-        override val inbound = frames.receiveAsFlow().onEach { if (sending) deliveredDuringSend = true }
+        var collections = 0
+        override val inbound = frames.receiveAsFlow().onStart { collections++ }.onEach { if (sending) deliveredDuringSend = true }
         override val state = MutableStateFlow<PumpState>(PumpState.Open("connection", setOf("thread", "interactive")))
 
         override fun start() = Unit
