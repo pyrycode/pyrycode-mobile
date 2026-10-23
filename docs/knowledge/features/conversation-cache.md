@@ -30,6 +30,15 @@ do not rewrite saved full source facts or extend the disk format. Process restor
 retains only the existing persisted facts, not fetched-body availability or
 transient Loading/Retry state. See [body retention and completion](remote-conversation-repository.md#missing-tool-body-queries-2388).
 
+Direct-child pages (#2389) likewise stay in the snapshot's separate in-memory
+parent/revision map, including their captured version and certified continuation.
+Unchanged offline reopen can reuse them; process restore does not promise pages,
+cursors or child Loading/Retry state. Summary enumeration never certifies root or
+saved-history completeness, rewrites newer complete facts or extends persisted
+coverage. Selection/activation, retention budgets and subtree invalidation remain
+with #2431–#2433, #2390 and #2391. See [page admission and completion](remote-conversation-repository.md#direct-child-pages-2389)
+and [the child evidence contribution to #2376](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
 **Read positions are the older-daemon fallback (#1883).** The host-keyed
 `ReadPosition` family keeps its existing format, storage custody and restart behavior.
 A daemon supplying confirmed read marks owns unread through its known latest durable id
