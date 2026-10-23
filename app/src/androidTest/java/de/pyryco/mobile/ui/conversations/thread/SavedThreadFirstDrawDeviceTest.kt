@@ -74,6 +74,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -82,6 +83,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -643,6 +645,32 @@ class SavedThreadFirstDrawDeviceTest {
     @Test fun authoritativeFileCompatibility_exposesNoRetiredReadApis_firstOpenAndReopen() {
         measureAuthoritativeFiles(guardLegacyReads = true)
     }
+
+    @Test fun authoritativeFileFixture_doesNotRetainDecodedFactsAcrossOpenings() {
+        val facts = authoritativeFileFacts(fragmented = true)
+        val samples = sampleFixtureFacts(facts)
+        withAuthoritativeFileFixture(facts) {
+            // Establish collection independently: this control must not rely on an arbitrary sleep.
+            val sentinel = WeakReference(Any())
+            composeRule.waitUntil(5000) {
+                Runtime.getRuntime().gc()
+                sentinel.get() == null
+            }
+            val retained = samples.count { it.get() != null }
+            val runtime = Runtime.getRuntime()
+            Log.i(
+                "SavedThreadFixtureMemory",
+                "event=fixture_seeded facts=${facts.size} retained_samples=$retained " +
+                    "heap_used_bytes=${runtime.totalMemory() - runtime.freeMemory()} heap_max_bytes=${runtime.maxMemory()}",
+            )
+            assertEquals("The expected-fact list must not retain a second decoded fixture during restore", 0, retained)
+            assertEquals(36_000, facts.size)
+            assertEquals(1, facts.first().getValue("id").jsonPrimitive.content.toInt())
+            assertEquals(36_000, facts.last().getValue("id").jsonPrimitive.content.toInt())
+        }
+    }
+
+    private fun sampleFixtureFacts(facts: List<JsonObject>) = listOf(WeakReference(facts.first()), WeakReference(facts.last()))
 
     @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
         measureDatabaseOpenings(readDelayMs = 3000)
