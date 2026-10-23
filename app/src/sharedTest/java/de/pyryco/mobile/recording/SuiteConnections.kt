@@ -252,6 +252,17 @@ internal class SuiteConnections private constructor(
         }
     }
 
+    /** Test-end has run; retain producers through the captured terminal observation or close prefix. */
+    suspend fun completeBeforePhoneTeardown(): Boolean =
+        withTimeout(30000) {
+            val replay = tape ?: return@withTimeout false
+            beforePhoneTeardown()
+            if (!replay.scenarioCompletesBeforePhoneClose()) return@withTimeout false
+            checkpoint("scenario-complete")
+            beforePhoneRestart()
+            true
+        }
+
     suspend fun checkpoint(name: String) {
         require(name.matches(Regex("[a-z][a-z0-9-]{0,79}"))) { "Invalid test checkpoint name" }
         if (tape != null) {
