@@ -1016,9 +1016,6 @@ class RemoteConversationRepository internal constructor(
                         }
                         stallProjection.clear(event.conversationId)
                         turnPhaseProjection.apply(event)
-                        if (event is LiveSessionEvent.TurnState) {
-                            RelayLog.d { "event=session_error_turn_state phase=${event.phase.name.lowercase()}" }
-                        }
                         if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
                             contextUsageProjection.onTurnStarted(event.conversationId)
                             sessionErrorProjection.clear(event.conversationId)

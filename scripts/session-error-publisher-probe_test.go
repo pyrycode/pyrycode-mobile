@@ -54,9 +54,9 @@ func TestSessionError2338PublisherDelivery(t *testing.T) {
 				t.Fatal("responding was not admitted")
 			}
 			phases := []string{}
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
 			read := func() string {
-				deadline := time.NewTimer(5 * time.Second)
-				defer deadline.Stop()
 				for {
 					select {
 					case r := <-delivered:
@@ -93,8 +93,9 @@ func TestSessionError2338PublisherDelivery(t *testing.T) {
 			if held {
 				close(release)
 			}
-			if read() != "idle" {
-				t.Fatal("final phase was not idle")
+			// Held publication can deliver responding first after the release.
+			// Collect through terminal idle before checking the complete sequence.
+			for read() != "idle" {
 			}
 			t.Logf("admitted_responding=true same_generation=true delivered_phases=%v", phases)
 			if !slices.Equal(phases, []string{"responding", "idle"}) {
