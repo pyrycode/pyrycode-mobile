@@ -1,6 +1,10 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -15,10 +19,14 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,6 +37,86 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AgentReplyEvidenceScreenTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun heldRunRebindsAfterResetBetweenReadinessAndReveal() = resetDuringReveal(1)
+
+    @Test fun heldRunRebindsAfterTwoConsecutiveResets() = resetDuringReveal(2)
+
+    private fun resetDuringReveal(resets: Int) {
+        var snapshot by mutableStateOf(agentReplySnapshot())
+        val store = AuthoritativeThreadStore()
+        store.establishComplete(
+            "host",
+            "conversation",
+            requireNotNull(snapshot.epoch),
+            snapshot.completedVersion,
+            snapshot.items,
+            snapshot.generation,
+        )
+        val connection = Any()
+
+        fun reading() = authoritativeThreadEvidence("host", "conversation", connection, snapshot)
+
+        fun resolve() = reading().let { it.heldAgentReplyEvidence(it.owner, "raw-task", "raw-agent", "child", "main") }
+        val original = requireNotNull(resolve())
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    ThreadUiState(
+                        "conversation",
+                        "Channel",
+                        authoritativeThread = projectAuthoritativeThread("host", "conversation", snapshot),
+                    ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    collapseToolUses = true,
+                )
+            }
+        }
+        var resetCount = 0
+        val revealed =
+            compose.revealHeldAgentRun(5_000, { resolve() }) { stage ->
+                if (resetCount < resets && stage == "event=held_agent_run stage=ready") {
+                    val beforeReset = requireNotNull(resolve())
+                    val index = compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                    assertTrue("the original owned key was ready before reset", index("msg:${beforeReset.runId}") >= 0)
+                    compose.runOnIdle {
+                        val epoch = requireNotNull(snapshot.epoch)
+                        store.reset("host", "conversation", epoch)
+                        store.establishComplete(
+                            "host",
+                            "conversation",
+                            epoch,
+                            snapshot.completedVersion,
+                            snapshot.items,
+                            store.current("host", "conversation").generation,
+                        )
+                        snapshot = store.current("host", "conversation")
+                    }
+                    resetCount++
+                    val replacement = requireNotNull(resolve())
+                    assertNotEquals(beforeReset.runId, replacement.runId)
+                    val currentIndex = compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                    assertTrue("the replaced key must leave the list", currentIndex("msg:${beforeReset.runId}") < 0)
+                    assertTrue(
+                        "the same owned run remains projected under its current identity",
+                        currentIndex("msg:${replacement.runId}") >= 0,
+                    )
+                }
+            }
+        assertEquals(resets, resetCount)
+        assertNotEquals(original.runId, revealed.runId)
+        val current = requireNotNull(resolve())
+        val run =
+            hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:${current.runId}"))
+        compose.onNode(run).assertIsDisplayed().performClick()
+        val reply = hasTestTag("assistant-reply:${current.heldReply.message.id}")
+        val child = hasTestTag("background-agent-child:${current.agent.block}")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(reply)
+        compose.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(1)
+    }
 
     @Test fun authoritativeEvidenceIdentitiesKeyTheCollapseAndReopenChecks() {
         val snapshot = agentReplySnapshot()

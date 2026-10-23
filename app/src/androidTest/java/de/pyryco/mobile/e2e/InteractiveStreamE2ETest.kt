@@ -5457,30 +5457,25 @@ class InteractiveStreamE2ETest {
             )
             // Raw peer task/tool facts only locate the admitted Agent; rendered identities come from evidence.
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            var displayedEvidence: AgentReplyEvidence? = null
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                val current =
-                    runBlocking {
-                        withTimeoutOrNull(1000) {
-                            harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
-                                val support = phoneRepository.negotiatedThread?.support?.value
-                                reading.admitted && support is ThreadSupport.Supported && reading.owner.connection === support.connection
+            val evidence =
+                composeTestRule.revealHeldAgentRun(
+                    THREAD_TIMEOUT_MS,
+                    resolve = { remaining ->
+                        val current =
+                            runBlocking {
+                                withTimeoutOrNull(minOf(1000, remaining)) {
+                                    harnessThreadEvidence(phoneRepository).observe(chat).first { reading ->
+                                        val support = phoneRepository.negotiatedThread?.support?.value
+                                        reading.admitted &&
+                                            support is ThreadSupport.Supported &&
+                                            reading.owner.connection === support.connection
+                                    }
+                                }
                             }
-                        }
-                    }
-                val candidate = current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
-                val index =
-                    candidate?.let {
-                        list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:${it.runId}")
-                    } ?: -1
-                if (index < 0) {
-                    false
-                } else {
-                    displayedEvidence = candidate
-                    true
-                }
-            }
-            val evidence = checkNotNull(displayedEvidence) { "the held Agent must supply its own displayed tool run" }
+                        current?.heldAgentReplyEvidence(current.owner, task.taskId, agentId, childTurn, mainTurn)
+                    },
+                    evidence = { android.util.Log.i("AgentReplyReveal", it) },
+                )
             // Body identity excludes user prompts and accepts any reply wording or Markdown.
             val reply = hasTestTag("assistant-reply:${evidence.heldReply.message.id}")
             val child = hasTestTag("background-agent-child:${evidence.agent.block}")
@@ -5499,7 +5494,6 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("opened owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
                     }
-            list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.

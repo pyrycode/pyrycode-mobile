@@ -38,6 +38,8 @@ No production job or flow changes. Native assertions continue reading passive ev
 | Event | Coverage |
 | --- | --- |
 | Held Agent and intervening settled main reply, collapse enabled | Original `RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`, plus the controlled screen regression chosen from the failure observations |
+| Reset after exact owned-key readiness | `AgentReplyEvidenceScreenTest.heldRunRebindsAfterResetBetweenReadinessAndReveal` uses the real store reset, proves the old key absent and current owned key present, then opens the current exact header |
+| Two resets reuse the same raw Agent and turn identities | `AgentReplyEvidenceScreenTest.heldRunRebindsAfterTwoConsecutiveResets` requires both replacements and opens only the final current run |
 | Closed → expanded → closed owned run | Original scenario's exact click-label, prose visibility/uniqueness and owned outlined-tool assertions; existing `AuthoritativeAgentOwnershipTest` |
 | Graph/cache replacement and settlement reconnect | Original scenario and `proveNegotiatedAgentRestart`, unchanged |
 | Missing or unrelated owned row | Controlled regression must reject a missing exact key or wrong run rather than accepting any clickable header |
@@ -56,3 +58,13 @@ Run focused JVM tests, lint, debug assembly, instrumented Kotlin compilation, fo
 
 - Does the original method lose its run in admitted evidence, projection, or semantics discovery? Resolve with fresh focused observations before selecting the final repair.
 - Does a controlled key-first reveal reproduce and repair that same boundary? Require evidence rather than assuming the earlier marker or restart failures share a cause.
+
+## Revisions
+
+- 2026-10-23: the unchanged Linux method passed once. The newly available #2462 rework bundle `cb449f5a3d1fa6d20b59efdf3f9e08086130bc96d78ab2c5c099fbc8bd98f121` retains the original failure: its matcher names generation 0, while the phone trace records a reset and a fresh 12-row projection before lookup fails. Projection scope includes generation. Add `HeldAgentRunReveal.revealHeldAgentRun` as an extraction of the original wait/scroll, with `AgentReplyEvidenceScreenTest.heldRunRebindsAfterResetBetweenReadinessAndReveal` replacing the generation after the exact original key is ready. Observe the extracted old lookup fail before repairing it. The revised design re-resolves the same raw Agent/turns within one original readiness deadline, validates and scrolls its current exact key together, then requires the exact clickable descendant and current identity before returning. Rebinding never changes production placement or ownership. The original trace does not record failure-time keys; distinguish the controlled demonstrated mechanism from any unsupported historical inherited/regression classification.
+- 2026-10-23: the controlled screen run executed two methods: the existing proof passed and the reset probe failed at the original generation-0 clickable-header matcher. Its real store reset retained the same admitted family and current projected run, while removing the obsolete key. This resolves the diagnosis questions: the defect is retaining a generation-scoped lookup identity, not absence of the owned tools or their current header. The scenario body and fixture hashes match between the historical failing revision and the unchanged Linux baseline; broader branch regression classification remains unproved. Preserve both outcomes and the exact red patch under agents `logs/evidence/2483/`.
+- 2026-10-23: the repaired lookup passed the reset probe and existing screen proof (2/2). Added the consecutive-reset case through the same real-store control; final focused classes passed 14/14 with zero failures/errors/skips: `AgentReplyEvidenceScreenTest` 3, `AgentReplyEvidenceTest` 9 and `AuthoritativeAgentOwnershipTest` 2. One intermediate compile attempt executed zero tests because of a missing semantics import, corrected before these passes. The earlier formatting failure was corrected and Spotless apply passed. Native replay and final build checks remain to be recorded before handoff.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/development-verification-agent-reveal-evidence.md`, “Geometry, disposal and proof-entry readiness”: document current-generation held-run lookup across a recorded reset, the controlled old-key failure, and the final counted Linux proof. Keep historical macOS failure and source-comparison limits distinct.
