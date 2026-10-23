@@ -10,6 +10,14 @@ class LiveSessionCleanupRule(
     private val end: () -> Unit,
 ) : TestRule {
     private val restartedActivities = mutableListOf<AutoCloseable>()
+    private var endAttempted = false
+
+    /** Recorded terminal work can need the Activity after end; outer cleanup still owns release. */
+    fun endWhileActivityAlive() {
+        if (endAttempted) return
+        endAttempted = true
+        end()
+    }
 
     /** Transfer ownership before the proof runs; fixture cleanup and test-end still need this Activity. */
     fun withRestartedActivity(
@@ -26,6 +34,7 @@ class LiveSessionCleanupRule(
     ): Statement =
         object : Statement() {
             override fun evaluate() {
+                endAttempted = false
                 begin()
                 var failure: Throwable? = null
 
@@ -40,7 +49,7 @@ class LiveSessionCleanupRule(
                     preserve(error)
                 }
                 try {
-                    end()
+                    endWhileActivityAlive()
                 } catch (error: Throwable) {
                     preserve(error)
                 }

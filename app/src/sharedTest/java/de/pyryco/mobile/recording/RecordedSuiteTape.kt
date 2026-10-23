@@ -541,6 +541,19 @@ internal class RecordedSuiteTape(
             .distinct()
     }
 
+    /** Decide placement from the captured observation, without consuming a close or any wire work. */
+    @Synchronized fun scenarioCompletesBeforePhoneClose(): Boolean {
+        failure?.let { fail(it) }
+        val boundary = checkpointBoundary()
+        val expected = steps.getOrNull(boundary)?.message?.payload as? JsonObject
+        if (expected != JsonObject(mapOf("body" to JsonPrimitive("scenario-complete")))) {
+            fail("Recorded suite test checkpoint mismatch")
+        }
+        return (0 until boundary).none {
+            it !in consumed && steps[it].direction == "close" && steps[it].owner.startsWith("phone/")
+        }
+    }
+
     @Synchronized fun initial(): List<SuiteStep> = drain()
 
     @Synchronized fun closeReady(owner: String): Boolean {
