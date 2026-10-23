@@ -1,0 +1,117 @@
+Linux verifier rework, 2026-10-23
+
+Disposition: waiting on independent native repairs #2353, #2510 and #2511.
+The Compact implementation, fixture, assertions, deadlines and three original
+passing Linux proofs are unchanged. No retries, skips or longer waits were
+introduced. Complete configured acceptance and valid baseline classification
+remain pending; these failures are not labelled accepted inherited failures.
+
+Original verifier candidate:
+2ff4cdae842b3a65b3de0e1577092adecceceba5
+Merged main: 0f0390a19dbef81db28a8380842e1da6795eddcb
+Verifier evidence run:
+bdecb162653ce6f03c1fec2a37e21471fe0db0857a62871b8482ba4815b82ea0
+Bundle digest:
+a9d704e3cb800975e6aed4f577ec856b3c23016228ca3578b4c3896f67283cd1
+The original scripted-all result remains 24 executed, 19 passed, 5 failed,
+zero errors/skips. Its Compact method passed once. Both attempted exact-method
+comparisons executed zero tests because selection rejected companion methods.
+No counted same-tree/main comparison is claimed.
+
+Fresh focused commands and counted results (all exit 1):
+python3 scripts/android-test-gate.py scripted ping
+  2 executed, 0 passed, 2 failed, 0 errors/skips.
+python3 scripts/android-test-gate.py scripted background-agent
+  2 executed, 0 passed, 2 failed, 0 errors/skips.
+python3 scripts/android-test-gate.py scripted session-error
+  1 executed, 0 passed, 1 failed, 0 errors/skips.
+E2E_BACKGROUND_AGENT_CASE=retained python3 scripts/android-test-gate.py scripted background-agent
+  1 executed, 0 passed, 1 failed, 0 errors/skips. Additional diagnostic capture
+  preserves the first arm's phone output; it does not replace the failed pair.
+Zero real Claude turns in every run. No full suite was run by the builder.
+
+Executed Mobile source:
+  ping: 2ff4cdae842b3a65b3de0e1577092adecceceba5
+  others: af7a06eb15d74fc12deb7f915bffe769bebaa381
+The latter adds only the committed rework plan/documentation handoff.
+All affected native test/helper sources equal the merged main above.
+The initial ping provenance sampled retention-time HEAD after the plan commit;
+provenance-correction.json preserves the actual executed revision from the
+harness inputs, alongside the original provenance and original hash manifest.
+
+Supporting sources for every fresh run:
+  daemon: 5ba6b8dacc0916533df8b8d9c60090190a9e6f4d (contains Core #3725)
+  relay: 2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1
+Daemon SHA256:
+  e3b9beb7b2817b15bf400029686ec79b134f7324fbe3248be20da53cab1729a1
+Relay SHA256:
+  79c5e14b4b52c10c6b5523ca56f8d3354b2d6bbcb2672be68588f199a1b61973
+Both report the matching source revision and vcs.modified=false. The dedicated
+tagged session-error daemon has separate metadata and SHA256 retained.
+Effective app/test APK hashes are retained per invocation in provenance.json.
+Managed pixel2Api33Atd, Android 13/API 33 x86_64, emulator 37.2.12/16428233.
+Raw device-info, UTP results and phase/load records are retained per invocation.
+
+Supported failure boundaries and owners:
+1. Session-error: retained-arm held_send, fixture ready and selected host,
+   relay/session Connected. The dedicated daemon records one send. runCase's
+   next 20-second awaitQueue requires raw queue_state, which Core #3733 retired
+   for every app. Existing #2353 receives this residual evidence; #2338's
+   later recovery-status repair cannot supply a retired queue receipt.
+2. Agent restart: after the release reply renders, settledAgentAfterRecovery
+   times out after 30 seconds. Phone diagnostics show settled=true, current
+   admitted host/conversation/connection/epoch/generation, checkpoint 40 and
+   coverage orders 8..27. A new child at order 29 and following reply at 37 are
+   outside that certified range, which the helper rejects. #2511 owns a
+   controlled regression and refreshing the certificate without weakening it.
+3. Retained Agent: the separate exact-arm capture independently records the
+   same rejected coverage boundary, with the original 30-second timeout.
+4. Durable-gap: after deliberate phone sever and the older post batch, the
+   first missPages callback waits for the peer's raw assistant_delta. Core
+   #3734/#3737 retired those app frames; no completed-turn send follows. The
+   callback times out at 90 seconds before restoreLink. #2510 owns the
+   authoritative observation migration and failure cleanup.
+5. Following ping: fails its initial reply-render wait after the preceding
+   durable-gap timeout. Phone logs send_failed and the isolated daemon has no
+   sends in the pair. Restoring the deliberate sever on every failure path is
+   part of #2510. This is earlier than #2494's separate final-read proof.
+The fresh boundaries do not reconstruct missing original verifier phone
+stacks. Core's observed baseline-required gaps alone establish no new producer
+cause; Core #3844/#3845 remain distinct continuity/retirement investigations.
+
+Private persistent evidence base:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2442/rework-linux-20261023/
+  original-verifier-bdecb162/: original downloaded bundle, 140 entries verified.
+  original-controller/: surviving original session-error controller trace.
+  ping/: both original XML cases, both phone logs, UTP/device information,
+    isolated daemon/relay logs, source/APK identities and corrected provenance.
+    SHA256SUMS-v2, 25 entries, manifest hash:
+    66dcb41ecffda8623a19c24b2781f1cfec3ba81eb747e6c0b9b4149cbb38980c
+  background-agent/: both failing XML cases, restart phone/UTP information,
+    both isolated daemon/relay logs and source/APK identities.
+    SHA256SUMS, 28 entries, manifest hash:
+    458479f652c7781241510e06c556962862b70f9dc2bb44ec954873df1724a99c
+  session-error/: failed XML, phone/UTP/device data, dedicated retained daemon
+    and controller events, outer daemon/relay logs, tagged daemon identities.
+    SHA256SUMS-v2, 27 entries, manifest hash:
+    e3c468ec430b1728c26b487edfd5da40fea0cd1922e638b4cef639bf09606b18
+  background-agent-retained/: separate failing XML, raw phone/UTP/device data,
+    isolated daemon/relay logs and source/APK identities.
+    SHA256SUMS, 21 entries, manifest hash:
+    2c3f5b74c15eb8664569ba359ca0e2bacca21622b122c7da369afc5f085019bf
+Copies are owner-only; every manifest entry was rehashed after retention.
+
+Evidence limitations:
+The original verifier bundle preserves aggregate failures, handoff, daemon logs
+and failed-selection stderr but omits its XML/phone reports. Its cited gate
+directory is absent here. The separately archived older passing run is not the
+failed gate and cannot replace it. During the fresh Agent pair, the wrapper
+retains both XML reports but the next managed arm overwrites the first arm's
+phone/UTP output. That missing output remains missing; the extra retained-arm
+failure supplies a new independently identified capture. #2511 carries the
+retention correction requirement. No historical result is rewritten as passed.
+
+Credential-free prerequisite regressions: 25 executed/passed, zero failures.
+Rework lint, assembly and changed-file formatting passed. Complete configured
+dispatcher acceptance remains pending after the linked repairs. macOS is
+outside this Linux ticket's verification scope.

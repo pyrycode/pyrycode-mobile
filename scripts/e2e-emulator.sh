@@ -231,6 +231,21 @@ ANSWER_PEER_SERVER_STATIC_PUBKEY=""
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# #2442: an old delivery producer can retire the peer before the live Compact offer arrives.
+# Source HEAD alone is insufficient: verify the revision embedded in the selected binary.
+require_context_overflow_daemon() {
+  local required="$1"
+  [ -n "${DETERMINISTIC:-}" ] && [ "${SCENARIO:-}" = "context-overflow" ] || return 0
+  [[ "${DAEMON_REVISION:-}" =~ ^[0-9a-f]{7,64}$ ]] \
+    || die "context-overflow prerequisite Core #3725: daemon revision unavailable; rebuild a versioned test daemon containing ${required}"
+  [ -n "${PYRYCODE_SRC:-}" ] \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
+    || die "context-overflow prerequisite Core #3725: configure PYRYCODE_SRC with the repair and binary revisions"
+  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
+    || die "context-overflow prerequisite Core #3725: selected daemon lacks the accepted-delivery repair; rebuild from ${required} or a descendant"
+}
+
 # #1775 needs the shipped daemon handlers, not just #2766's durable instructions store.
 # Check the binary's revision before starting the daemon; never silently skip the live scenario.
 require_host_prompt_daemon() {
@@ -1035,6 +1050,7 @@ if command -v go >/dev/null 2>&1; then
   DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p' || true)"
 fi
 log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
+require_context_overflow_daemon 3d5379ec4b778c569c27b7639a2ae495b32cee0d
 require_host_prompt_daemon b3daa0432528188f2829b235877c60627afb8e43
 # Claude's own revision (#687), clamped to a plain charset: it is a binary's output, printed to the log.
 if [ -n "${DETERMINISTIC}" ]; then

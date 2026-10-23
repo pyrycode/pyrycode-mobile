@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="0" errors="0" skipped="0">
+  <testsuite name="context-overflow-run-1" tests="1" failures="0" errors="0" skipped="0" timestamp="2026-10-21T22:51:15">
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon" />
+  </testsuite>
+  <testsuite name="context-overflow-run-2" tests="1" failures="0" errors="0" skipped="0" timestamp="2026-10-21T22:52:32">
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon" />
+  </testsuite>
+  <testsuite name="context-overflow-run-3" tests="1" failures="0" errors="0" skipped="0" timestamp="2026-10-21T22:53:44">
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon" />
+  </testsuite>
+</testsuites>
