@@ -1,0 +1,112 @@
+# Expanded detail validity
+
+## Files read
+
+- `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadStore.kt`: snapshot overlays, `applyBatch`, `enrichBody`, `enrichChildren`, and retention admission.
+- `app/src/main/java/de/pyryco/mobile/data/repository/AuthoritativeThreadQueries.kt`: consumer union, staged data, `bodyCurrent`, terminal draining and Retry.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeThreadPresentation.kt`: deferred conversion, ancestor visibility and exact read sight.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`: expanded demand and inline child controls.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/ToolCallRow.kt`: existing body Loading/Retry/offline surface.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`: connection and destination binding fences; retain these paths.
+- `app/src/test/java/de/pyryco/mobile/data/repository/AgentChildrenQueriesTest.kt` and `ToolBodyQueriesTest.kt`: controlled lane fixtures and ownership probes.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/AgentChildrenScreenTest.kt`: mounted production repository/ViewModel consumer.
+- `docs/knowledge/features/thread-screen.md`, `remote-conversation-repository.md`, and `conversation-cache.md`: retain stale entries in the existing inclusive host budget; Loading is no certificate and held presentations can only withdraw.
+- `/work/Projects/pyrycode/docs/protocol-mobile.md`: “Compact projection”, “Bounded expansion reads” and “Security model” are wire authority.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Read context and screenshot using the Figma design-to-code skill. Keep the existing outlined Tool use rows, background/primary-container border, body-medium header and monospace body-small details. Inline Loading/Retry/offline and history-style Load more remain inside the expanded parent; no geometry or asset changes.
+
+## Context
+
+Retained presence currently suppresses reads even after ancestor freshness changes. Source revision and subtree freshness are independent. This repair connects existing bounded demand to source observations without implementing compact wire selection or persistence. It needs no decision record.
+
+One useful behaviour: an expanded current owner presents and refreshes invalidated details truthfully. Freshness plumbing has only this consumer and stays with its regression. Forecast: about 1400 written lines including tests and this plan, two supporting state declarations, no required public consumer migration, four acceptance criteria, and existing reject categories. Recount before handoff. Overlap: #2493 adds a separate store metadata helper; keep edits local.
+
+## Design
+
+Snapshot detail validity records accepted source observations and per-item invalidation serials separately from body/page data and Loading/Retry. A new source observation with a changed revision, changed freshness, or unknown freshness invalidates the affected retained subtree. Known zero compares as a value. Older observations cannot undo a newer observation; ordinary load publications do not count as source observations. Apply this at validated source batch/change and child-page admission, without rewriting full equal-revision facts.
+
+Retained stale bodies/pages stay charged and visible in the same owner, including across source revision changes. Availability for read sight, empty completion and continuation requires current validity. Successful replacement clears only its own invalidation. First pages atomically replace enumerations; later pages retain existing immutable identity/revision and cursor-capture checks.
+
+Query keys capture the item's invalidation serial in addition to existing host/connection, epoch, generation/incarnation, identity, kind and revision. Child continuations capture the retained consumed version too. Invalidation retires old work through existing staged-data discard and terminal drain. New work starts only from current expanded demand. Retry and Load more remain explicit and current-owner bound; failure is sticky through recomposition. A stale page chooses page one, retaining displayed rows until validated success.
+
+Deferred presentation distinguishes usable read contents from retained display contents. Only expanded visible rows convert full bodies. Stale retained bodies render beside the existing inline state; stale pages cannot show authoritative empty or Load more. Offline stale and absent details remain distinguishable by retained rendered contents plus offline status.
+
+## State and concurrency model
+
+Reuse synchronized store admission and query-lane methods. No new coroutine, dispatcher, persistence or lock ordering. Snapshot StateFlow publications feed existing ViewModel scheduling and mounted demand. Existing connection scope cancellation, destination binding retirement, and lifecycle effects withdraw demand. No callbacks from the store into the lane while holding the store lock.
+
+## State transitions and identity reuse
+
+| Event | Proof |
+| --- | --- |
+| Equal parent revision with changed/zero/missing freshness | `AgentChildrenQueriesTest.freshnessInvariantEqualRevisionAncestorObservationRefreshesOnlyDemandedPages` |
+| Open nested body under changed ancestor freshness | `AgentChildrenQueriesTest.freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight` |
+| Source revision changes with unchanged freshness | `AgentChildrenQueriesTest.freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement` |
+| Recomposition after replacement or Retry failure | `AgentChildrenQueriesTest.freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight`; `AgentChildrenScreenTest.invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart` |
+| Collapse/hidden ancestry while queued | `AgentChildrenQueriesTest.stalePresentationWithdrawsQueuedChildPageBeforeLoadingFrame`; `AgentChildrenScreenTest.collapsedConsumerWithdrawsBeforeLoadingFrame` |
+| Two consumers, one withdraws | `AgentChildrenQueriesTest.ownershipInvariantInvalidatedConsumerUnionRejectsHeldAdditionsAndOldCaptures`; `anotherExpandedConsumerRetainsAnActiveContinuation` |
+| Stale/refused continuation and first-page replacement | `AgentChildrenQueriesTest.rejectedContinuationRetainsRowsUntilSuccessfulExplicitRestart`; `AgentChildrenScreenTest.invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart` |
+| Authoritative empty replacement | `AgentChildrenQueriesTest.freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement` |
+| Subsequent tied pages | `AgentChildrenQueriesTest.pageInvariantFiftyZeroOrderTiesContinueWithoutDuplicates` |
+| Reset/reused epoch and deletion | `AgentChildrenQueriesTest.ownershipInvariantRevisionEpochDeletionDisconnectAndHostCollisionCannotPublish` |
+| Colliding host/conversation/item identities | `AgentChildrenQueriesTest.ownershipInvariantRevisionEpochDeletionDisconnectAndHostCollisionCannotPublish`; `AgentChildrenScreenTest.lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds` |
+| Background/destination retirement | `AgentChildrenScreenTest.stoppedConsumerWithdrawsBeforeLoadingFrame`; `MissingToolBodyScreenTest.stoppedDestinationReleasesDemandBeforeLoadingPresentationArrives` |
+| Reconnect/connection replacement and retired callbacks | `AgentChildrenScreenTest.lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds`; `AgentChildrenQueriesTest.ownershipInvariantLateRetirementCannotClearReplacementRetryWithCollidingIds` |
+| Unchanged reopen including offline | `AgentChildrenScreenTest.mountedAgentExpansionPagesNestedSummariesRetriesAndReopensOffline`; `MissingToolBodyScreenTest.mountedProductionConsumerLoadsRetriesAndReusesRetainedBodyWithoutFalseSight` |
+| Data then invalidation then terminal, late old capture | `AgentChildrenQueriesTest.captureInvariantInvalidationBetweenDataAndMarkerDrainsBeforeReplacement` |
+| Older full batch versus current full replacement | `AgentChildrenQueriesTest.captureInvariantOlderFullBatchCannotClearNewerAncestorInvalidation`; `freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant` |
+| Revision invalidation before the next consumer frame | `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` |
+| Parent page replacement changes or omits nested freshness after Retry | `AgentChildrenQueriesTest.ancestorPageObservationClearsNestedRetryForChangedOrMissingFreshness` |
+| Held demand update after body/page invalidation and later withdrawal | `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation`; `heldPageDemandKeepsInvalidatedEnumerationProtectedUntilWithdrawal` |
+| Complete delivery without expansion after ancestor changes | `AgentChildrenQueriesTest.completeDeliveryDescendantsRemainUsableWithoutExpansionAfterAncestorChanges` |
+
+## Error handling
+
+Keep existing bounded decoder failures, capacity refusal, timeout and disconnected retirement. Failed refresh retains stale data with sticky inline Retry; explicit Retry uses current targets and starts child enumeration at page one. Abandoned work drains under the existing timeout and connection-retirement rules. No daemon text or identifiers enter diagnostics; add only static validity event codes.
+
+## Testing strategy
+
+Write a causal equal-revision ancestor-change regression first and retain its red XML before implementation. Extend focused repository probes for independent revision/freshness, nested demand, replacement, capture fencing and consumer withdrawal. Extend the mounted production-consumer shared Compose fixture for refresh failure/Retry, stale-cursor restart and lifecycle replacement; run it under Robolectric and as one focused native class. Reuse unchanged large-fixture and retention tests, running affected classes rather than a complete suite. Run one existing `tool` scripted scenario on Linux. Preserve raw reports, source/binary identities and executed/passed/failed/skipped counts, including red evidence. Complete configured acceptance and genuine paired capture/replay (#2393) stay with their owners.
+
+Run focused JVM classes, lint, assembleDebug, instrumented Kotlin compilation, Spotless apply/check, then merge main, push, and run assembleDebug and `scripts/pre-verify.py --gradle` before opening the PR.
+
+## Open Questions
+
+None. Unknown freshness invalidates once per accepted source observation, never once per recomposition.
+
+## Revisions
+
+- 2026-10-23: The earlier child-owner regression expected a revised ancestor to hide all retained grandchildren immediately. The ticket explicitly requires stale rows to remain until validated replacement, so its assertion now proves retained visibility with invalid page/body and no read sight in either page insertion order. Missing bodies still avoid full conversion. This changes display retention, never source identity or freshness certification.
+- 2026-10-23: Lifecycle review identified a second asynchronous publication boundary: an old lane's final retirement could clear a replacement lane's sticky Retry under colliding IDs. Bind load-state writes to their query owner in `detailLoad`, retain serial/generation checks and prune owner bookkeeping with snapshot publication. The controlled replacement probe also collides request IDs. The mounted connection switch explicitly reopens after the existing destination-local expansion reset.
+- 2026-10-23: `staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` reproduced eviction between a source revision change and the next consumer frame. Existing admitted demand now protects retained invalidated data by identity through that interval; this protection grants no read, Retry or publication authority. Collapse still releases the entry and permits capacity Retry.
+- 2026-10-23: `freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant` reproduced a retained invalidation surviving a current full prose fact. Non-tool full facts now clear only their own body invalidation when their revision wins and capture reaches the invalidation floor; an older full batch remains stale. They grant no child completion or history coverage.
+- 2026-10-23 (verifier finding 1): Parent first-page replacement must clear only its own load from the observed snapshot. Copying the pre-observation child loads restores an invalidated nested Retry and suppresses current demand. The changed/missing-freshness regression keeps the fifth nested request as its causal assertion.
+- 2026-10-23 (verifier finding 2): `syncRetention` forwards all remaining admitted consumer targets to the store's lifetime/identity protection checks. Request serial, revision and cursor checks still govern reads, Retry and publication, but cannot revoke protection during a held-frame withdrawal update. Body and page pressure probes cover retention at the inclusive byte limit, refusal of stale additions, and release on withdrawal.
+- 2026-10-23 (verifier finding 3): Complete source bodies reached through complete source ancestry remain usable at their exact revision after a full ancestor observation. Body invalidation propagates through omitted/summary ancestry and fetched details; child enumeration and request serials still invalidate for every affected identity. Existing invalidation floors remain in force, so an old full batch cannot clear a compact invalidation. The production repository with only `thread`/`interactive` grants must render the complete descendant without an expansion request or synthetic Loading state.
+
+## Documentation handoff
+
+Pending for the documentation stage and #2393's relocated handoff: supply invalidation, retry/reopen and lifecycle behaviour, counted outcomes, source/binary revisions and durable raw evidence for `docs/knowledge/features/thread-screen.md`, `docs/knowledge/features/remote-conversation-repository.md`, `docs/knowledge/features/conversation-cache.md` and `docs/e2e-interactive-stream.md`. Preserve historical failures and privacy/approval holds; documentation cannot supply missing checks.
+
+## Security review
+
+**Verdict:** PASS
+
+- [Trust boundaries] Validated `ThreadQueryDecoder` data plus a separate matching success marker remain required. MUST FIX addressed in design: capture invalidation serials so delayed data/markers cannot certify newer source state.
+- [Tokens and credentials] No credential creation, storage or diagnostic changes. Existing authenticated connection identity remains part of demand admission.
+- [Files and storage] Expansion remains memory-only and charged to the existing inclusive host budget. No paths, files, backups or cache schema changes.
+- [Android attack surface] No component, intent, provider or WebView changes. Retained daemon text uses existing bounded inert Compose text conversion.
+- [Cryptography] No primitive or Noise session changes; existing encrypted framing remains authoritative.
+- [Network and I/O] Reuse bounded expansion decoder, serialized lane, query deadline and connection retirement on drain timeout. No background full download or new network route.
+- [Errors and telemetry] Only static invalidated/loaded/failure codes; no payload, cursor, identifier, plaintext, secret or stack trace logging.
+- [Concurrency] MUST FIX addressed in design: source observations and detail admission use the store lock; query keys fence staged data and terminal markers, retaining remote-slot drain before reuse. No new jobs or locks.
+- [Concurrency follow-up] `detailLoad` binds Loading/Retry/withdrawal writes to the producing lane, so a late old-connection retirement cannot clear a replacement Retry. Stale protection in `protectedDetails` retains only previously admitted demand in the same generation/incarnation; it grants no query or read authority.
+- [Rework boundaries] Parent page admission preserves descendant load invalidation; held admitted keys retain only store-validated lifetime protection. Complete-source ancestry preserves exact full bodies without bypassing prior compact invalidation floors or granting child/history completion. No capability is inferred from retained content.
+- [Threat model] Delayed/reordered relay frames cannot cross request and source captures. Hostile daemon summaries retain existing size, identity and inert rendering checks. Rooted-device token theft and UI screenshot/accessibility exposure are unchanged existing platform concerns, outside this memory-only repair; genuine capture/privacy acceptance stays with #2393.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-23

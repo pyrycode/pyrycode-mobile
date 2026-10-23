@@ -98,6 +98,11 @@ before reconciling captured durable facts after connection replacement (#2390);
 [retention/recovery evidence](#retained-expansion-budget-evidence-2390) records its
 controlled regressions and both independent scripted cases, preserving ordinary
 owner matching and certification checks.
+Expanded-detail invalidation (#2391) reuses the rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+scenario alongside focused repository and mounted consumer coverage. It adds no
+rung-3 `InteractiveStreamE2ETest` scenario; genuine paired compact capture/replay
+remains with #2393. See [counted validity evidence](#expanded-detail-validity-evidence-2391).
 The complementary [#1963 repository-to-screen regression](#earlier-session-agent-with-older-paging-and-overlapping-replay-1963)
 adds actual synthetic older-page admission beside a running session-B Agent; it adds
 no real-Claude scenario or new live capture.
@@ -2519,7 +2524,7 @@ controller timeout with 250-ms dispatch lag; canned parser responses cannot catc
 that boundary. Static action, HTTP status, generation, phase and elapsed timing
 distinguish spawn failure, registration timeout, exit and client transport failure.
 Transport failures rethrow the original throwable; arbitrary response/daemon/error
-text stays out of published diagnostics. See [retention](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention)
+text stays out of published diagnostics. See [retention](knowledge/features/development-verification-artifact-retention.md#device-gate-artifact-retention)
 and [counted evidence and historical limits](#offline-retry-registration-evidence-2137).
 
 ### Phone read-mark proof (#1912)
@@ -3495,6 +3500,14 @@ rendered order. Reader pulls drive older demand. Raw-history coverage, marker se
 and legacy cache branches are removed; independent producer diagnostics never supply
 phone content or certification. See [current acceptance](#authoritative-runtime-removal-2367).
 
+The [exact recovery receipt boundary (#2515)](knowledge/features/development-verification-emulator-evidence.md#exact-durable-gap-recovery-receipts-2515)
+keeps every accepted request through reset/retirement and requires its own terminal.
+Initial/final admission revalidates one observation revision against production
+certification; final admission also waits for the real lazy item provider. Current
+epoch/generation scopes checkpoint comparisons while historical receipts remain
+accounted for. The [Linux evidence](knowledge/features/development-verification-recovery-receipt-evidence.md)
+separates the successful composed producer pair from configured inherited failures.
+
 The following earlier fragmented-projection evidence describes the removed runtime.
 Its counts and outcomes remain historical.
 
@@ -3966,6 +3979,169 @@ only their outer bash on failure; an owned watcher could retain pipes and obscur
 Its failure path was not executed in that review. Documentation does not claim this cleanup improved,
 and the accepted repair's original cleanup outcomes remain as recorded.
 
+### Expanded detail validity evidence (#2391)
+
+This is #2391's contribution to **#2393's relocated documentation handoff**;
+#2376 is closed. The accepted verifier record for
+[PR #2512](https://github.com/pyrycode/pyrycode-mobile/pull/2512) is PASS on Mobile
+`9a211e6f8a15b1e624a9c4a761db8513209265bc`, with documented UI-flake and inherited
+scripted-failure exemptions. It supersedes the PR's earlier pending-acceptance
+wording.
+Tests ran on Linux; other operating systems are outside this ticket's scope.
+Documentation inspected the existing reports and ran no product tests.
+
+The repair invalidates fetched bodies/pages on independent source revision or
+ancestor freshness changes, including equal revision, known zero and missing
+freshness. It refreshes only demanded visible expansions, retaining same-owner
+stale rows beside Loading, sticky Retry or offline state. Invalidated/refused
+continuation restarts at page one and replaces rows only after validated success.
+Unchanged proven-valid reopen reuses details offline. Lifecycle withdrawal,
+consumer union, owner-bound load state and capture serials fence old replies and
+colliding IDs. Retention protection survives held frames without granting request
+authority. Complete source descendants under complete ancestry stay usable without
+expansion support. No expansion transition grants history/recovery/read coverage.
+See [screen behavior](knowledge/features/thread-screen-expanded-details.md#invalidation-retry-and-reopen-2391),
+[repository validity](knowledge/features/remote-conversation-repository.md#expanded-detail-validity-2391)
+and [cache protection](knowledge/features/conversation-cache.md#the-contract).
+
+#### Focused red and green results
+
+Builder green implementation: `7ac6574df7be5d5afc9106a9262000f4ce7d573b`.
+The three repaired production files and two regression test files matched the
+reviewed head by hash; native/scripted working-tree patches were empty.
+Rework red reports identify base `0280e9e5d43885903020e7bf6f8aee08e0b0c882`
+plus preserved working-tree patches and source/class hashes.
+
+| Retained Linux run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Initial verifier causal probes, `Verifier2391Probe` | 3 | 0 | 3 | 0 |
+| Rework red, `AgentChildrenQueriesTest` | 26 | 24 | 2 | 0 |
+| Rework red, `ExpansionDetailBudgetTest` | 11 | 9 | 2 | 0 |
+| Rework green, eight focused JVM/Compose classes | 106 | 106 | 0 | 0 |
+| Native `AgentChildrenScreenTest` | 6 | 6 | 0 | 0 |
+| Scripted `tool` | 1 | 1 | 0 | 0 |
+| Focused red scripted `ping` | 2 | 0 | 2 | 0 |
+| Dispatcher combined JVM/build gate | 5446 | 5446 | 0 | 0 |
+| Dispatcher UI, original | 249 | 248 | 1 | 0 |
+| Dispatcher UI, named same-tree rerun | 1 | 1 | 0 | 0 |
+| Dispatcher scripted-all, original | 24 | 19 | 5 | 0 |
+| Dispatcher scripted, same-tree failure selection | 5 | 0 | 5 | 0 |
+| Dispatcher scripted, main failure selection | 5 | 0 | 5 | 0 |
+
+The focused JVM total comprises `AgentChildrenQueriesTest` 26,
+`ExpansionDetailBudgetTest` 11, `ToolBodyQueriesTest` 16,
+`AuthoritativeThreadStoreTest` 18, `DeferredAuthoritativePresentationTest` 11,
+`AuthoritativeReadSightTest` 12, `AgentChildrenScreenTest` 6 and
+`MissingToolBodyScreenTest` 6, each with zero failures/skips. Commands selected each
+class via `python3 scripts/gradle-gate.py testDebugUnitTest --tests <qualified class>`.
+Native used `python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.ui.conversations.thread.AgentChildrenScreenTest`;
+scripted used `python3 scripts/android-test-gate.py scripted tool`.
+
+The raw reports confirm these named methods executed and passed:
+
+- `AgentChildrenQueriesTest.freshnessInvariantEqualRevisionAncestorObservationRefreshesOnlyDemandedPages`,
+  `freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight` and
+  `freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement`
+  cover independent revision/freshness, demanded nested refresh and authoritative
+  replacement. `pageInvariantFiftyZeroOrderTiesContinueWithoutDuplicates` retains
+  tied continuation coverage.
+- `AgentChildrenQueriesTest.ancestorPageObservationClearsNestedRetryForChangedOrMissingFreshness`
+  and `completeDeliveryDescendantsRemainUsableWithoutExpansionAfterAncestorChanges`,
+  plus `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation`
+  and `heldPageDemandKeepsInvalidatedEnumerationProtectedUntilWithdrawal`, pass in
+  their focused green reports and the 5446-test combined gate. The rework red
+  reports retain the query and pressure failures that caused these repairs.
+- `AgentChildrenScreenTest.invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart`
+  and `lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds`
+  pass in both the six-test Robolectric class and six-test native class.
+  Collapse, stopped-consumer withdrawal and valid offline reopen also passed in
+  those class reports. `MissingToolBodyScreenTest` supplies the six corresponding
+  production body-consumer cases under Robolectric.
+- `AgentChildrenQueriesTest.captureInvariantInvalidationBetweenDataAndMarkerDrainsBeforeReplacement`,
+  `captureInvariantOlderFullBatchCannotClearNewerAncestorInvalidation`,
+  `ownershipInvariantInvalidatedConsumerUnionRejectsHeldAdditionsAndOldCaptures`
+  and `ownershipInvariantLateRetirementCannotClearReplacementRetryWithCollidingIds`
+  pass in the focused query report, retaining capture/drain/union/retired-owner proof.
+- `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+  is the single passed scripted `tool` method. This reuses existing rung-4 behavior;
+  no rung-3 `InteractiveStreamE2ETest` scenario or new paired capture is added.
+
+Original verifier findings remain historical failures: parent replacement revived
+nested Retry, held demand lost budget protection, and complete delivery became
+unavailable without expansion. Earlier causal ancestor-freshness,
+retention-pressure and full-prose probes each executed once and failed, with zero
+skips. Original builder native/tool evidence at the earlier reviewed candidate
+remains 6/6 and 1/1 passed; it is separate from the rework runs above.
+
+#### Accepted gate exceptions and remaining scope
+
+The original UI failure was
+`RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`;
+its named one-test rerun passed, tracked on #2476. The five original scripted
+failures remain failed in both completed candidate and main selections, with main
+`9a22b5ae0d1fe7bc585d6941187dbbb81af6cb09`:
+
+| `DeterministicInteractiveStreamE2ETest` method | Existing tracker |
+| --- | --- |
+| `interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` | #2353 |
+| `interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect` | #2521 |
+| `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` | #2521 |
+| `interactiveTurn_seededChannel_durableGapCatchUp` | #2521 |
+| `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` | #2469 |
+
+The two focused red `ping` methods are the last two rows. Earlier comparison
+attempts rejected the selector and executed zero tests; the investigation request
+also executed zero tests. None was a pass. Completed five-method comparisons
+supply the later inherited-failure exemption without erasing those records.
+Configured acceptance is green under those explicit exemptions, not an all-tests
+pass. Genuine paired compact capture/replay and its relocated handoff remain with
+#2393; historical failures and approval/privacy holds remain in force. Compact
+selection/application/activation remains with #2431–#2433. Existing large-fixture
+and retention evidence is reused without claiming new large-fixture measurements.
+The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+
+#### Source, binary and raw evidence identities
+
+At review time, raw focused reports were under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2391/`:
+`builder-rework-20261023/` contains `red-query/`, `red-budget/`, the eight
+`green-*` directories, `native-agent/`, `scripted-tool/`, `red-scripted-ping/`,
+`investigation-request/`, `producer-identities.json` and `SHA256SUMS`.
+Each run's `identity.json` records source/class/APK hashes and counted results;
+working-tree patches retain uncommitted red source identities. The native XML is
+`native-agent/TEST-pixel2Api33Atd_0-_app-.xml`; scripted XML is
+`scripted-tool/0-TEST-pixel2Api33Atd-_app-.xml`. Phone logs and phase/managed-image
+records sit beside those reports. Historical `builder-20261023/` and
+`verifier-20261023-2512/` retain the initial red reports and
+`TEST-Verifier2391Probe.xml`/`probe-invocation.json`.
+
+Native and scripted app APK SHA-256:
+`a381be156b0c3370d15ad6294d20514ed6099ad95218fd14a32f932276c7f567`;
+test APK: `cacbc9adb52db5fb488e823fb9e0fb333c7c140164a16e11bde6d72730dd4f57`.
+Builder Core revision `5ba6b8dacc0916533df8b8d9c60090190a9e6f4d`, binary SHA-256
+`e3b9beb7b2817b15bf400029686ec79b134f7324fbe3248be20da53cab1729a1`;
+Relay revision `9939bc1ff8afec5021c09862e6f14dadba33ad42`, binary SHA-256
+`27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10`.
+Both have clean embedded revision stamps. These are builder producer identities;
+they do not identify every later gate's producer checkout.
+Producer logs were in `harness/fault-63b48eb2a7dccb7ca966f0793eb88650/` (`tool`)
+and `harness/fault-20b74af2948424c34a5bdb6294265208/` (`ping`).
+
+Accepted verifier bundle:
+`5bf3edd4a0c75c58993681bfc8e8a5f14813e7d86e5d8af0c355b28c209c9d6f`,
+digest `a2e9d3deaa0d0ff90c315b531529c8c9061c2a667922d094fe664294e16d9d8e`.
+Its handoff and logs preserve the authoritative PASS and counted comparisons.
+Raw gate logs were under `/work/Projects/pyrycode-mobile-agents/logs/`:
+`verifier-gate_#2391_{4,5,6}.log`; comparison logs were
+`2026-10-23T19-37-52-981Z_verifier-gate-rerun_#2391.log` (UI),
+`2026-10-23T19-49-59-463Z_verifier-gate-rerun_#2391.log` (scripted), and
+`2026-10-23T19-55-02-465Z_verifier-gate-base_#2391.log` (main).
+The earlier failed verifier bundle
+`fbf21d768208b665dc7cf90cfa6498b8a7ecbdb9aa872c5a6cb7bbf95569283f`
+has digest `3b938f2afb1d62615b1070f86fa7fa916b4ef868b4798602e66dba68eda580e3`.
+These are retained locations at review time, subject to evidence pruning; the
+counts, outcomes and identities above survive that pruning in this document.
+
 ### Retained expansion budget evidence (#2390)
 
 This is the retention contribution to #2376's documentation handoff, accepted by
@@ -4111,9 +4287,10 @@ complete configured pass resolves this child's acceptance finding.
 See [screen demand](knowledge/features/thread-screen.md#what-it-does),
 [accounting/protection](knowledge/features/remote-conversation-repository.md#retained-expansion-budget-2390)
 and [cache lifetime](knowledge/features/conversation-cache.md#the-contract).
-Compact-v1 remains unadvertised. #2391 owns subtree invalidation, #2431–#2433
-compact application/activation and #2393 genuine paired compact capture/replay
-before #2376 integrated acceptance. Historical failures and recorded approval,
+Compact-v1 remains unadvertised. [#2391 validity evidence](#expanded-detail-validity-evidence-2391)
+supplies subtree invalidation; #2431–#2433 own compact application/activation.
+#2393 retains genuine paired compact capture/replay and the relocated handoff
+from closed #2376. Historical failures and recorded approval,
 privacy and sizing holds remain; this contribution does not release them.
 
 ### Direct-child page evidence (#2389)
@@ -4239,9 +4416,10 @@ See [screen demand and inline controls](knowledge/features/thread-screen.md#what
 [page admission/completion and restart](knowledge/features/remote-conversation-repository.md#direct-child-pages-2389)
 and [cache completeness and custody](knowledge/features/conversation-cache.md#the-contract).
 Compact-v1 remains unadvertised. [#2390 retention evidence](#retained-expansion-budget-evidence-2390)
-covers budgets; #2391 owns subtree invalidation and #2431–#2433 compact
-application/activation. #2393 still owes
-genuine paired compact capture/replay before #2376 integrated acceptance; no
+covers budgets; [#2391 validity evidence](#expanded-detail-validity-evidence-2391)
+supplies subtree invalidation and #2431–#2433 own compact application/activation.
+#2393 retains genuine paired compact capture/replay and the handoff relocated
+from closed #2376; no
 paired outcome is supplied by this child. Historical approval/privacy holds and
 the existing `needs-human:sizing` disposition remain in force (2,012 measured
 source/test/plan lines). This child evidence does not release them.
@@ -4328,10 +4506,11 @@ and [body-query contract](knowledge/features/remote-conversation-repository.md#m
 [cache custody](knowledge/features/conversation-cache.md#the-contract) distinguishes
 in-memory fetched details from persisted complete facts. Compact-v1 remains
 unadvertised here. #2393 still owns genuine paired compact capture and recorded
-replay before #2376 integrated acceptance; child paging is documented in the
+replay and the handoff relocated from closed #2376; child paging is documented in the
 [#2389 evidence](#direct-child-page-evidence-2389) and budgets in the
 [#2390 evidence](#retained-expansion-budget-evidence-2390), while selection and
-subtree invalidation remain with their allocated children. All historical failures
+subtree invalidation are covered by #2431–#2433 and the
+[#2391 validity evidence](#expanded-detail-validity-evidence-2391), respectively. All historical failures
 and recorded approval/privacy holds remain binding. Deterministic evidence does
 not satisfy the pending paired-capture requirement.
 
@@ -5013,7 +5192,7 @@ the report has no daemon-revision annotation. This is full-suite acceptance,
 separate from the earlier 65-pass evidence handoff and builder selections of
 1, 3 and 2 passes. The committed `dispatcher-full-live-pass.{xml,txt}` describes
 the earlier run, not this renewed acceptance. See
-[retention limits](knowledge/features/development-verification-emulator-evidence.md#device-gate-artifact-retention).
+[retention limits](knowledge/features/development-verification-artifact-retention.md#device-gate-artifact-retention).
 
 This closes the diagnostic live handoff without attributing or repairing the
 historical intermittent failure. #2047 remains maintainer-closed under its
@@ -8225,14 +8404,35 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **#2515:** the shared proof used by rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+  and rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+  requires exact receipts and coherent source/renderer admission. The
+  [counted evidence](knowledge/features/development-verification-recovery-receipt-evidence.md)
+  records the composed Linux pair's 2/2 pass and the separately accepted configured
+  failures. No new real-Claude run is claimed. Producer migration (#2513), failure
+  restoration (#2514) and ordinary-ping final-read work (#2494) remain separate.
+  Pre-ship remains `python3 scripts/android-test-gate.py live`.
+
+- **#2391:** [Expanded-detail validity evidence](#expanded-detail-validity-evidence-2391)
+  completes this leaf's contribution to #2393's relocated handoff, including
+  source/subtree invalidation, sticky Retry, valid offline reopen, lifecycle
+  retirement and counted red/green results. The existing rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+  passed; rung-3 `InteractiveStreamE2ETest` gains no scenario here. Configured
+  acceptance uses the verifier's explicit inherited-failure exemptions. #2393
+  retains genuine paired capture/replay and all approval/privacy holds; #2376 is
+  closed. Pre-ship remains `python3 scripts/android-test-gate.py live`.
+
+
 - **#2390:** the existing rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
   now requires current Supported ownership at recovery before durable-family
   reconciliation. [Counted focused and configured evidence](#retained-expansion-budget-evidence-2390)
   resolves this child's acceptance finding; historical comparison is unverified.
   Rung-3 `InteractiveStreamE2ETest` gains no capture here. Genuine paired compact
-  capture/replay remains with #2393 and integrated acceptance with #2376, retaining
-  historical failures and holds. The pre-ship command remains
+  capture/replay and the relocated handoff remain with #2393; #2376 is closed.
+  Historical failures and holds remain binding. The pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **#2367:** rung-3 `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`

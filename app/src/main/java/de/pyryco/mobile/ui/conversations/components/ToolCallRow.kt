@@ -101,6 +101,7 @@ internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
 internal data class ToolCallExpansion(
     val expanded: Boolean,
     val missingBody: Boolean = false,
+    val retainedBody: Boolean = false,
     val bodyLoad: de.pyryco.mobile.data.repository.BodyLoad? = null,
     val offline: Boolean = false,
     val retry: () -> Unit = {},
@@ -436,7 +437,7 @@ private fun ExpandedBody(toolCall: ToolCall) {
                 androidx.compose.material3.TextButton(onClick = expansion.retry) { Text(stringResource(R.string.tool_body_retry)) }
             }
         }
-        return
+        if (!expansion.retainedBody) return
     }
     Column(
         modifier =

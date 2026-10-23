@@ -60,6 +60,10 @@ class AuthoritativeThreadPresentation internal constructor(
             .groupBy { it.id }
             .values
             .associate { versions -> versions.maxBy { it.rev }.let { "msg:$scope:${it.id}" to it } }
+    private val invalidatedKeys =
+        sourceSnapshot.expansionItems
+            .filter { it.id in sourceSnapshot.detailValidity.bodies }
+            .mapTo(HashSet()) { "msg:$scope:${it.id}" }
 
     internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
 
@@ -137,7 +141,17 @@ class AuthoritativeThreadPresentation internal constructor(
                     is ThreadRow.Queued -> true
                 }
             }.map { row ->
-                if (row is ThreadRow.Delivered && suppliesReadSight(row, expandedTools)) resolve(row.listKey(0)) ?: row else row
+                if (row is ThreadRow.Delivered &&
+                    (
+                        !row.isToolRow() ||
+                            (row.item as ThreadItem.MessageItem).message.id in expandedTools &&
+                            bodyItem(row.listKey(0))?.let { it.hasToolBody || sourceSnapshot.retainedBody(it) != null } == true
+                    )
+                ) {
+                    resolve(row.listKey(0)) ?: row
+                } else {
+                    row
+                }
             }
     }
 
@@ -146,6 +160,7 @@ class AuthoritativeThreadPresentation internal constructor(
         expandedTools: Set<String>,
     ): Boolean =
         row.listKey(0) !in summaryKeys &&
+            row.listKey(0) !in invalidatedKeys &&
             !missingBody(row.listKey(0)) &&
             (resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools)
 
@@ -157,6 +172,7 @@ class AuthoritativeThreadPresentation internal constructor(
     ): Boolean {
         if (key == null || revision == null || shownRowRevisions[key] != revision) return false
         if (key in summaryKeys) return false
+        if (key in invalidatedKeys) return false
         if (missingBody(key)) return false
         return if (resolveContents != null) {
             resolveContents.invoke(key)?.item == item
@@ -263,7 +279,7 @@ private fun projectThread(
     val held = snapshot.expansionItems.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
     val paged =
         snapshot.childPages
-            .filterKeys { held[it.first]?.rev == it.second }
+            .filterKeys { held[it.first]?.rev == it.second || it.first in snapshot.detailValidity.children }
             .values
             .flatMap { it.items }
             .mapTo(HashSet()) { it.id }
@@ -317,11 +333,9 @@ private fun projectThread(
     fun adapt(item: ThreadItemDto): ThreadRow.Delivered {
         onFullConversion?.invoke(item.id)
         val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
-        val body = snapshot.bodyContents[item.id to item.rev]
+        val body = snapshot.retainedBody(item)
         val rendered =
-            if (body == null ||
-                item.hasToolBody
-            ) {
+            if (body == null) {
                 item
             } else {
                 ThreadItemDto.decodeReplacement(
@@ -340,7 +354,7 @@ private fun projectThread(
             } else {
                 null
             },
-            bodyRead = body != null && !item.hasToolBody,
+            bodyRead = body != null,
         )
     }
 
