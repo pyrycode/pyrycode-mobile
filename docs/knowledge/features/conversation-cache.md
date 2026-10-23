@@ -24,6 +24,12 @@ writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires 
 
 ## The contract
 
+Fetched missing tool bodies (#2388) stay in the host thread snapshot's separate
+in-memory ID/revision map and can be reused on unchanged reopen or offline. They
+do not rewrite saved full source facts or extend the disk format. Process restore
+retains only the existing persisted facts, not fetched-body availability or
+transient Loading/Retry state. See [body retention and completion](remote-conversation-repository.md#missing-tool-body-queries-2388).
+
 **Read positions are the older-daemon fallback (#1883).** The host-keyed
 `ReadPosition` family keeps its existing format, storage custody and restart behavior.
 A daemon supplying confirmed read marks owns unread through its known latest durable id

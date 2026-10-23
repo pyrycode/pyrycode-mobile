@@ -20,10 +20,11 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection status placement`, `Thinking-indicator placement (post-#407)`, `Thread top overlay placement (post-#1002)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396, retired from the screen in #883)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
 - [Thread screen — testing](thread-screen-testing.md) — `Testing`
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
+- [Thread screen — wiring](thread-screen-wiring.md) — `Wiring`, `Koin binding`, `Destination block`, and the composer topic pointer; split for #2388.
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections
-above), `## Configuration`, `## Related`.
+The sections that stay here: `## What it does`, `## How it works`, `## Configuration`,
+`## Related`, and a link to the extracted wiring topic.
 
 ## What it does
 
@@ -128,6 +129,37 @@ Rows and exact read evidence travel together. See
 and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
 Closed tool bodies and descendants behind omitted ancestors keep summaries until demanded. Retention, coverage and wire delivery stay independent; summaries never prove sight. See [deferred presentation probes](thread-screen-testing.md#deferred-authoritative-presentation-2375).
+
+**Missing tool bodies on expansion (#2388).** Only visible, individually expanded
+Tool use rows demand missing details, including an agent-launch body where the
+existing tool presentation needs it. Closed rows, hidden descendants and opening a
+grouped run alone issue no body reads. Complete content for the exact held identity
+and revision renders immediately, including unchanged reopen and offline reuse.
+Fetched bodies remain in the host snapshot's in-memory ID/revision map; existing
+complete-fact disk persistence is unchanged. A process restart cannot restore that
+fetched-body map. Hosts without expansion support retain complete delivery.
+
+The expanded row uses its existing body/code surface for Loading, loaded contents,
+a generic failure with explicit Retry, or offline missing-details text. An
+explicitly empty input/output object becomes loaded only after validated data and
+its separate matching success marker. Refusal, missing/partial data, send failure,
+timeout and cancellation cannot become empty success. Failure is sticky across
+recomposition; Retry applies only to the current still-demanded body.
+
+The bound screen consumer follows the current presentation and producing connection
+through the ViewModel and negotiated repository. Equal active/queued targets
+coalesce. Collapse, scrolling out of visibility and destination/lifecycle retirement
+withdraw demand. A current binding must withdraw even while frame pacing holds an
+older presentation: the lane intersects stale targets with that consumer's already
+admitted keys. Stale snapshots cannot add targets or authorize Retry. Checking
+snapshot freshness before withdrawals would let a collapsed queued body start when
+another body completes. Other consumers keep their own demand; abandoned reads
+still drain before lane reuse.
+
+Loading and body completion grant neither history coverage nor read sight. The
+existing viewport, exact rendered revision and certified-checkpoint requirements
+still apply after contents render. See [connection-owned body queries](remote-conversation-repository.md#missing-tool-body-queries-2388)
+and [focused evidence for the parent compact handoff](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
 
 **Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only while the destination is resumed and
@@ -318,81 +350,7 @@ prompt still use the bottom snackbar.
 
 ## Wiring
 
-### Koin binding
-
-```kotlin
-// di/AppModule.kt
-viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
-```
-
-The factory receives the entry's `SavedStateHandle` and the app-scoped
-`ComposerDraftStore` ([#789](../codebase/789.md)). It no longer receives
-`AppPreferences` — [#807](../codebase/807.md) removed the thread's last read of it
-(`defaultModel` / `defaultEffort`), so no thread-destination state reads a device
-preference any more; see [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing).
-It reads the exact `serverId` and binds a `StableConversationRepository` to that
-retained bundle's coordinator stream; `ThreadViewModel` continues to read the
-host-local `conversationId`. The bundle also supplies connection state, live
-session events, the current permission modal and its answer/cancel callbacks, and
-Stop. See [destination dependencies](dependency-injection-host-conversation-source.md#destination-ownership).
-
-Messages, sessions, queue state, Send, Reset session, queue drop, Send now and existing
-repository-backed actions stay with that owner. Switching compatibility selection
-while a thread or permission prompt is open cannot redirect reads or writes.
-Reconnect replaces the concrete repository beneath the same owner facade; an A
-outage leaves B usable. During disconnect/handshake, existing empty/default reads,
-unavailable actions and error handling remain in effect without using B as a
-fallback. Overlay Retry passes the captured bundle to the registry's
-[lifecycle-checked exact-host Retry](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle).
-
-With `useRelay = false`, the explicit `demo` destination uses the existing fake
-singleton, a connected fake connection source, empty live events, hidden modal
-state and inert default control callbacks, even with real hosts saved.
-
-### Destination block
-
-`PyryNavHost` registers `Routes.CONVERSATION_THREAD` with
-`Routes.hostArguments()`, reconstructs its `HostConversationTarget`, and calls
-`HostDestination` before resolving `koinViewModel<ThreadViewModel>()`. The guard
-waits for saved-host initialization; unknown/removed owners return to the list.
-Both route arguments survive saved back-stack restoration. Each entry owns its
-ViewModel, so equal conversation ids on A and B remain distinct. The temporary
-flat-list adapters capture selection only at entry, then consume host-qualified
-navigation; see [navigation ownership](navigation.md#how-it-works).
-
-Since [#661](question-batch-modal.md), this same destination block also collects `vm.questionModal` for the
-conversation's held [clarification batch](question-batch-modal.md). **Through #1305's plan this was drawn
-as a gate-shaped `Dialog` directly beside the `ThreadScreen` call, not a `ThreadScreen` parameter — #1305
-superseded that placement.** The batch now renders inline, inside the message stream, so it *is* a
-`ThreadScreen` parameter: `questionState = questionModal` and `onQuestionEvent = { event, generation ->
-vm.onQuestionEvent(event, generation) }` are passed straight into the `ThreadScreen(...)` call here, and the
-process-lifetime picks live in the app-scoped `QuestionDraftStore` rather than this destination's own state
-— see [Question batch modal § Placement](question-batch-modal.md#placement-inline-in-threadscreen-since-1305)
-and [§ Batch ownership](question-batch-modal.md#batch-ownership-process-lifetime-drafts-source--and-request-bound-sends).
-
-The destination collects the ViewModel's state, connection/live indicators and
-permission state with `collectAsStateWithLifecycle()`, and passes callbacks and
-error flows into the stateless `ThreadScreen`. `ThreadNavigation.PopBack` remains
-collected in `LaunchedEffect(vm)` at the route, where the `NavController` lives.
-[#883](../../specs/architecture/883-retire-literal-screen.md) removed the
-`literal_screen/{serverId}/{conversationId}` destination this block used to reach
-from the overflow menu's "Show the literal screen" item, once the daemon dropped
-the server-side screen-snapshot render path — the destination no longer collects
-`vm.isStalled` either, since that flag's only consumer was the retired stall
-promotion banner (see [Stall state](stall-state.md)).
-
-The guard also wraps the screen in `HostWorkspaceRepository`, providing
-`LocalWorkspacePickerRepository` for the route host. This covers the nested
-[WorkspacePicker](workspace-picker.md)'s own recents/folder-creation reads and
-writes as well as `vm::onWorkspacePicked`. A correct ViewModel binding alone
-cannot prevent a descendant's global Koin lookup from consulting another host.
-The facade follows reconnect and preserves the picker's existing generic failure
-UI and cancellation behavior. Production-route picker tests exercise this boundary;
-see [DI testing](dependency-injection.md#testing).
-
-### Composer drafts and attachments
-
-Split out on 2026-09-24 into [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md): `Composer draft ownership` (the `ComposerDraftStore` text map, its creation/restore/clear/eviction rules) and `Composer pending attachments` (the parallel attachment map, the `AttachmentReader` trust boundary, the [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) picker and strip, and the [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) paste path that joins the same sink). Both subsections kept their heading and anchor.
+See [thread destination and Koin wiring](thread-screen-wiring.md#wiring).
 
 ## Configuration
 
