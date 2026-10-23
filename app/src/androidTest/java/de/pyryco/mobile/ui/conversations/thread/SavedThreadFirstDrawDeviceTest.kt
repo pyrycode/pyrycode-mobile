@@ -665,8 +665,22 @@ class SavedThreadFirstDrawDeviceTest {
             )
             assertEquals("The expected-fact list must not retain a second decoded fixture during restore", 0, retained)
             assertEquals(36_000, facts.size)
-            assertEquals(1, facts.first().getValue("id").jsonPrimitive.content.toInt())
-            assertEquals(36_000, facts.last().getValue("id").jsonPrimitive.content.toInt())
+            assertEquals(
+                1,
+                facts
+                    .first()
+                    .getValue("id")
+                    .jsonPrimitive.content
+                    .toInt(),
+            )
+            assertEquals(
+                36_000,
+                facts
+                    .last()
+                    .getValue("id")
+                    .jsonPrimitive.content
+                    .toInt(),
+            )
         }
     }
 
@@ -677,16 +691,22 @@ class SavedThreadFirstDrawDeviceTest {
     }
 
     private fun authoritativeFileFacts(fragmented: Boolean): List<JsonObject> =
-        (0 until if (fragmented) 36_000 else 20).map { index ->
-            val visible = !fragmented || index % 2 == 0
-            val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
-            MobileJson
-                .parseToJsonElement(
-                    """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
+        // The expected list survives every opening; retaining parsed facts duplicates the cold restore.
+        object : AbstractList<JsonObject>() {
+            override val size = if (fragmented) 36_000 else 20
+
+            override fun get(index: Int): JsonObject {
+                if (index !in indices) throw IndexOutOfBoundsException()
+                val visible = !fragmented || index % 2 == 0
+                val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
+                return MobileJson
+                    .parseToJsonElement(
+                        """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
                 "kind":"${if (visible) "assistant_message" else "future_fixture"}",
                 "status":"done","active":false,"shown":$visible,"summary":"",
                 "content":{"text":"Saved ${if (fragmented) index / 2 else index}."},"future":{"clear":null}}""",
-                ).jsonObject
+                    ).jsonObject
+            }
         }
 
     private fun measureAuthoritativeFiles(guardLegacyReads: Boolean) {

@@ -47,3 +47,7 @@ Run lint, assembly, instrumented compilation, formatting and final `pre-verify.p
 ## Open Questions
 
 The retention control and native heap diagnostics must establish the suspected fixture owner. If removing it is insufficient under focused evidence, investigate the remaining allocation/owner and record the revised contract before further repair. Submit a wider investigation only when focused evidence cannot establish the remaining cause.
+
+## Revisions
+
+2026-10-23: The native causal control on `c8f4156fb6c0a9c72cc4942231fac072f83db1b3` executed once and failed at the intended retention assertion: both sampled facts survived collection while the expected list remained live. Heap use after seeding was 65048296 bytes against a 201326592-byte limit. This identifies the harness's eager expected list as a retained owner; the repair follows the planned on-demand list design. Raw XML, phone diagnostics and source are retained in `$AGENTS_REPO_PATH/logs/evidence/2508/builder-20261023/red-c8f4156/`, manifest SHA-256 `c65aec97040a17ee4e49d7c2a8547d6b183a507eccf4d25b8f4c17e31838855c`. Original #2505 failures and rerun remain separately retained under `original/`. The repaired control and complete affected-class result remain to be read before handoff.
