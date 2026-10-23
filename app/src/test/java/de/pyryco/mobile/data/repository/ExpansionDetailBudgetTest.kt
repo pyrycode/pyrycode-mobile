@@ -260,7 +260,13 @@ class ExpansionDetailBudgetTest {
                 f.lane.accept(f.frame("thread_children", completion, true))
                 if (over == 0) {
                     assertEquals(cursor, f.snapshot().childPages[90L to 4000L]?.cursor)
-                    val retainedSummary = f.snapshot().childPages[90L to 4000L]?.items?.single()?.summaryPayload
+                    val retainedSummary =
+                        f
+                            .snapshot()
+                            .childPages[90L to 4000L]
+                            ?.items
+                            ?.single()
+                            ?.summaryPayload
                     assertEquals(JsonObject(rows.single().raw - "content"), retainedSummary)
                     assertEquals(
                         16 * 1024 * 1024,
