@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.design.PerTicketDeviceTest
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -64,6 +65,7 @@ class PairingConfirmationCaptureTest {
     @Test
     fun compactConfirmationWithEnlargedText() = checkConfirmation(360, 640, 1.5f)
 
+    @PerTicketDeviceTest
     @Test
     fun systemBackDeclinesWithoutConfirming() {
         var declined = 0

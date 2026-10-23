@@ -35,8 +35,8 @@ parent/revision map, including their captured version and certified continuation
 Unchanged offline reopen can reuse them; process restore does not promise pages,
 cursors or child Loading/Retry state. Summary enumeration never certifies root or
 saved-history completeness, rewrites newer complete facts or extends persisted
-coverage. Selection/activation and subtree invalidation remain
-with #2431–#2433 and #2391. See [page admission and completion](remote-conversation-repository.md#direct-child-pages-2389)
+coverage. Selection/activation remains with #2431–#2433. Subtree
+invalidation follows the current source observations described below (#2391). See [page admission and completion](remote-conversation-repository.md#direct-child-pages-2389)
 and [the child evidence contribution to #2376](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
 
 **Expansion retention (#2390).** One in-memory budget per host spans fetched
@@ -60,6 +60,23 @@ bounded read path. Eviction clears availability, cursor and detail completion,
 never saved full facts, root/history coverage, checkpoints, join watermarks or
 read marks, including reconnect. See [accounting and ownership](remote-conversation-repository.md#retained-expansion-budget-2390)
 and [counted parent handoff](../../e2e-interactive-stream.md#retained-expansion-budget-evidence-2390).
+
+**Invalidated retained details (#2391).** Stale body/page entries remain charged
+to the same inclusive host limits, including after source revision changes.
+Previously admitted open targets and required ancestry retain lifetime/identity
+protection before the next presentation and through held-frame demand updates.
+Filtering protection through current request serial/revision/cursor checks would
+allow another conversation to evict still-open stale rows. Those checks instead
+continue to govern reads, Retry and publication. Stale targets cannot add demand;
+withdrawal releases protection, and another consumer can keep it.
+
+Retained presence proves neither freshness, empty success nor continuation.
+Same-owner stale rows stay visible with Loading, sticky Retry or offline state
+until validated replacement. Unchanged valid details reopen offline; invalidated
+ones need current demand and validated replacement. No new persistence or
+background full download is added, and stale retention grants no saved coverage,
+recovery or read certification. See [validity and complete-delivery compatibility](remote-conversation-repository.md#expanded-detail-validity-2391)
+and [counted pressure/reopen evidence for #2393](../../e2e-interactive-stream.md#expanded-detail-validity-evidence-2391).
 
 **Read positions are the older-daemon fallback (#1883).** The host-keyed
 `ReadPosition` family keeps its existing format, storage custody and restart behavior.

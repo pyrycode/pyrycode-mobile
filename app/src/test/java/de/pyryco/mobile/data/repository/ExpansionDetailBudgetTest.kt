@@ -380,6 +380,55 @@ class ExpansionDetailBudgetTest {
             assertTrue(sameHost.snapshot().bodyContents.containsKey(1L to 4000L))
         }
 
+    @Test fun staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation() =
+        runTest {
+            val f = Fixture()
+            val owners = f.fillBytes(16 * 1024 * 1024)
+            val held = f.snapshot()
+            val retained = held.bodyContents[1L to 4000L]
+            val revised = ThreadItemDto.decode(JsonObject(item(1).raw + ("rev" to JsonPrimitive(4001))))
+            f.store.applyBatch("h", "c", "e", 4001, listOf(revised), 0)
+            repeat(3) { f.lane.bodies("c", owners.first(), held, setOf(1, 65), retry = 65) }
+            assertEquals(64, f.sent.size)
+            val other = Fixture(conversation = "second", store = f.store)
+            other.body(1)
+            other.acceptBody(content(128))
+            assertTrue("held demand must protect its stale open body", retained === f.snapshot().bodyContents[1L to 4000L])
+            assertEquals(BodyLoad.Retry, other.snapshot().bodyLoads[1L to 4000L])
+            f.lane.releaseBodies(owners.first())
+            other.body(1, retry = true)
+            other.acceptBody(content(128))
+            assertFalse(f.snapshot().bodyContents.containsKey(1L to 4000L))
+            assertTrue(other.snapshot().bodyContents.containsKey(1L to 4000L))
+        }
+
+    @Test fun heldPageDemandKeepsInvalidatedEnumerationProtectedUntilWithdrawal() =
+        runTest {
+            val f = Fixture()
+            val consumer = f.children()
+            f.acceptChildren(listOf(child(1000)))
+            val held = f.snapshot()
+            val page = requireNotNull(held.childPages[90L to 4000L])
+            val bytes = page.items.sumOf { size(requireNotNull(it.summaryPayload)) }
+            f.fillBytes(16 * 1024 * 1024 - bytes)
+            val revised = ThreadItemDto.decode(JsonObject(item(90, kind = "agent").raw + ("subtree_version" to JsonPrimitive(1))))
+            f.store.applyBatch("h", "c", "e", 4001, listOf(revised), 0)
+            val requests = f.sent.size
+            repeat(3) { f.lane.children("c", f, held, setOf(90, 91), retry = 91, more = 90) }
+            assertEquals(requests, f.sent.size)
+            assertFalse(f.snapshot().hasChildPage(f.snapshot().expansionItems.single { it.id == 90L }))
+            val other = Fixture(conversation = "second", store = f.store)
+            other.body(1)
+            other.acceptBody(content(128))
+            assertSame(page, f.snapshot().childPages[90L to 4000L])
+            assertEquals(BodyLoad.Retry, other.snapshot().bodyLoads[1L to 4000L])
+            consumer?.close()
+            other.body(1, retry = true)
+            other.acceptBody(content(128))
+            assertFalse(f.snapshot().childPages.containsKey(90L to 4000L))
+            assertTrue(other.snapshot().bodyContents.containsKey(1L to 4000L))
+        }
+
     @Test fun recompositionDoesNotRefreshLru() =
         runTest {
             val f = Fixture()
