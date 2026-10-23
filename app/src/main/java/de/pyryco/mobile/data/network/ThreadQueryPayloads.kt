@@ -23,13 +23,46 @@ internal sealed class ThreadQueryRequest(
 
     final override fun toString(): String = "ThreadQueryRequest(redacted)"
 
+    sealed class Expansion(
+        conversation: String,
+        open val epoch: String,
+        open val itemId: ULong,
+        open val expectedRev: ULong,
+        limit: Long?,
+    ) : ThreadQueryRequest(conversation, limit)
+
+    data class Children(
+        val conversation: String,
+        override val epoch: String,
+        override val itemId: ULong,
+        override val expectedRev: ULong,
+        val cursor: JsonObject? = null,
+    ) : Expansion(conversation, epoch, itemId, expectedRev, 50) {
+        init {
+            require(epoch.isNotEmpty() && itemId > 0uL && expectedRev > 0uL)
+        }
+
+        override val type = "thread_read_children"
+
+        override fun fields() =
+            JsonObject(
+                buildMap {
+                    put("conversation_id", JsonPrimitive(conversation))
+                    put("epoch", JsonPrimitive(epoch))
+                    put("item_id", threadUnsignedJson(itemId))
+                    put("expected_rev", threadUnsignedJson(expectedRev))
+                    cursor?.let { put("cursor", it) }
+                },
+            )
+    }
+
     data class Body(
         val conversation: String,
-        val epoch: String,
-        val itemId: ULong,
-        val expectedRev: ULong,
+        override val epoch: String,
+        override val itemId: ULong,
+        override val expectedRev: ULong,
         val kind: String,
-    ) : ThreadQueryRequest(conversation, null) {
+    ) : Expansion(conversation, epoch, itemId, expectedRev, null) {
         init {
             require(epoch.isNotEmpty() && itemId > 0uL && expectedRev > 0uL && kind in setOf("tool_call", "agent"))
         }
@@ -136,6 +169,36 @@ internal sealed class ThreadQueryReply(
         }
     }
 
+    class Children(
+        raw: JsonObject,
+    ) : ThreadQueryReply(raw) {
+        val checkpoint = Checkpoint(raw)
+        val itemId = raw.threadUnsigned("item_id")
+        val rev = raw.threadUnsigned("rev")
+        val final = raw.threadBoolean("final")
+        val children =
+            (raw["children"] as? JsonArray ?: throw IllegalArgumentException("invalid children")).also { require(it.size <= 256) }.map {
+                decodeThreadSummary(it as? JsonObject ?: throw IllegalArgumentException("invalid summary"))
+            }
+        val more = if (final) raw.threadBoolean("more") else null
+        val cursor = raw["cursor"] as? JsonObject
+
+        init {
+            require(itemId > 0uL && rev > 0uL)
+            require((threadQueryCoverageKeys + setOf("items", "content", "data", "base_rev")).none { it in raw })
+            require(
+                if (final) {
+                    children.isEmpty() && (more == true) == ("cursor" in raw)
+                } else {
+                    "more" !in raw &&
+                        "cursor" !in raw &&
+                        children.isNotEmpty()
+                },
+            )
+            require("cursor" !in raw || cursor != null)
+        }
+    }
+
     class Success(
         raw: JsonObject,
         val checkpoint: Checkpoint,
@@ -163,6 +226,7 @@ internal fun decodeThreadQueryReply(
     try {
         require(validThreadJson(raw))
         when (type) {
+            "thread_children" -> ThreadQueryReply.Children(raw)
             "thread_tool_body" -> ThreadQueryReply.Body(raw)
             "thread_items" -> {
                 val checkpoint = ThreadQueryReply.Checkpoint(raw)
@@ -220,3 +284,31 @@ internal fun JsonObject.threadUnsigned(key: String): ULong {
 }
 
 internal fun threadUnsignedJson(value: ULong) = MobileJson.parseToJsonElement(value.toString())
+
+/** Summary metadata stays inert and separate from full facts; no body or inventory is admitted. */
+private fun decodeThreadSummary(raw: JsonObject): ThreadItemDto {
+    require(setOf("content", "children", "items", "descendants").none { it in raw })
+    require(raw.threadInteger("id") > 0 && raw.threadInteger("rev") > 0)
+    raw.threadInteger("order")
+    raw.threadInteger("parent")
+    raw.threadBoolean("shown")
+    require(raw.threadBoolean("detail_omitted"))
+
+    fun text(key: String) {
+        val value = raw.threadString(key)
+        require(value.codePointCount(0, value.length) <= 200 && value.none { it.isISOControl() || it == '\u2028' || it == '\u2029' })
+    }
+    text("headline")
+    if ("error_summary" in raw) text("error_summary")
+    if ("subtree_version" in raw) raw.threadInteger("subtree_version")
+    if ("has_public_children" in raw) raw.threadBoolean("has_public_children")
+    if ("public_child_count" in raw) {
+        val count = raw.threadInteger("public_child_count")
+        require(raw.threadBoolean("has_public_children") == (count > 0))
+    }
+    return ThreadItemDto.decode(
+        JsonObject(
+            raw + mapOf("summary" to raw.getValue("headline"), "content" to kotlinx.serialization.json.JsonNull),
+        ),
+    )
+}

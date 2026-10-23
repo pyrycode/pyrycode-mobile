@@ -87,3 +87,11 @@ Pending documentation stage: `docs/knowledge/features/thread-screen.md` and `doc
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-23
+
+## Revisions
+
+- 2026-10-23: a summary headline is independent of rendered tool input. Forward it through the existing `ToolCallExpansion` local to the header, preserving it after a body arrives without fabricating input fields or body contents. Required `shown: false` remains a valid summary fact; projection withholds that row while enumeration and cursor accounting retain it.
+
+- 2026-10-23 sizing remeasurement after formatting: 1,619 inserted/deleted production, test and plan lines, exceeding 1,600. The child reader and its only production expansion consumer prove one behavior; splitting their plumbing would violate the verification floor. Confirmed ancestry is #2200 → #2376 → #2389, already at the split-depth limit. Record `needs-human:sizing` and continue building the complete slice, preserving all assertions. Five new production types and fewer than ten consumer updates remain within their ceilings.
+
+- 2026-10-23: share expansion request identity through `ThreadQueryRequest.Expansion`, while retaining independent body/child consumer sets and completion state. Child controls attach after the last currently displayed descendant without adding a new timeline-row variant or altering existing row callers. Summary adapters retain raw optional/unknown metadata and synthesize only the internal empty content carrier; raw wire summaries still forbid bodies/inventories. Snapshot expansion overlays walk reachable exact parent revisions and exclude retirements; saved full facts remain untouched. Retry cannot replace a newer retained page capture. Count reserved scalar envelope stamps in the combined child-page budget. Security review rechecked: no additional trust or storage boundary; verdict remains PASS.

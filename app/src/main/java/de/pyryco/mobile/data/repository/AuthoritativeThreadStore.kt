@@ -34,10 +34,45 @@ internal data class AuthoritativeThreadSnapshot(
     val openingRows: Set<Pair<Long, Boolean>>? = null,
     val bodyLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
     val bodyContents: Map<Pair<Long, Long>, JsonObject> = emptyMap(),
+    val childPages: Map<Pair<Long, Long>, AgentChildPage> = emptyMap(),
+    val childLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
 ) {
+    /** Expansion summaries never enter saved full facts or history coverage. */
+    val expansionItems: List<ThreadItemDto> =
+        buildMap {
+            items.forEach { put(it.id, it) }
+            val remaining = childPages.toMutableMap()
+            do {
+                var progressed = false
+                val iterator = remaining.iterator()
+                while (iterator.hasNext()) {
+                    val (owner, page) = iterator.next()
+                    if (get(owner.first)?.rev != owner.second) continue
+                    page.items.forEach { child ->
+                        val held = get(child.id)
+                        if (child.id !in retirements &&
+                            (held == null || held.parent == child.parent && child.rev > held.rev)
+                        ) {
+                            put(child.id, child)
+                        }
+                    }
+                    iterator.remove()
+                    progressed = true
+                }
+            } while (progressed)
+        }.values.toList()
+
     fun hasToolBody(item: ThreadItemDto): Boolean = item.hasToolBody || (item.id to item.rev) in bodyContents
 
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
+}
+
+internal data class AgentChildPage(
+    val items: List<ThreadItemDto>,
+    val cursor: JsonObject?,
+    val version: ULong,
+) {
+    override fun toString() = "AgentChildPage(redacted)"
 }
 
 /** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
@@ -273,7 +308,7 @@ internal class AuthoritativeThreadStore {
         state: BodyLoad?,
     ) {
         val current = current(host, conversation)
-        if (current.items.none { it.id == id && it.rev == revision && !current.hasToolBody(it) }) return
+        if (current.expansionItems.none { it.id == id && it.rev == revision && !current.hasToolBody(it) }) return
         val loads = current.bodyLoads.filterKeys { it.first != id }.toMutableMap()
         if (state != null) loads[id to revision] = state
         if (loads != current.bodyLoads) publish(host, conversation, current.copy(bodyLoads = loads))
@@ -297,7 +332,7 @@ internal class AuthoritativeThreadStore {
             return false
         }
         val held =
-            current.items.firstOrNull {
+            current.expansionItems.firstOrNull {
                 it.id.toULong() == request.itemId &&
                     it.rev.toULong() == request.expectedRev &&
                     it.kind == request.kind
@@ -314,6 +349,62 @@ internal class AuthoritativeThreadStore {
             ),
         )
         RelayLog.i { "event=thread_body code=loaded" }
+        return true
+    }
+
+    @Synchronized
+    fun childLoad(
+        host: String,
+        conversation: String,
+        id: Long,
+        rev: Long,
+        state: BodyLoad?,
+    ) {
+        val current = current(host, conversation)
+        if (current.expansionItems.none { it.id == id && it.rev == rev }) return
+        val loads = current.childLoads.filterKeys { it.first != id }.toMutableMap()
+        if (state != null) loads[id to rev] = state
+        if (loads != current.childLoads) publish(host, conversation, current.copy(childLoads = loads))
+    }
+
+    @Synchronized
+    fun enrichChildren(
+        host: String,
+        request: ThreadQueryRequest.Children,
+        data: List<ThreadItemDto>,
+        marker: ThreadQueryReply.Children,
+        generation: Long,
+        incarnation: String,
+    ): Boolean {
+        val current = current(host, request.conversationId)
+        if (current.generation != generation ||
+            current.incarnation != incarnation ||
+            current.epoch != request.epoch ||
+            current.resetNeeded
+        ) {
+            return false
+        }
+        val parent =
+            current.expansionItems.firstOrNull { it.id.toULong() == request.itemId && it.rev.toULong() == request.expectedRev }
+                ?: return false
+        val key = parent.id to parent.rev
+        val old = current.childPages[key]
+        if (old != null && marker.checkpoint.version < old.version) return false
+        if (request.cursor != null && (old?.cursor != request.cursor || old.version != marker.checkpoint.version)) return false
+        if (data.any { child -> current.expansionItems.any { it.id == child.id && it.parent != child.parent } }) return false
+        val rows = (if (request.cursor == null) emptyList() else old?.items.orEmpty()) + data
+        if (rows.map { it.id }.distinct().size != rows.size) return false
+        publish(
+            host,
+            request.conversationId,
+            current.copy(
+                childPages =
+                    current.childPages.filterKeys { it.first != parent.id } +
+                        (key to AgentChildPage(rows, marker.cursor, marker.checkpoint.version)),
+                childLoads = current.childLoads - key,
+            ),
+        )
+        RelayLog.i { "event=thread_children code=loaded" }
         return true
     }
 

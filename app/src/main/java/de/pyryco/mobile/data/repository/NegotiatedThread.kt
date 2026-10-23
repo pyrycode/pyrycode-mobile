@@ -32,6 +32,16 @@ abstract class NegotiatedThread {
         retry: Long? = null,
     ): Closeable? = null
 
+    internal open fun children(
+        conversationId: String,
+        connection: Any,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+        more: Long? = null,
+    ): Closeable? = null
+
     /** Transient readings belong only to the supported connection captured by the caller. */
     internal open fun progress(
         conversationId: String,

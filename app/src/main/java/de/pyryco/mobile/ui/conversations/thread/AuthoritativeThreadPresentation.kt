@@ -50,8 +50,12 @@ class AuthoritativeThreadPresentation internal constructor(
     internal val sourceConnection: Any? = null,
 ) {
     internal val defersContents = resolveContents != null
+    private val summaryKeys =
+        sourceSnapshot.expansionItems
+            .filter { "headline" in it.raw && !sourceSnapshot.hasToolBody(it) }
+            .mapTo(HashSet()) { "msg:$scope:${it.id}" }
     private val bodyItems =
-        sourceSnapshot.items
+        sourceSnapshot.expansionItems
             .filter { it.kind in setOf("tool_call", "agent") }
             .groupBy { it.id }
             .values
@@ -60,6 +64,35 @@ class AuthoritativeThreadPresentation internal constructor(
     internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
 
     internal fun missingBody(key: String): Boolean = bodyItem(key)?.let { !sourceSnapshot.hasToolBody(it) } == true
+
+    internal fun childParent(key: String): ThreadItemDto? =
+        bodyItem(key)?.takeIf {
+            it.kind == "agent" && it.raw["detail_omitted"] == JsonPrimitive(true)
+        }
+
+    /** Place each control after the last currently displayed descendant, without adding timeline facts. */
+    internal fun childControls(
+        displayed: List<ThreadRow>,
+        expanded: Set<String>,
+    ): Map<String, List<String>> {
+        val result = mutableMapOf<String, MutableList<String>>()
+        for ((key, item) in bodyItems) {
+            val id = key.removePrefix("msg:")
+            if (item.kind != "agent" || childParent(key) == null || id !in expanded || displayed.none { it.listKey(0) == key }) continue
+            val last =
+                displayed.lastOrNull { row ->
+                    var parent = row.listKey(0).removePrefix("msg:")
+                    val visited = mutableSetOf<String>()
+                    while (visited.add(parent)) {
+                        if (parent == id) return@lastOrNull true
+                        parent = parents[parent] ?: break
+                    }
+                    false
+                } ?: continue
+            result.getOrPut(last.listKey(0)) { mutableListOf() }.add(key)
+        }
+        return result
+    }
 
     /** Fold summaries first. An omitted ancestor cannot expose a separately placed descendant. */
     internal fun demandRows(
@@ -86,6 +119,10 @@ class AuthoritativeThreadPresentation internal constructor(
                     result = false
                     break
                 }
+                if (childParent("msg:$parent") != null && parent !in expandedTools) {
+                    result = false
+                    break
+                }
                 parent = parents[parent]
             }
             path.forEach { visibility[it] = result }
@@ -108,7 +145,8 @@ class AuthoritativeThreadPresentation internal constructor(
         row: ThreadRow.Delivered,
         expandedTools: Set<String>,
     ): Boolean =
-        !missingBody(row.listKey(0)) &&
+        row.listKey(0) !in summaryKeys &&
+            !missingBody(row.listKey(0)) &&
             (resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools)
 
     /** Summaries are never proof of rendered contents. Resolve only the carried, exact current revision. */
@@ -118,6 +156,7 @@ class AuthoritativeThreadPresentation internal constructor(
         revision: Long?,
     ): Boolean {
         if (key == null || revision == null || shownRowRevisions[key] != revision) return false
+        if (key in summaryKeys) return false
         if (missingBody(key)) return false
         return if (resolveContents != null) {
             resolveContents.invoke(key)?.item == item
@@ -221,8 +260,14 @@ private fun projectThread(
     val scope = listOf(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation.toString()).joinToString("") { "${it.length}:$it" }
 
     fun identity(id: Long) = "$scope:$id"
-    val held = snapshot.items.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
-    val ordered = held.values.filter { (it.order ?: 0) > 0 }.sortedBy { it.order }
+    val held = snapshot.expansionItems.groupBy { it.id }.mapValues { (_, versions) -> versions.maxBy { it.rev } }
+    val paged =
+        snapshot.childPages
+            .filterKeys { held[it.first]?.rev == it.second }
+            .values
+            .flatMap { it.items }
+            .mapTo(HashSet()) { it.id }
+    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.id in paged }.sortedWith(compareBy({ it.order }, { it.id }))
     val agents = held.values.filter { it.kind == "agent" }.associateBy { it.id }
     // Parent chains are facts, not raw-event nesting. Hidden/unordered ancestors remain in this map.
     val owners = mutableMapOf<Long, Long?>()
@@ -232,7 +277,7 @@ private fun projectThread(
     val expandable =
         held.values
             .filter {
-                it.shown && (it.order ?: 0) > 0 && it.kind in setOf("agent", "tool_call") && it.toolName() != null
+                it.shown && ((it.order ?: 0) > 0 || it.id in paged) && it.kind in setOf("agent", "tool_call") && it.toolName() != null
             }.mapTo(HashSet()) { identities.getValue(it.id) }
     // Inclusive nearest-agent/depth summaries let shared parent chains be walked once.
     val lineage = mutableMapOf<Long, Pair<Long?, Int>>()
@@ -320,7 +365,7 @@ private fun projectThread(
     val children =
         held.values
             .filter { owners[it.id] != null && (it.kind == "agent" || it.id in adapted) }
-            .sortedBy { it.order ?: Long.MAX_VALUE }
+            .sortedWith(compareBy({ it.order ?: Long.MAX_VALUE }, { it.id }))
             .groupBy { owners[it.id] }
     val launches =
         background.filterValues { it.shown }.mapValues { (_, item) ->
@@ -439,7 +484,9 @@ private fun projectThread(
             if (launch) "agent-start:${identity(id)}" else "msg:${identity(id)}"
         }
 
-    fun selected(row: ThreadRow) = selectedKeys == null || row.listKey(0) in selectedKeys
+    val pagedKeys = paged.mapTo(HashSet()) { "msg:${identity(it)}" }
+
+    fun selected(row: ThreadRow) = selectedKeys == null || row.listKey(0) in selectedKeys || row.listKey(0) in pagedKeys
     val selectedRows = rows.filter(::selected)
     val resolver: ((String) -> ThreadRow.Delivered?)? =
         if (deferred) {
@@ -552,6 +599,7 @@ private fun ThreadItemDto.summaryRow(
         ),
         block,
         identityKey = "msg:$id",
+        summaryText = if (tool == null && "headline" in raw) summary.displayText() else null,
     )
 }
 
@@ -585,7 +633,17 @@ private fun JsonObject.number(key: String): Long? =
 
 private fun String.displayText(): String = take(DISPLAY_TEXT_LIMIT).filter { it == '\n' || it == '\t' || !it.isISOControl() }
 
-private fun ThreadItemDto.toolName(): String? = (content as? JsonObject)?.let { it.text("name") ?: it.text("tool") }
+private fun ThreadItemDto.toolName(): String? =
+    (content as? JsonObject)?.let { it.text("name") ?: it.text("tool") }
+        ?: if ("headline" in raw) {
+            when (kind) {
+                "agent" -> "Agent"
+                "tool_call" -> "Tool use"
+                else -> null
+            }
+        } else {
+            null
+        }
 
 private fun ThreadItemDto.recordedTask(): Pair<String, String>? {
     val fields = content as? JsonObject ?: return null
