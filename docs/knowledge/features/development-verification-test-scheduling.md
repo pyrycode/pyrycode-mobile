@@ -466,6 +466,43 @@ it can still cut in. Fairness holds only among ticketed waiters. `DeviceHoldTest
 covers arrival order, a dead waiter's ticket, a lost ticket counter and an old
 poller mixed with ticketed waiters, all with real second processes.
 
+### Direct Share evidence across connection replacement (#2498)
+
+A rendered reply and its daemon read mark can belong to a replacement connection
+while an assertion against the earlier concrete repository waits until timeout.
+`HostConversationSource.repositoryFor` supplies current availability; capturing it
+before Send does not retain the destination across reconnect. Cleanup-time launcher
+focus cannot establish activity loss or identify the failing operation. The
+[controlled native failure and counted recovery](../../e2e-interactive-stream.md#direct-share-replacement-evidence-2498)
+correlate this boundary with the retained #2486/#2439 failures and passing reruns.
+
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+resolves the exact published shortcut's host/conversation through
+`ThreadDestinationFactory` and observes its retained negotiated route through
+`harnessThreadEvidence`. Before Send, wait for admitted evidence within the existing
+thread deadline, then require no user message. An unadmitted observation cannot
+prove an empty thread. After the reply renders, the scenario closes/reconnects its
+own host supervisor and requires a different authenticated source before accepting
+the delivered echo. This controlled retirement remains in every invocation; it
+introduces no resend, test retry or longer deadline.
+
+`isCurrentDirectShareEvidence` requires authoritative admitted evidence for the
+exact target, a nonnull current authenticated connection identical to the evidence
+owner and route's supported connection, and the store's current snapshot by
+identity, epoch and generation. The native acceptance check rechecks source,
+support and snapshot after evaluating the predicate. Validate exactly one delivered
+exact-text user echo against the fresh observation's own owner, rather than the
+pre-send owner. Equal snapshot contents, retired connections and unsupported
+routes cannot certify even an empty thread.
+
+`DirectShareEvidenceTest` covers replacement ownership, retired/unsupported sources,
+unadmitted/wrong-target/stale snapshots, and exact single delivered echo semantics.
+Its four methods passed in the focused Linux run and the configured JVM gate.
+The native scenario separately proves actual shortcut publication, intent delivery,
+exact composer staging without the picker, explicit Send and rendered reply.
+Bounded diagnostics emit static stages and admission/source booleans only, retain
+the original failure, and exclude authored content and pairing material.
+
 ### Background permission replay consumption (#2348)
 
 The original macOS main sweep on `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`
