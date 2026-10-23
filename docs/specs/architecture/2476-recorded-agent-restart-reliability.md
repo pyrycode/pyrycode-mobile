@@ -260,6 +260,66 @@ The unchanged Linux baseline at `a48e9ced0e9bc7e9193445d576afb6fb498a7b99`
 is queued for shared admission, zero tests executed so far. Complete configured
 acceptance remains dispatcher-owned; historical macOS failures remain failed.
 
+### 2026-10-23 — retain controlled omission; historical attribution pending
+
+The unchanged recorded method passed on Linux in `ui-suzgk2r4`: one executed,
+one passed, zero failures/errors/skips, exit 0. Its base is
+`a5d7e3adb7203bd1f29a426947f9c9bc66bd83fd`, with an unused shared-test lookup
+extraction and the new JVM diagnostic present. The native caller and scenario
+are unchanged. App APK SHA-256 is
+`207d419cd215b34ffbdc0caa0f8d735eec0434f8cc52d5fb42e3662f92905ff0`;
+test APK SHA-256 is
+`c2af6ca0a175538e867b6e15b7c7d7e1665634b941506774d725487af90cb622`.
+The receipt, full input hashes, patch, raw XML/phone log and completion phases
+are retained in `baseline-linux` (19 verified manifest entries). This is a
+diagnostic pass, not repaired-candidate acceptance.
+
+The first JVM fixture attempt executed once and failed before the intended
+boundary: its repository sent before the replay pump reached Open, leaving
+checkpoint zero. Preserve `rotation-fixture-red-1` as a setup failure, not causal
+proof. The corrected fixture drives Open before constructing the repository.
+It then holds the real checkpoint-77 query's terminal while the admitted
+session divider and completed version 81 are visible with checkpoint 77.
+The original readiness lookup reopens at this point. After terminal release,
+the actual request payloads contain only checkpoints 0 and 77, omitting 81.
+`rotationReopenWaitsForCertificationBeforeAcquiringItsQuery` fails that exact
+request assertion: one executed/failed, zero errors/skips, exit 1.
+`rotation-controlled-red` retains six verified files, including raw XML/binary
+reports, the exact patch/extraction and receipt. A terminal advancing to 84
+prevents normalization from substituting for the missing final query.
+
+This establishes query coalescence in the controlled interleaving. It does not
+distinguish coalescence from cancellation or an overlapping reader in the
+historical occurrence. That occurrence's original phone traces, effective APK
+identities and cleanup receipts for `ui-q2ll4ly_` and `ui-7b4oc0t5` are absent
+from the newest bundle and its pointers. Do not infer those binary hashes from
+the earlier builder's source-equivalent pass. The original generation-0
+checkpoint-81 omission and separate rerun remain retained and distinct from all
+earlier failure boundaries.
+
+Recovery assessment
+`845d55f150984a3ca26ce592d4315befdef365a8558bd5db1c65e094e3d2731d`
+is queued with zero executed tests. It requests recovery of those existing
+artifacts first; its maximum proposed execution scope is the exact named
+method at `2db93ebd8a8280d25c7c071fc11b2af4da55b198`, never a complete
+suite or macOS verification. The request and all new private evidence are under
+agents `logs/evidence/2476/builder-recurrence-20261023/`; the original bundle is
+in `original-2462`, with all 138 manifest entries verified. The request uses
+this ticket's verified refiner bundle
+`ea45570c450701d2d663caac33f3dcf9916c823e8a163f570afdcb09bb997074`
+as provenance, and names the newly recovered verifier bundle explicitly.
+
+No certification guard has been added and the extraction is not wired into
+the native proof. The new diagnostic remains deliberately red on the branch;
+no assertion is skipped or retried. Before selecting a synchronization repair,
+recover the original reader/query trace and establish whether the demonstrated
+coalescing mechanism explains it. Then complete controlled red/green, the three
+fresh repaired Linux invocations, affected regression checks and normal final
+gates. No new implementation PR or acceptance claim is made in this blocked
+diagnostic handoff. Historical host load and preceding non-recorded test effects
+remain unestablished; the retained XML names the same three preceding recorded
+methods as the earlier investigation, without proving their causality.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
