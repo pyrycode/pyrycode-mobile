@@ -28,7 +28,7 @@ No production jobs or flows change. The replay fence uses the existing 30-second
 | --- | --- |
 | Scenario returns while final catch-up is held | `OperatorBypassCleanupTest.finalCapturedCatchUpFinishesBeforeHostRemoval` holds request 82, then terminal consumption, and verifies removal waits for both. |
 | Scenario fails during cleanup | `OperatorBypassCleanupTest.scenarioFailureStillDrainsAndRemovesHost` preserves the scenario throwable while draining and removing the host. |
-| Missing phone work or changed identity/checkpoint | Existing `PermissionIsolationCleanupTest.missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` and `aReplayMismatchRemainsFirstThroughCleanup` retain strict failure and cleanup. |
+| Missing phone work or changed identity/checkpoint | Existing `PermissionIsolationCleanupTest.missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` and `aReplayMismatchRemainsFirstThroughCleanup` retain strict failure and cleanup; extend wrong-owner probes to another host and another connection. |
 | Repeated cleanup failure or same throwable | Existing failure-order and self-suppression probes in `PermissionIsolationCleanupTest`. |
 
 ## Error handling
