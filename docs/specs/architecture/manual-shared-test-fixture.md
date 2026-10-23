@@ -82,3 +82,43 @@ Private rework evidence is under $AGENTS_REPO_PATH/logs/evidence/2505/manual-rew
 The earlier baseline failure for Agent restart is now recorded on its existing tracker: https://github.com/pyrycode/pyrycode-mobile/issues/2476#issuecomment-6369555768. This records the original evidence only. It grants no accepted stage result and changes no ownership, hold or acceptance obligation.
 
 The additional exact attention-navigation method executed and passed once at docs head 5eb74bede, with no failures, errors or skips and gate exit zero. Executable files are identical to a4ab9eb84. Its XML, phone log, completed phase record and separate built APK hashes are retained. Both affected native callers now pass. These author checks return the existing PR to normal independent review and complete configured acceptance. Actual normal Documentation pickup remains the requested handoff boundary.
+
+## Revision record and deadline repair plan, 2026-10-23
+
+The renewed independent verdict at 7e856c463 accepts the previous queued-query and source-retirement repairs. It also accepts the dispatcher dispositions for tracked flaky and inherited gate failures. It rejects a separate deadline extension, incomplete Replay cleanup and the committed plan chronology. Preserve that verdict and every original failure.
+
+The previous plan text was authored before the corresponding changes, but that did not meet the required separate preceding plan commit. The queued-query plan and implementation landed together in 9e94999ac. The observer-cleanup plan and correction landed together in a4ab9eb84. The authoring-order statements above do not establish committed order. As the authorised manual author and operator, Codex records this process gap here without rewriting either commit or the adopted prototype's history. This plan-only revision must be committed before the tests, clock seam or implementation below.
+
+### Scope and design
+
+Use one monotonic budget starting when ThreadAcquisitionGate is armed, before row lookup and navigation. Expose the remaining budget to the gated chat-row lookup, thread navigation, actual acquisition and post-acquisition query wait. Keep the ordinary ungated row helper's existing bounds. The attention caller retains its original assertions and uses the same armed acquisition budget. Do not add time, retries, synthetic requests or replies, or change application source or recording bytes.
+
+Add an injectable monotonic clock to this test-only gate for deterministic virtual-time controls. First retain the current acquisition timeout with that clock seam and run a delayed-navigation regression. It must fail because twenty seconds already spent before acquisition incorrectly leave another thirty seconds. Then consume the remaining armed budget in the gate and the model caller. Add delayed acquisition and a post-acquisition completion after the original deadline, plus an in-budget successful control. Preserve current-source identity, scope and generation checks, certification, exact requests, downstream consumption and observation boundaries.
+
+Give every InitialAttentionQueryTest Replay explicit ownership through its test fixture and idempotent close. Teardown closes every registration, including both Replays in the unarmed test, and restores logging on assertion failure. Add controls proving teardown retires a ready source and a late old close preserves a replacement. Existing global source-retirement behaviour remains unchanged.
+
+### State and failure controls
+
+- Delayed navigation: acquisition expires at the original armed deadline, rather than thirty seconds after navigation.
+- Delayed acquisition and destination query: time consumed in either stage is unavailable to later stages. A late reply cannot turn expiry into success.
+- In-budget navigation and queries: actual acquisition and the distinct current-source completion still succeed.
+- Fixture success or assertion failure: owning teardown retires its source. Closing an older fixture preserves the replacement registration.
+- Existing retirement, queued request, observer cleanup and strict replay controls remain required.
+
+### Validation and acceptance evidence
+
+Retain a counted failing control before correction. Then run the affected query/acquisition and decorator classes, format and compile checks, and the exact recorded model and attention scenarios through the maintained gates. Preserve counted XML, source and built APK hashes and complete phase records. These are author checks and do not replace configured acceptance or independent review.
+
+The renewed review also records a real acceptance evidence gap: built APK hashes and finished phase markers did not establish independent installed app/test identities, the effective relay binary or complete process cleanup. Inspect the maintained harness's existing identity and cleanup records before the next configured run. Close that gap with actual retained observations during a fresh authorised run, or report the precise remaining evidence blocker. Never describe a build hash as installed-byte readback, reconstruct missing observations after shutdown or manufacture a successful stage result. Keep the original limitations in the previous checkpoint.
+
+Return only 2505 to normal independent review after the repair and evidence handoff. Preserve the separate watch's custody of 2493 and the broader repairs, every unrelated hold and drain, and the accepted inherited/flaky dispositions. Actual normal Documentation pickup remains the completion boundary.
+
+### Files read and expected changes
+
+- InitialAttentionQuery.kt: armed ownership, acquisition timeout and final completion receipt. Add the monotonic deadline and bounded post-query wait here.
+- InteractiveStreamE2ETest.kt: model row navigation and attention gate callers. Pass only the gated navigation through the remaining original budget.
+- InitialAttentionQueryTest.kt and ThreadQueryReadinessTest.kt: virtual-time, real query controller, strict tape, retirement and observer-cleanup controls.
+- docs/recorded-tests.md: current shared-query and cleanup contract. Documentation handoff must describe the final original deadline and retained evidence accurately.
+- Reviewed verifier-2505 handoff at 7e856c463: preserve the accepted gate dispositions, source findings and identity/cleanup limits.
+
+Estimated additional written work is 250 to 450 lines across the three test source files, the controls and this plan. No production files change. Repository CodeGraph is absent in the isolated author checkout. QMD semantic search failed to initialise its local model; its lexical fallback found no gate entry, so the named source and verification overview were read directly.
