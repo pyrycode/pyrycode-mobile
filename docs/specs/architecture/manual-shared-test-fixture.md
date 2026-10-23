@@ -122,3 +122,11 @@ Return only 2505 to normal independent review after the repair and evidence hand
 - Reviewed verifier-2505 handoff at 7e856c463: preserve the accepted gate dispositions, source findings and identity/cleanup limits.
 
 Estimated additional written work is 250 to 450 lines across the three test source files, the controls and this plan. No production files change. Repository CodeGraph is absent in the isolated author checkout. QMD semantic search failed to initialise its local model; its lexical fallback found no gate entry, so the named source and verification overview were read directly.
+
+### Deadline implementation checkpoint
+
+The separate preceding plan commit is 8faef212a97ed1b2f90d64490dccd90dca54cdda. With only the clock injection seam and fixture tracking added, the two controlled methods actually executed and both failed at the intended deadline and retirement assertions. Neither reported an error or skip. Raw XML is retained under logs/evidence/2505/deadline-rework-20261023/red.
+
+The correction starts the monotonic budget when the gate is armed. Gated row lookup, navigation, acquisition and the different post-acquisition query consume its remaining time. The acquisition also rejects an expired result before publishing its receipt. Ordinary ungated row calls keep their original bounds. The same source, connection, generation and consumption checks remain. Every Replay registration now has explicit owning teardown and idempotent close.
+
+The affected acquisition, readiness and decorator selection executed and passed 34 methods with zero failures, errors or skips. These include delayed navigation, late and in-budget post-acquisition completion, refusal after expiry, teardown of a ready fixture, assertion-failure cleanup and a replacement surviving an older fixture's close. Formatting passed separately after this selection. Full build/unit checks, affected recorded scenarios, final evidence closure and renewed independent acceptance remain pending.

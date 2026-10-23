@@ -4938,7 +4938,7 @@ class InteractiveStreamE2ETest {
                     val gate = ThreadAcquisitionGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
                     acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
-                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+                    composeTestRule.waitUntil(gate.remainingMillis()) { gate.finished }
                     gate.awaitAcquired()
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
@@ -8922,30 +8922,27 @@ class InteractiveStreamE2ETest {
         val registry = GlobalContext.get().get<RelayConnectionRegistry>()
         val thread = checkNotNull(checkNotNull(registry.connectionFor(host)).coordinator.negotiatedThread)
         ThreadAcquisitionGate.arm(thread, conversation, THREAD_TIMEOUT_MS).use { gate ->
-            openChatRow(name)
-            val waitingSince = System.nanoTime()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
-            val remaining = THREAD_TIMEOUT_MS - (System.nanoTime() - waitingSince) / 1_000_000
-            runBlocking {
-                withTimeout(remaining) {
-                    val previous = gate.awaitAcquired()
-                    // Back must not release the new destination's producer before its own reply finishes.
-                    val receipt = previous.awaitNext()
-                    check(receipt.isCurrent()) { "Reopened thread query owner changed" }
-                }
-            }
+            openChatRow(name, gate::remainingMillis)
+            composeTestRule.waitUntil(gate.remainingMillis()) { gate.finished }
+            // Back must not release the new destination's producer before its own reply finishes.
+            runBlocking { gate.awaitNextQuery() }
         }
     }
 
     /** Tap the Chats row whose name contains [name] and wait for its thread, as [openRow] does for channels. */
-    private fun openChatRow(name: String) {
+    private fun openChatRow(
+        name: String,
+        remainingMillis: (() -> Long)? = null,
+    ) {
         val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
+        composeTestRule.waitUntil(minOf(LIST_TIMEOUT_MS, remainingMillis?.invoke() ?: LIST_TIMEOUT_MS)) {
+            runCatching { scrollListTo(row) }.isSuccess
+        }
         composeTestRule.onAllNodes(row).onFirst().performClick()
         // A reopened chat can already be running (#1313), including while it awaits permission. Its
         // empty composer shows Stop rather than Send, so either control proves the thread arrived.
         val composerControl = hasContentDescription(CD_SEND_MESSAGE) or hasContentDescription(string(R.string.cd_thread_interrupt))
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+        composeTestRule.waitUntil(remainingMillis?.invoke() ?: THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(composerControl).fetchSemanticsNodes().isNotEmpty() &&
                 composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
         }

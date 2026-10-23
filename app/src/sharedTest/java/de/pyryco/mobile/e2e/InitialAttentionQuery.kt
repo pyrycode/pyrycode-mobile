@@ -23,7 +23,10 @@ internal suspend fun awaitInitialAttentionQuery(snapshots: Flow<AuthoritativeThr
 }
 
 private fun hasInitialQueryCertificate(snapshot: AuthoritativeThreadSnapshot): Boolean =
-    !snapshot.epoch.isNullOrEmpty() && snapshot.checkpoint > 0 && snapshot.coverage != null && !snapshot.repairNeeded &&
+    !snapshot.epoch.isNullOrEmpty() &&
+        snapshot.checkpoint > 0 &&
+        snapshot.coverage != null &&
+        !snapshot.repairNeeded &&
         !snapshot.resetNeeded
 
 /** Only the armed scenario delays acquisition; destination setup and all provider admission stay real. */
@@ -33,13 +36,29 @@ internal class ThreadAcquisitionGate private constructor(
     private val connection: Any,
     private val generation: Long,
     private val timeoutMillis: Long,
+    private val monotonicMillis: () -> Long,
 ) : Closeable {
+    private val startedAt = monotonicMillis()
     private val acquired = CompletableDeferred<ThreadQueryReadiness.Receipt>()
     private val closed = MutableStateFlow(false)
 
     val finished get() = acquired.isCompleted
 
     suspend fun awaitAcquired() = acquired.await()
+
+    fun remainingMillis(): Long {
+        val remaining = timeoutMillis - (monotonicMillis() - startedAt)
+        if (remaining <= 0) throw CancellationException("Thread acquisition deadline expired")
+        return remaining
+    }
+
+    suspend fun awaitNextQuery(): ThreadQueryReadiness.Receipt =
+        withTimeout(remainingMillis()) {
+            val receipt = awaitAcquired().awaitNext()
+            check(receipt.isCurrent()) { "Reopened thread query owner changed" }
+            remainingMillis()
+            receipt
+        }
 
     override fun close() {
         closed.value = true
@@ -56,6 +75,7 @@ internal class ThreadAcquisitionGate private constructor(
             thread: NegotiatedThread,
             conversation: String,
             timeoutMillis: Long,
+            monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
         ): ThreadAcquisitionGate {
             check(active == null) { "thread acquisition already armed" }
             val connection = checkNotNull((thread.support.value as? ThreadSupport.Supported)?.connection)
@@ -65,6 +85,7 @@ internal class ThreadAcquisitionGate private constructor(
                 connection,
                 thread.store.current(thread.host, conversation).generation,
                 timeoutMillis,
+                monotonicMillis,
             ).also { active = it }
         }
 
@@ -99,7 +120,7 @@ internal class ThreadAcquisitionGate private constructor(
                         }
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
-                        return withTimeout(gate.timeoutMillis) {
+                        return withTimeout(gate.remainingMillis()) {
                             var receipt: ThreadQueryReadiness.Receipt? = null
                             while (receipt == null) {
                                 val ready =
@@ -148,6 +169,12 @@ internal class ThreadAcquisitionGate private constructor(
                             if (lease == null) {
                                 gate.acquired.cancel(CancellationException("Thread acquisition delegate refused its lease"))
                             } else {
+                                try {
+                                    gate.remainingMillis()
+                                } catch (failure: Exception) {
+                                    lease.close()
+                                    throw failure
+                                }
                                 gate.acquired.complete(receipt)
                             }
                             lease
