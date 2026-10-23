@@ -103,7 +103,7 @@ draft lives in the new `ui/conversations/thread/PermissionDraftStore.kt`, bound 
 [`ModalUiState`](current-modal-state.md) (`data/model/ModalUiState.kt`, from #445 — moved from
 `ui/conversations/thread/` to `data/model` in [#492](../codebase/492.md) when the fold hoisted to the
 coordinator, so `ThreadScreen` now imports it). Collected in the route host at
-[`MainActivity.kt`](thread-screen.md#destination-block). Strings in `res/values/strings.xml`
+[`MainActivity.kt`](thread-screen-wiring.md#destination-block). Strings in `res/values/strings.xml`
 (`modal_*`). See [Thread screen § list and status row](thread-screen-how-it-works-list-and-status-row.md#inline-permission-rows-and-the-shared-reveal-1306)
 for where the items sit among the message rows, and [Thread screen § overlays](thread-screen-how-it-works-overlays-and-app-bar.md#permission-modal-placement-post-446-moved-inline-in-1306)
 for what still reaches the old `Scaffold`-sibling `when` block (`Dismissed` only).
