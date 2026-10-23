@@ -72,6 +72,7 @@ None. Unknown freshness invalidates once per accepted source observation, never 
 
 - 2026-10-23: The earlier child-owner regression expected a revised ancestor to hide all retained grandchildren immediately. The ticket explicitly requires stale rows to remain until validated replacement, so its assertion now proves retained visibility with invalid page/body and no read sight in either page insertion order. Missing bodies still avoid full conversion. This changes display retention, never source identity or freshness certification.
 - 2026-10-23: Lifecycle review identified a second asynchronous publication boundary: an old lane's final retirement could clear a replacement lane's sticky Retry under colliding IDs. Bind load-state writes to their query owner in `detailLoad`, retain serial/generation checks and prune owner bookkeeping with snapshot publication. The controlled replacement probe also collides request IDs. The mounted connection switch explicitly reopens after the existing destination-local expansion reset.
+- 2026-10-23: `staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` reproduced eviction between a source revision change and the next consumer frame. Existing admitted demand now protects retained invalidated data by identity through that interval; this protection grants no read, Retry or publication authority. Collapse still releases the entry and permits capacity Retry.
 
 ## Documentation handoff
 
@@ -89,6 +90,7 @@ Pending for the documentation stage and #2393's relocated handoff: supply invali
 - [Network and I/O] Reuse bounded expansion decoder, serialized lane, query deadline and connection retirement on drain timeout. No background full download or new network route.
 - [Errors and telemetry] Only static invalidated/loaded/failure codes; no payload, cursor, identifier, plaintext, secret or stack trace logging.
 - [Concurrency] MUST FIX addressed in design: source observations and detail admission use the store lock; query keys fence staged data and terminal markers, retaining remote-slot drain before reuse. No new jobs or locks.
+- [Concurrency follow-up] `detailLoad` binds Loading/Retry/withdrawal writes to the producing lane, so a late old-connection retirement cannot clear a replacement Retry. Stale protection in `protectedDetails` retains only previously admitted demand in the same generation/incarnation; it grants no query or read authority.
 - [Threat model] Delayed/reordered relay frames cannot cross request and source captures. Hostile daemon summaries retain existing size, identity and inert rendering checks. Rooted-device token theft and UI screenshot/accessibility exposure are unchanged existing platform concerns, outside this memory-only repair; genuine capture/privacy acceptance stays with #2393.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)

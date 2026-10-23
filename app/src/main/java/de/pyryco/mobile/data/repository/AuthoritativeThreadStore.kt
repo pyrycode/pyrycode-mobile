@@ -317,7 +317,9 @@ internal class AuthoritativeThreadStore {
                 val snapshot = current(key.host, key.conversation)
                 if (!key.owns(snapshot)) return@forEach
                 val items = snapshot.expansionItems.associateBy { it.id }
-                var item = items[key.item.first]?.takeIf { it.rev == key.item.second && it.shown } ?: return@forEach
+                val invalidated = if (key.children) snapshot.detailValidity.children else snapshot.detailValidity.bodies
+                var item =
+                    items[key.item.first]?.takeIf { it.shown && (it.rev == key.item.second || it.id in invalidated) } ?: return@forEach
                 add(key)
                 val retained = if (key.children) snapshot.childPages.keys else snapshot.bodyContents.keys
                 retained.filter { it.first == item.id }.forEach { add(key.copy(item = it)) }

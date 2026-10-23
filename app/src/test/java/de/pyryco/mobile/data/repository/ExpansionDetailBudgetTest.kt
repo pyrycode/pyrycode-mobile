@@ -380,6 +380,25 @@ class ExpansionDetailBudgetTest {
             assertTrue(sameHost.snapshot().bodyContents.containsKey(1L to 4000L))
         }
 
+    @Test fun staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation() =
+        runTest {
+            val f = Fixture()
+            val owners = f.fillBytes(16 * 1024 * 1024)
+            val retained = f.snapshot().bodyContents[1L to 4000L]
+            val revised = ThreadItemDto.decode(JsonObject(item(1).raw + ("rev" to JsonPrimitive(4001))))
+            f.store.applyBatch("h", "c", "e", 4001, listOf(revised), 0)
+            val other = Fixture(conversation = "second", store = f.store)
+            other.body(1)
+            other.acceptBody(content(128))
+            assertSame(retained, f.snapshot().bodyContents[1L to 4000L])
+            assertEquals(BodyLoad.Retry, other.snapshot().bodyLoads[1L to 4000L])
+            f.lane.releaseBodies(owners.first())
+            other.body(1, retry = true)
+            other.acceptBody(content(128))
+            assertFalse(f.snapshot().bodyContents.containsKey(1L to 4000L))
+            assertTrue(other.snapshot().bodyContents.containsKey(1L to 4000L))
+        }
+
     @Test fun recompositionDoesNotRefreshLru() =
         runTest {
             val f = Fixture()

@@ -364,6 +364,7 @@ class AgentChildrenScreenTest {
                     }
                     try {
                         compose.waitUntil(5000) {
+                            compose.waitForIdle()
                             vm.state.value.authoritativeThread
                                 ?.sourceConnection === fresh
                         }
