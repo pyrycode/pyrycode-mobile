@@ -58,6 +58,8 @@ preserves the separate full-file timing failure and its original source identity
 The [current measurement](authoritative-reader-native-benchmarks.md#current-source-file-compatibility-measurement--2026-10-23)
 records both file methods, all 16 compatibility cases, the active opt-in timing miss,
 Mac readiness failures and the supported commands, with raw evidence identities.
+The [independent review](authoritative-reader-native-benchmarks.md#independent-review-and-configured-acceptance--2026-10-23)
+authenticates those receipts and records cached/skipped gate distinctions and full scripted acceptance.
 
 ## Storage continuation contract
 

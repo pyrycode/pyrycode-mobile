@@ -43,8 +43,9 @@ manifest SHA-256 `84c53109353211e907bab94dc08dc5b8798848230252f7571bb9722a7876cc
 The macOS ARM64 run executed 2/pass 0/fail 2/error 0/skip 0 at CPU readiness, before any
 compatibility frame. Its `mac/` subdirectory has the retained XML/phone/runtime receipts,
 manifest SHA-256 `9f823b5cfad6bd8bb2a8fbd36ec195ecda03c010dd2ee64fa301feb6074da49d`.
-The verifier authenticated the Mac bundle; raw Linux receipts remain pending independent
-authentication. These revision-specific results do not certify the later merged head or
+The accepted verifier review authenticated all 30 Linux entries in the retained
+`linux-review-copy/` and reauthenticated all 19 Mac entries, with the manifest identities
+above. These revision-specific results do not certify the later merged head or
 establish a cross-host optimization comparison. Historical failures retain their outcomes.
 
 ## Testing strategy
@@ -54,16 +55,19 @@ exact default/opt-in invocations and measurements. This prose-only repair adds n
 logic requiring a new regression or native measurement. Run documentation/whitespace checks,
 formatting, lint, assembly and final `scripts/pre-verify.py --gradle` on macOS.
 The earlier combined JVM gate timed out as infrastructure failure, and subsequent UI/scripted
-gates did not run. Complete configured acceptance remains dispatcher/verifier-owned and
-pending; builder checks do not replace it. New Linux execution is outside this run's scope.
+gates did not run in that historical invocation. The later accepted verifier review
+completed configured acceptance, preserving the cached JVM and skipped UI distinctions
+recorded in the native-benchmark companion; builder checks did not replace it. New Linux
+execution is outside this run's scope.
 
 ## Documentation handoff
 
-Pending documentation-stage review: `docs/knowledge/features/authoritative-reader-paging.md`,
+Completed documentation-stage review: `docs/knowledge/features/authoritative-reader-paging.md`,
 “Current DB and file acceptance scope” and “Independent opt-in file benchmark,” with the
 linked `authoritative-reader-native-benchmarks.md` receipts. Preserve supported invocations,
 source/runtime identities, historical evidence and the unmeasured actual import boundary;
-retain the independent Linux evidence-authentication limitation until receipts are reviewed.
+record completed Linux authentication and the accepted configured results in the companion.
+The exact commands, original failures and unmeasured import boundary remain unchanged.
 
 ## Revisions
 
@@ -97,3 +101,16 @@ retain the independent Linux evidence-authentication limitation until receipts a
   Investigation `0fc66f56096d11c833d1bc37319df561e8e22e54fdbbfeed6c7a4eb80e4d7505`
   is assessment-queued (zero executed), requesting the preceding ping/stream sequence
   with the original reused connected-device lifecycle. It supplies no acceptance pass.
+
+- 2026-10-23 accepted verifier stage
+  `76990d22562076b0953ff9c2de74b1c76b179759200120700089580f93d8e45b` passed
+  candidate `e4aa8ee2408d8a79c9c7d63e10fab14a7acccc20`. Linux authentication is complete
+  (30 entries; retained `manual-20261023/linux-review-copy/`); Mac reauthentication
+  confirms 19 entries. Configured macOS scripted-all executed/passed 24, zero
+  failures/errors/skips, including the queued held-reply method. JVM reused 5411
+  passing results with zero failures/errors/skips and zero fresh executions; UI skipped
+  execution. Script unit tests executed/passed 220, zero failures/errors/skips.
+  This supersedes the earlier pending acceptance status without establishing the
+  historical timeout's cause or inheritance. The investigation supplied no counted comparison.
+  Full receipts and evidence-bundle identity are in the
+  [native benchmark companion](../../knowledge/features/authoritative-reader-native-benchmarks.md#independent-review-and-configured-acceptance--2026-10-23).

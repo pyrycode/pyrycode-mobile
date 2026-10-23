@@ -64,3 +64,37 @@ under `logs/evidence/2456/manual-20261023/` on the Linux test host and
 `logs/evidence/2456/manual-20261023/mac/` on the Mac. The Linux successful run is
 `native/ui-3f992hvw`. Historical failures above retain their original outcomes. These hosts
 and source revisions do not form a controlled before/after optimisation comparison.
+
+## Independent review and configured acceptance — 2026-10-23
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2497#issuecomment-6364671252)
+for `e4aa8ee2408d8a79c9c7d63e10fab14a7acccc20` authenticated all **30 Linux manifest
+entries** at agents `logs/evidence/2456/manual-20261023/linux-review-copy/`:
+manifest SHA-256 `84c53109353211e907bab94dc08dc5b8798848230252f7571bb9722a7876cc5c`.
+The original XML and phone logs confirm both selected methods, every frame above and all
+16 default cases; the opt-in run completed eight correctness cases before its timing failure.
+The same review reauthenticated **19 Mac entries**, manifest SHA-256
+`9f823b5cfad6bd8bb2a8fbd36ec195ecda03c010dd2ee64fa301feb6074da49d`.
+Documentation review also verified both retained manifests and their reports. Raw paths
+identify where captures were retained at review time; counted results above survive pruning.
+Benchmark/file-cache/saved-fact source hashes still matched the measured `45b86ff` revision.
+That match does not certify later repository/ViewModel behavior or turn these receipts into
+an actual import measurement.
+
+Configured acceptance on macOS ARM64 passed under dispatcher policy. Script unit tests
+executed/passed **220**, zero failures/errors/skips. The JVM/build gate reused **5411 passing
+report results**, zero failures/errors/skips, with **0 fresh test executions** (`FROM-CACHE`,
+`jvm-nk54_7gq`); it completed the check/assembly/Android-test compilation graph. The UI gate
+explicitly skipped execution for the docs/scripts/e2e-only selection, supplying **no UI-device
+pass**. File correctness remains part of normal UI verification when that gate selects it.
+The complete `scripted-all-c5yqy08h` XML executed/passed **24**, zero failures/errors/skips,
+including `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply`.
+This closes the earlier configured-acceptance finding. Its original **24 executed / 23 passed /
+1 failed / 0 errors/skips** remains failed; neither the later complete pass nor the focused
+2/2 pass establishes its cause or inheritance. The wider investigation supplied no counted
+comparison. No new Linux execution or live-Claude acceptance is claimed.
+
+Saved verifier stage `76990d22562076b0953ff9c2de74b1c76b179759200120700089580f93d8e45b`
+retains the verdict and normalized full scripted XML in its evidence bundle (digest
+`c5b569925a7b37feb802f6e7baf24d7aa2fd30f460f2cd7445de158d8aeed622`).
+The earlier timeout and focused receipts remain in the [ticket plan](../../specs/architecture/2456-full-file-benchmark-scope.md#revisions).
