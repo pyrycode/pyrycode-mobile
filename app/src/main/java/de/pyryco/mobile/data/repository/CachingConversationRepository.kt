@@ -102,6 +102,23 @@ class CachingConversationRepository(
                     if (conversationId in deleted) null else route.bodies(conversationId, connection, consumer, snapshot, ids, retry)
 
                 override fun cancel(conversationId: String) = route.cancel(conversationId)
+
+                override fun children(
+                    conversationId: String,
+                    connection: Any,
+                    consumer: Any,
+                    snapshot: AuthoritativeThreadSnapshot,
+                    ids: Set<Long>,
+                    retry: Long?,
+                    more: Long?,
+                ): java.io.Closeable? =
+                    if (conversationId in
+                        deleted
+                    ) {
+                        null
+                    } else {
+                        route.children(conversationId, connection, consumer, snapshot, ids, retry, more)
+                    }
             }
         }
     private val persistedAuthoritative = ConcurrentHashMap<String, CacheCandidate>()

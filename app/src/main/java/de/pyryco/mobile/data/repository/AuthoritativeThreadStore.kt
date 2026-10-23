@@ -34,10 +34,55 @@ internal data class AuthoritativeThreadSnapshot(
     val openingRows: Set<Pair<Long, Boolean>>? = null,
     val bodyLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
     val bodyContents: Map<Pair<Long, Long>, JsonObject> = emptyMap(),
+    val childPages: Map<Pair<Long, Long>, AgentChildPage> = emptyMap(),
+    val childLoads: Map<Pair<Long, Long>, BodyLoad> = emptyMap(),
 ) {
+    /** Expansion summaries never enter saved full facts or history coverage. */
+    val expansionItems: List<ThreadItemDto> =
+        buildMap<Long, ThreadItemDto> {
+            items.forEach { item ->
+                val held = get(item.id)
+                if (held == null || item.rev > held.rev) put(item.id, item)
+            }
+            val remaining =
+                childPages
+                    .flatMap { (owner, page) -> page.items.map { owner to it } }
+                    .groupBy { it.second.id }
+                    .toMutableMap()
+            do {
+                var progressed = false
+                val iterator = remaining.iterator()
+                while (iterator.hasNext()) {
+                    val (_, candidates) = iterator.next()
+                    // Finalize every possible parent winner before admitting this identity's pages.
+                    // Cyclic dependencies remain unresolved and cannot contribute summary facts.
+                    if (candidates.any { (owner, _) -> owner.first in remaining }) continue
+                    candidates.forEach { (owner, child) ->
+                        val held = get(child.id)
+                        if (get(owner.first)?.rev == owner.second &&
+                            child.id !in retirements &&
+                            (held == null || held.parent == child.parent && held.kind == child.kind && child.rev > held.rev)
+                        ) {
+                            put(child.id, child)
+                        }
+                    }
+                    iterator.remove()
+                    progressed = true
+                }
+            } while (progressed)
+        }.values.toList()
+
     fun hasToolBody(item: ThreadItemDto): Boolean = item.hasToolBody || (item.id to item.rev) in bodyContents
 
     override fun toString(): String = "AuthoritativeThreadSnapshot(content=***)"
+}
+
+internal data class AgentChildPage(
+    val items: List<ThreadItemDto>,
+    val cursor: JsonObject?,
+    val version: ULong,
+) {
+    override fun toString() = "AgentChildPage(redacted)"
 }
 
 /** Runtime evidence of entry or the last accepted move, retained even when snapshots are conflated. */
@@ -279,7 +324,7 @@ internal class AuthoritativeThreadStore {
         state: BodyLoad?,
     ) {
         val current = current(host, conversation)
-        if (current.items.none { it.id == id && it.rev == revision && !current.hasToolBody(it) }) return
+        if (current.expansionItems.none { it.id == id && it.rev == revision && !current.hasToolBody(it) }) return
         val loads = current.bodyLoads.filterKeys { it.first != id }.toMutableMap()
         if (state != null) loads[id to revision] = state
         if (loads != current.bodyLoads) publish(host, conversation, current.copy(bodyLoads = loads))
@@ -303,7 +348,7 @@ internal class AuthoritativeThreadStore {
             return false
         }
         val held =
-            current.items.firstOrNull {
+            current.expansionItems.firstOrNull {
                 it.id.toULong() == request.itemId &&
                     it.rev.toULong() == request.expectedRev &&
                     it.kind == request.kind
@@ -320,6 +365,72 @@ internal class AuthoritativeThreadStore {
             ),
         )
         RelayLog.i { "event=thread_body code=loaded" }
+        return true
+    }
+
+    @Synchronized
+    fun childLoad(
+        host: String,
+        conversation: String,
+        id: Long,
+        rev: Long,
+        state: BodyLoad?,
+    ) {
+        val current = current(host, conversation)
+        if (current.expansionItems.none { it.id == id && it.rev == rev }) return
+        val loads = current.childLoads.filterKeys { it.first != id }.toMutableMap()
+        if (state != null) loads[id to rev] = state
+        if (loads != current.childLoads) publish(host, conversation, current.copy(childLoads = loads))
+    }
+
+    @Synchronized
+    fun enrichChildren(
+        host: String,
+        request: ThreadQueryRequest.Children,
+        data: List<ThreadItemDto>,
+        marker: ThreadQueryReply.Children,
+        generation: Long,
+        incarnation: String,
+    ): Boolean {
+        val current = current(host, request.conversationId)
+        if (current.generation != generation ||
+            current.incarnation != incarnation ||
+            current.epoch != request.epoch ||
+            current.resetNeeded
+        ) {
+            return false
+        }
+        val parent =
+            current.expansionItems.firstOrNull { it.id.toULong() == request.itemId && it.rev.toULong() == request.expectedRev }
+                ?: return false
+        val key = parent.id to parent.rev
+        val old = current.childPages[key]
+        if (old != null && marker.checkpoint.version < old.version) return false
+        if (request.cursor != null && (old?.cursor != request.cursor || old.version != marker.checkpoint.version)) return false
+        val summaries =
+            current.childPages.values
+                .flatMap { it.items }
+                .groupBy { it.id }
+        val known = (current.items + summaries.values.flatten()).groupBy { it.id }
+        if (data.any { child -> known[child.id].orEmpty().any { it.parent != child.parent || it.kind != child.kind } }) return false
+        val winners = summaries.mapValues { (_, versions) -> versions.maxBy { it.rev } }
+        if (data.any { child -> winners[child.id]?.let { it.rev > child.rev || it.rev == child.rev && it.order != child.order } == true }) {
+            return false
+        }
+        val admitted = data.map { child -> winners[child.id]?.takeIf { it.rev == child.rev } ?: child }
+        val rows = (if (request.cursor == null) emptyList() else old?.items.orEmpty()) + admitted
+        if (rows.map { it.id }.distinct().size != rows.size) return false
+        publish(
+            host,
+            request.conversationId,
+            current.copy(
+                childPages =
+                    current.childPages.filterKeys { it.first != parent.id } +
+                        (key to AgentChildPage(rows, marker.cursor, marker.checkpoint.version)),
+                childLoads = current.childLoads - key,
+            ),
+        )
+        RelayLog.i { "event=thread_children code=loaded" }
         return true
     }
 
@@ -342,7 +453,7 @@ internal class AuthoritativeThreadStore {
         if (host.isEmpty() || conversation.isEmpty() || saved.epoch.isNullOrEmpty()) return AuthoritativeThreadOutcome.Ignored
         if (current.incarnation.isNotEmpty() && current.incarnation != saved.incarnation) return AuthoritativeThreadOutcome.Ignored
         val retirements = saved.retirements + current.retirements
-        val merged = merge(current.items, saved.items, saved.completedVersion, retirements) ?: return AuthoritativeThreadOutcome.Ignored
+        val merged = merge(current, saved.items, saved.completedVersion, retirements) ?: return AuthoritativeThreadOutcome.Ignored
         val adoptCertification = current.checkpoint == 0L
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
@@ -478,7 +589,7 @@ internal class AuthoritativeThreadStore {
     ): AuthoritativeThreadOutcome {
         guard(host, conversation, epoch, generation)?.let { return it }
         val current = current(host, conversation)
-        val merged = merge(current.items, items, version, current.retirements) ?: return requestRepair(host, conversation)
+        val merged = merge(current, items, version, current.retirements) ?: return requestRepair(host, conversation)
         publish(
             host,
             conversation,
@@ -512,7 +623,7 @@ internal class AuthoritativeThreadStore {
         guard(host, conversation, epoch, generation)?.let { return it }
         val current = current(host, conversation)
         if (version < current.completedVersion) return requestRepair(host, conversation)
-        val merged = merge(current.items, items, version, current.retirements) ?: return requestRepair(host, conversation)
+        val merged = merge(current, items, version, current.retirements) ?: return requestRepair(host, conversation)
         publish(
             host,
             conversation,
@@ -670,18 +781,27 @@ internal class AuthoritativeThreadStore {
     }
 
     private fun merge(
-        held: List<ThreadItemDto>,
+        held: AuthoritativeThreadSnapshot,
         incoming: List<ThreadItemDto>,
         version: Long,
         retirements: Map<Long, Long>,
     ): List<ThreadItemDto>? {
         if (!number(version)) return null
-        val merged = held.filterNot { it.id in retirements }.associateBy { it.id }.toMutableMap()
+        val merged =
+            held.items
+                .filterNot { it.id in retirements }
+                .associateBy { it.id }
+                .toMutableMap()
+        val summaryKinds =
+            held.childPages.values
+                .flatMap { it.items }
+                .associate { it.id to it.kind }
         for (item in incoming) {
             if (!valid(item, version)) return null
             if (item.id in retirements) continue
             val previous = merged[item.id]
             if (previous != null && previous.kind != item.kind) return null
+            if (summaryKinds[item.id]?.let { it != item.kind } == true) return null
             if (previous == null || item.rev > previous.rev) merged[item.id] = item
         }
         return merged.values.toList()

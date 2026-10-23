@@ -502,6 +502,112 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Recorded terminal preparation (#2491)
+
+A successful scenario return does not imply that its Activity can close. Under
+`test-observations-v1`, `test-end` and `scenario-complete` are distinct captured
+observations, and required phone queries/replies may remain between them. Keep
+request producers and downstream consumers alive until the captured terminal work
+has completed. Queue drainage alone cannot establish application consumption.
+
+The recorded Activity callback first runs existing foreground preparation, then
+`LiveSessionCleanupRule.endWhileActivityAlive`, then
+`SuiteConnections.completeBeforePhoneTeardown`. End is attempted once per evaluation;
+ordinary outer cleanup still owns failures and releases replacement Activities.
+The tape decides whether scenario-complete precedes physical phone close. If it does,
+prepare the required prefix, emit the actual checkpoint while the Activity is alive,
+and await downstream consumption. Native finish records the successful early checkpoint
+so it is not sent twice. If close precedes scenario-complete, retain that captured
+order and leave checkpoint emission to finish. Capture and older-policy paths are unchanged.
+
+All preparation phases share one existing 30-second timeout. Individually bounded
+waits must not restart that budget after an observation. Required repeated requests,
+owner/generation, payload, correlation, causal order and complete tape consumption
+remain strict; later work cannot move across an observation to permit teardown.
+Missing work and early close still fail. Preserve the first body/preparation failure
+through Activity destruction and attach later cleanup errors as secondary evidence.
+
+The controlled success path includes repeated post-end requests and separately
+correlated replies. Negative controls cover missing work, foreign owners/generations,
+observation crossing and both recorded close orders. The shared-budget control holds
+one delivery for 20 seconds and another for 20 after the observation; restarting the
+budget incorrectly passed before correction. Failure/reuse probes require every
+owned Activity to close once and prevent a previous evaluation's end or throwable
+from being reused. See the [lifetime rule](knowledge/features/development-verification-test-scheduling.md#terminal-replay-producer-lifetime-2491).
+
+**Retained macOS repair evidence.** The source-matched focused-main failure at
+`a48e9ced0e9bc7e9193445d576afb6fb498a7b99` first closed at step 32 before test-end,
+with required queries pending. The fresh pre-repair native run at
+`7835ac552791ee4092d1167fb0de3d26bdc4ea13` separately executed/failed one method
+at step 33 after test-end, with three queries and scenario-complete pending.
+Later delivery/cleanup failures propagated the first mismatch. These are distinct
+attempts, not proof of an Agent ownership or visibility assertion failure.
+
+| Retained attempt | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Lifecycle controls before repair | 2 | 0 | 2 | 0 | 0 |
+| Cleanup controls before repair | 2 | 0 | 2 | 0 | 0 |
+| Shared-budget control before correction | 5 | 4 | 1 | 0 | 0 |
+| Affected JVM classes after repair | 95 | 95 | 0 | 0 | 0 |
+| Exact native method at `00055df3565663f87e0ec378fd5b3bc793a9b833` | 1 | 1 | 0 | 0 | 0 |
+
+The native command was `python3 scripts/android-test-gate.py ui --tests
+'de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent'`,
+exit 0. The phone trace reports `early_checkpoint=true` and strict tape completion.
+The unchanged recording SHA-256 is
+`40b136aa8f28f08091e179f8e7ba3ae2be644d357554db0f87e862691d9be786`.
+Raw XML, phone/replay logs, effective source/APK identities, cleanup receipts and
+verified manifests remain under agents `logs/evidence/2491/builder-20261023-macos/`,
+including `unit-red`, `cleanup-red`, `deadline-red`, `deadline-green`,
+`native-baseline-fail` and `native-verified-pass`. The prior verifier authenticated
+these manifests; the manual continuation also read their raw counted reports.
+
+The earlier verifier could not approve after 218 script tests: 217 passed and one
+independent readiness fixture failed (#2500); later configured gates did not run.
+That attempt remains failed. The #2500 repair was subsequently integrated without
+changing the lifecycle implementation.
+
+**Accepted integrated-candidate evidence (2026-10-23, macOS arm64).** Independent
+review accepted `eb99f99da89e217aff4ed11365b536576c24a827`, with main
+`f1f9c3adb2b733c28247ea81d0cdd4353b607f1a` integrated, with no findings.
+The configured gate results were:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped/ignored | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scripts | 220 | 220 | 0 | 0 | 0 | 0 |
+| JVM with build checks | 5411 | 5411 | 0 | 0 | 0 | 0 |
+| Complete UI, original run | 333 | 327 | 6 | 0 | 1 | 1 |
+| Exact rerun of six unrelated UI failures | 6 | 6 | 0 | 0 | 0 | 0 |
+| Scripted-all | 24 | 24 | 0 | 0 | 0 | 0 |
+
+The UI count excludes the additional ignored
+`RenameDialogCaptureTest#renameAtFigmaViewport`. The dispatcher accepted the gate
+under its flaky-rerun policy; the original six failures remain failures. Existing
+trackers #2476, #2368 and #2360 and dispatcher first-sighting records retain them.
+The JVM run included all five `RecordedTerminalLifecycleTest` methods and all three
+`RecordedTerminalFailureTest` methods, each executed and passed. Lint, Spotless,
+assembly, instrumented compilation, pre-verify and docs guard also passed.
+
+`RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent`
+executed and passed in the **original complete UI run**: 1 executed, 1 passed,
+zero failures/errors/skips, in 8.877 seconds. This is distinct from the retained
+focused run above and from the six-method rerun. The verifier's XML/phone-log review
+confirmed `terminal_preparation_finished early_checkpoint=true`, effective test
+BuildConfig `eb99f99da` and finished device cleanup phases. Original Agent child
+attribution, collapsed/expanded visibility, uniqueness and separate main-lane reply
+assertions remain intact.
+
+The accepted verdict and gate logs are retained in fleet evidence run
+`037ec7668cd2ad20d1039a053188da0b3e3111cd508d1f75af2344a2bfbfe318`
+(`handoff/verifier-2491.md` and `logs/` in the downloadable bundle). Its accepted
+stage result is authoritative even though the worker ended with a timeout.
+The transient gate worktree reports have been removed; their paths are not durable
+references. The focused source identity above is unchanged; its effective app APK
+SHA-256 is `536bc19fbec540d9968b9a5e18d40cdf76300cc53e7f82fb83a33978ae12288c`
+and test APK SHA-256 is `8b1fca1faa064af4b534e5a1864968d84a2a2c4b916f551d925aff9dd01b0093`.
+No new provider capture was required: replay does not prove current provider behavior.
+Linux is outside this macOS ticket's verification scope.
+
 ### Downstream consumption before close (#2348)
 
 Keep the selected connection's repository collector alive through `beforeClose`, then

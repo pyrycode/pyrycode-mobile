@@ -18,7 +18,10 @@ class RecordedMobileSuiteTest {
     @get:Rule(order = Int.MIN_VALUE + 1)
     val cleanup = original.sessionCleanup
 
-    @get:Rule val compose: TestRule = RecordedActivityRule(original.composeTestRule, RecordedSuiteNative::beforePhoneTeardown)
+    @get:Rule val compose: TestRule =
+        RecordedActivityRule(original.composeTestRule) {
+            RecordedSuiteNative.beforePhoneTeardown(original.sessionCleanup::endWhileActivityAlive)
+        }
 
     @get:Rule val ime = original.testIme
 

@@ -453,6 +453,15 @@ class RemoteConversationRepository internal constructor(
 
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
 
+    internal fun demandAgentChildren(
+        conversationId: String,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+        more: Long? = null,
+    ): java.io.Closeable? = authoritativeQueries.children(conversationId, consumer, snapshot, ids, retry, more)
+
     internal fun cancelAuthoritativeThread(conversationId: String) = authoritativeQueries.cancel(conversationId)
 
     internal fun resetAuthoritativeThread(
@@ -980,7 +989,7 @@ class RemoteConversationRepository internal constructor(
 
     private fun onInbound(envelope: Envelope) {
         if (authoritativeLiveEnabled() &&
-            envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", TYPE_ERROR) &&
+            envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", "thread_children", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
         ) {
             val conversation =

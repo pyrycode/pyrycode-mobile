@@ -145,6 +145,37 @@ repository wait and readiness consume one original timeout budget; the three geo
 measurements, default callers' strict removed-key failure, owned finished-label check and
 physical tap count remain unchanged.
 
+Successful atomic keyed placement does not keep the list mounted for a later matcher
+scroll. The subsequent #2387 recurrence failed that second `performScrollToNode` after
+the owned finished marker had already been revealed. The opt-in current-key bridge
+therefore uses its existing keyed placement directly; its three geometry measurements
+continue to resample current identity/readiness and correct position. Only that bridge
+omits the redundant matcher scroll. Default `questionAnswerTarget` and `questionAnswerTap`
+paths keep it and their existing strict removed-key behavior. This adds no tap, sleep,
+scenario retry, geometry attempt, deadline extension or recording change.
+
+`resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` empties the real screen after the
+successful keyed reveal, restores the same owned family only at the next identity sample,
+and positively checks its displayed finished marker and collapsed children.
+`resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` instead supplies a different
+finished Agent and requires timeout rejection even though that other label is displayed.
+These controls cover the gap after atomic dispatch; they do not replace the earlier
+growth, generation, missing-list and wrong-owner probes. See the
+[post-reveal cause and evidence](thread-screen-agent-navigation-evidence.md#post-keyed-reveal-reset-recurrence-2373).
+
+Independent Linux acceptance at `a32c07ca8450d4b2065c2bb0b3366e94d4cdb63d`
+executed/passed both post-reveal controls in the full JVM gate: 5388 executed/passed,
+zero failures/errors/skips. The configured UI gate executed/passed the original recorded
+Agent method once among 333 executed/passed, zero failures/errors and one unrelated
+rename-capture skip. Scripted-all executed/passed 24 methods, zero failures/errors/skips,
+including both background-Agent placement/settlement and restart/reconnect scenarios.
+The [independent verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2454#issuecomment-6360402269)
+confirms unchanged helper defaults, absolute deadline, three geometry measurements,
+owned finished-label assertion and tap count. These full-gate results are separate
+from the earlier manual acceptance and five historical native passes. Source/recording
+identities, retained failed controls and the unavailable historical timeline remain in
+the linked navigation evidence.
+
 The controlled growth, generation-during-measurement and readiness-to-scroll probes each
 failed once before repair, with zero errors/skips, then passed in the final 27-method
 block class. Preserve the reset and wrong-Agent/running-label negatives. A keyed reveal
