@@ -292,6 +292,7 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_directShareShortcut_stagesBeforeExplicitSend() {
         arriveInSeededThread()
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=thread_open")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = context.getSystemService(ShortcutManager::class.java)
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { manager.dynamicShortcuts.any { it.shortLabel.toString() == SEED_CHANNEL_NAME } }
@@ -301,6 +302,7 @@ class DeterministicInteractiveStreamE2ETest {
                 NotificationTap
                     .target(shortcut.intent),
             )
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=shortcut_published")
         composeTestRule.runOnUiThread {
             context.startActivity(
                 android.content.Intent(context, MainActivity::class.java).apply {
@@ -316,21 +318,43 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and hasText(SEND_PROMPT)).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=prompt_staged")
         val repository =
             requireNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(target.serverId))
         val evidence = harnessThreadEvidence(repository)
         val before = runBlocking { evidence.observe(target.conversationId).first() }
         assertTrue("nothing may be sent before the explicit tap", before.holdsNoUserMessage())
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=unsent_admitted")
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=send_tapped")
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=reply_rendered")
+        // Reproduce the observed producer-gap retirement before checking delivery, on every run.
+        val bundle =
+            requireNotNull(GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>().connectionFor(target.serverId))
+        runBlocking {
+            withTimeout(RECONNECT_TIMEOUT_MS) {
+                bundle.supervisor.close()
+                bundle.coordinator.currentRepository.first { it == null }
+                bundle.supervisor.connect()
+                bundle.coordinator.currentRepository.first { it != null && it !== before.owner.connection }
+            }
+        }
+        val held = runBlocking { evidence.observe(target.conversationId).first() }
+        android.util.Log.i(
+            "DirectShareProof",
+            "event=direct_share_stage stage=replacement_authenticated admitted=${held.admitted} " +
+                "source_current=${held.owner.connection === bundle.coordinator.currentRepository.value}",
+        )
         runBlocking {
             withTimeout(REPLY_TIMEOUT_MS) {
                 evidence.observe(target.conversationId).first { it.ownedUserEcho(before.owner, SEND_PROMPT) != null }
             }
         }
+        android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=echo_admitted")
     }
 
     /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
