@@ -70,3 +70,15 @@ The exact recorded model method then failed twice on the same source with a gene
 The diagnostic phone run at 0f9d27d1a identifies the added final exact-receipt check as the cancellation cause: completion changed before acquisition. A newer completion can arrive while the gate joins cancelled observers. Rejecting that advancement is incorrect. Simply using the old receipt would also permit that newer pre-acquisition result to satisfy the post-acquisition wait.
 
 Before implementing the correction, reproduce a real queued query starting during owner-observer cancellation. Then capture the current completion synchronously after observer cleanup. If a query is active, repeat the wait within the same original timeout. Keep scope, owner, generation and certified-snapshot checks. Acquire only after that final marker, then require a different completion from the same source. Preserve the diagnostic failure and both earlier native failures.
+
+## Corrected acquisition boundary
+
+At code a4ab9eb84620e9e7c5d12ebaf949877c4fb784b0, the marker is captured synchronously after observer cleanup. If a query is still active, the same bounded acquisition wait continues. Scope, current owner, generation and the certified snapshot are rechecked. The delegate acquires only after that marker. Post-acquisition completion must still differ from the marker and belong to the same current source and conversation.
+
+The controlled observer-cleanup regression executed once and failed before correction at the active-query acquisition assertion. After correction, all 23 focused query and acquisition methods passed with no failures, errors or skips. Formatting passed separately from compilation. The exact recorded model method then executed and passed once on a4ab9eb84. The prior two e2f788962 cancellations and the diagnostic 0f9d27d1a cancellation remain retained. This new pass establishes the affected recorded scenario, not complete configured acceptance.
+
+Private rework evidence is under $AGENTS_REPO_PATH/logs/evidence/2505/manual-rework-20261023. It retains the original verifier bundles, controlled red/green XML, the full JVM red and exact comparison, every native attempt, phase records, phone logs, source lineage and built APK hashes. Debug APKs intentionally embed dev rather than a source revision. No independent installed-byte readback was performed for these author checks. Preserve this limit and establish the required effective identities during complete configured acceptance.
+
+The earlier baseline failure for Agent restart is now recorded on its existing tracker: https://github.com/pyrycode/pyrycode-mobile/issues/2476#issuecomment-6369555768. This records the original evidence only. It grants no accepted stage result and changes no ownership, hold or acceptance obligation.
+
+The final additional attention-navigation check is queued through the maintained gate. The manual hold remains until that result is known. A successful author check will return the existing PR to normal independent review and complete configured acceptance. Documentation pickup remains the requested handoff boundary.
