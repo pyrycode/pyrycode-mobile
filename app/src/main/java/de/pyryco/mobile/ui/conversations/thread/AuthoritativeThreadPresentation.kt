@@ -267,7 +267,7 @@ private fun projectThread(
             .values
             .flatMap { it.items }
             .mapTo(HashSet()) { it.id }
-    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.id in paged }.sortedWith(compareBy({ it.order }, { it.id }))
+    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.id in paged }.sortedBy { it.order }
     val agents = held.values.filter { it.kind == "agent" }.associateBy { it.id }
     // Parent chains are facts, not raw-event nesting. Hidden/unordered ancestors remain in this map.
     val owners = mutableMapOf<Long, Long?>()
@@ -365,7 +365,7 @@ private fun projectThread(
     val children =
         held.values
             .filter { owners[it.id] != null && (it.kind == "agent" || it.id in adapted) }
-            .sortedWith(compareBy({ it.order ?: Long.MAX_VALUE }, { it.id }))
+            .sortedBy { it.order ?: Long.MAX_VALUE }
             .groupBy { owners[it.id] }
     val launches =
         background.filterValues { it.shown }.mapValues { (_, item) ->
