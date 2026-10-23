@@ -1,6 +1,7 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 
 /** Re-observe the exact certified target; a retired owner's sight or pending write proves nothing. */
@@ -10,6 +11,7 @@ internal fun pingReadMarkConfirmed(
     current: ThreadEvidence,
     marks: ConversationReadMarks?,
     connection: Any?,
+    revalidate: () -> AuthoritativeThreadSnapshot?,
 ): Boolean {
     val snapshot = current.sourceSnapshot ?: return false
     val live = connection ?: return false
@@ -31,5 +33,7 @@ internal fun pingReadMarkConfirmed(
     return marks?.threadSupported == true &&
         shown != null &&
         shown >= reply.id.toULong() &&
-        (marks.readUpTo ?: 0uL) >= shown
+        (marks.readUpTo ?: 0uL) >= shown &&
+        // Reset/repair can withdraw certification without replacing the connection or its read marks.
+        snapshot === revalidate()
 }

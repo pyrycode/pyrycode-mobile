@@ -544,7 +544,9 @@ class DeterministicInteractiveStreamE2ETest {
                     current != null &&
                         currentEvidence != null &&
                         current === coordinator.currentRepository.value &&
-                        pingReadMarkConfirmed(reply.owner, replyFact, currentEvidence, currentMarks, supportedConnection)
+                        pingReadMarkConfirmed(reply.owner, replyFact, currentEvidence, currentMarks, supportedConnection) {
+                            route.store.current(serverId, conversationId)
+                        }
                 val sample =
                     "captured_owned=${ownsConnection()} owner_match=${held.owner.matches(reply.owner)} " +
                         "supported=${marks?.threadSupported} shown=$shown confirmed=${marks?.readUpTo} " +
@@ -561,7 +563,8 @@ class DeterministicInteractiveStreamE2ETest {
                 }
                 proved &&
                     current === coordinator.currentRepository.value &&
-                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
+                    currentEvidence?.sourceSnapshot === route.store.current(serverId, conversationId)
             }
         try {
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { readSample() }

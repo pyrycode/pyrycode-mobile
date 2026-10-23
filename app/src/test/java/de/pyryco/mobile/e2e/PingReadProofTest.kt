@@ -1,7 +1,9 @@
 package de.pyryco.mobile.e2e
 
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -41,15 +43,24 @@ class PingReadProofTest {
         chat: String = "chat",
     ) = authoritativeThreadEvidence(host, chat, connection, state)
 
+    private fun proof(
+        captured: ThreadEvidenceOwner,
+        reply: ThreadItemDto,
+        current: ThreadEvidence,
+        marks: ConversationReadMarks?,
+        connection: Any?,
+        revalidate: () -> AuthoritativeThreadSnapshot? = { current.sourceSnapshot },
+    ) = pingReadMarkConfirmed(captured, reply, current, marks, connection, revalidate)
+
     @Test fun replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner() {
         val captured = evidence().owner
-        assertTrue(pingReadMarkConfirmed(captured, reply, evidence(), confirmed, first))
+        assertTrue(proof(captured, reply, evidence(), confirmed, first))
         val replacement = evidence(second, snapshot.copy(generation = 1))
         assertFalse("strict evidence ownership still rejects replacement", captured.matches(replacement.owner))
-        assertFalse(pingReadMarkConfirmed(captured, reply, replacement, confirmed.copy(readUpTo = 0u), second))
+        assertFalse(proof(captured, reply, replacement, confirmed.copy(readUpTo = 0u), second))
         assertTrue(
             "fresh replacement facts must complete the final proof",
-            pingReadMarkConfirmed(captured, reply, replacement, confirmed, second),
+            proof(captured, reply, replacement, confirmed, second),
         )
     }
 
@@ -63,7 +74,7 @@ class PingReadProofTest {
             confirmed.copy(lastShownVersion = 8u),
             confirmed.copy(lastShownVersion = 13u),
         )) {
-            assertFalse(pingReadMarkConfirmed(evidence().owner, reply, evidence(), marks, first))
+            assertFalse(proof(evidence().owner, reply, evidence(), marks, first))
         }
     }
 
@@ -74,7 +85,7 @@ class PingReadProofTest {
             snapshot.copy(resetNeeded = true),
             snapshot.copy(epoch = null),
         )) {
-            assertFalse(pingReadMarkConfirmed(evidence().owner, reply, evidence(state = state), confirmed, first))
+            assertFalse(proof(evidence().owner, reply, evidence(state = state), confirmed, first))
         }
     }
 
@@ -86,7 +97,7 @@ class PingReadProofTest {
             evidence(state = snapshot.copy(epoch = "foreign")),
             evidence(state = snapshot.copy(items = emptyList())),
         )) {
-            assertFalse(pingReadMarkConfirmed(captured, reply, foreign, confirmed, first))
+            assertFalse(proof(captured, reply, foreign, confirmed, first))
         }
         for ((key, value) in listOf(
             "rev" to JsonPrimitive(13),
@@ -95,14 +106,48 @@ class PingReadProofTest {
             "content" to buildJsonObject { put("text", "another reply") },
         )) {
             val changed = ThreadItemDto.decode(JsonObject(reply.raw + (key to value)))
-            assertFalse(pingReadMarkConfirmed(captured, reply, evidence(state = snapshot.copy(items = listOf(changed))), confirmed, first))
+            assertFalse(proof(captured, reply, evidence(state = snapshot.copy(items = listOf(changed))), confirmed, first))
         }
     }
 
     @Test fun replacementWhileSamplingCannotMixOwnersOrUseRetiredFacts() {
         val captured = evidence().owner
-        assertFalse(pingReadMarkConfirmed(captured, reply, evidence(), confirmed, second))
-        assertFalse(pingReadMarkConfirmed(captured, reply, evidence(second), confirmed, first))
-        assertFalse(pingReadMarkConfirmed(captured, reply, evidence(), confirmed, null))
+        assertFalse(proof(captured, reply, evidence(), confirmed, second))
+        assertFalse(proof(captured, reply, evidence(second), confirmed, first))
+        assertFalse(proof(captured, reply, evidence(), confirmed, null))
+    }
+
+    @Test fun reusedEpochResetDuringReadSamplingRequiresFreshExactReplyCertification() = resetDuringReadSampling("epoch")
+
+    @Test fun changedEpochResetDuringReadSamplingCannotProveOriginalReply() = resetDuringReadSampling("changed")
+
+    private fun resetDuringReadSampling(epoch: String) {
+        val previousSink = RelayLog.sink
+        RelayLog.sink = { _, _, _ -> }
+        try {
+            val store = AuthoritativeThreadStore()
+            store.establishComplete("host", "chat", "epoch", 12, listOf(reply), 0)
+
+            fun current() = evidence(state = store.current("host", "chat"))
+            val sampled = current()
+            val captured = sampled.owner
+            val marks = confirmed.also { store.reset("host", "chat", epoch) }
+
+            fun proofOf(value: ThreadEvidence) = proof(captured, reply, value, marks, first) { store.current("host", "chat") }
+            assertFalse("unchanged connection and confirmed marks cannot retain withdrawn certification", proofOf(sampled))
+            assertFalse(proofOf(current()))
+            val generation = store.current("host", "chat").generation
+            assertTrue(generation > requireNotNull(captured.generation))
+            store.applyBatch("host", "chat", epoch, 12, listOf(reply), generation)
+            assertFalse("exact reply receipt is not certification", proofOf(current()))
+            store.establishComplete("host", "chat", epoch, 12, listOf(reply), generation)
+            assertFalse("fresh certification cannot revive the earlier sample", proofOf(sampled))
+            assertTrue("only the original epoch can freshly prove this reply", proofOf(current()) == (epoch == "epoch"))
+            val certified = current()
+            store.requestRepair("host", "chat")
+            assertFalse("same-generation repair also withdraws certification", proofOf(certified))
+        } finally {
+            RelayLog.sink = previousSink
+        }
     }
 }
