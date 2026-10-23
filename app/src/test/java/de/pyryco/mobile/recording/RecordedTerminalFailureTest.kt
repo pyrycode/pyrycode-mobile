@@ -93,4 +93,35 @@ class RecordedTerminalFailureTest {
             ).evaluate()
         assertEquals(2, ends)
     }
+
+    @Test fun activityRuleCannotReuseAPreviousPrimaryFailure() {
+        val bodyFailure = AssertionError("first body")
+        val closeFailure = AssertionError("close")
+        var first = true
+        val activity =
+            TestRule { base, _ ->
+                object : Statement() {
+                    override fun evaluate() {
+                        try {
+                            base.evaluate()
+                        } finally {
+                            throw closeFailure
+                        }
+                    }
+                }
+            }
+        val statement =
+            RecordedActivityRule(activity) {}.apply(
+                object : Statement() {
+                    override fun evaluate() {
+                        if (first) throw bodyFailure
+                    }
+                },
+                Description.EMPTY,
+            )
+        assertSame(bodyFailure, runCatching { statement.evaluate() }.exceptionOrNull())
+        assertTrue(bodyFailure.suppressed.contains(closeFailure))
+        first = false
+        assertSame(closeFailure, runCatching { statement.evaluate() }.exceptionOrNull())
+    }
 }
