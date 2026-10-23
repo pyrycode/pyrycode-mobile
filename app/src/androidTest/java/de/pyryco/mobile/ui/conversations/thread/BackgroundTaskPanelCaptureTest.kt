@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
+import de.pyryco.mobile.design.PerTicketDeviceTest
 import de.pyryco.mobile.design.Viewport
 import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -74,6 +75,7 @@ class BackgroundTaskPanelCaptureTest {
     }
 
     @Viewport("320x640")
+    @PerTicketDeviceTest
     @Test
     fun compactLargeTextKeepsScrolledContentAndCloseGlyphReachable() {
         roster = CAPPED
