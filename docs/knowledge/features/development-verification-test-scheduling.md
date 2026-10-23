@@ -520,10 +520,17 @@ and reset end/failure state between evaluations. Changing production lifecycle b
 or the recording would hide this harness defect.
 
 The retained causal controls failed before repair; 95 affected JVM tests and the exact
-recorded Agent method passed on macOS at `00055df35`. Complete configured acceptance on
-current integration remains pending after the separate #2500 script-gate repair.
+recorded Agent method passed on macOS at `00055df35`. Independent review then accepted
+integrated candidate `eb99f99da`: 220 script and 5411 JVM passes, including all eight
+terminal regression methods, and 24 scripted passes. The original complete UI run
+executed 333: 327 passed and six unrelated tests failed, with one additional ignored
+test. All six failures passed their exact rerun; the dispatcher accepted that gate
+under its flaky-rerun policy. The exact Agent method passed in the original full run
+(1 executed/passed, zero failures/errors/skips), independently of its retained focused pass.
 See [terminal preparation and counted evidence](../../recorded-tests.md#recorded-terminal-preparation-2491)
-for distinct pre/post-test-end failures, the shared-budget negative and current limitations.
+for original source/APK identities, distinct pre/post-test-end failures, the shared-budget
+negative and accepted evidence. Historical reds remain failed; replay makes no claim
+about current provider behavior. Linux is outside this macOS ticket's verification scope.
 
 ### Background permission replay consumption (#2348)
 

@@ -55,7 +55,7 @@ Strict tape mismatch and timeout remain failures. Cleanup preserves the first sc
 
 Write controlled JVM regressions first using the real tape, hub, Activity rule, and session-cleanup rule, with deterministic gates for terminal queries and process-stop timing. Retain a red result before implementing. Probe missing/repeated work, observation fences and owner/correlation checks with the affected existing tape/hub suites. Run affected cleanup/rule/consumption classes, lint, APK assembly, instrumented compilation and forced formatting checks on macOS.
 
-Run the exact unchanged recorded Agent method using `scripts/android-test-gate.py ui --tests`; device execution is necessary for real Activity destruction, process lifecycle and background dispatcher delivery. Retain counted XML, phone/replay logs, source/APK hashes, exit status and cleanup receipts in durable private evidence. Full configured UI execution remains dispatcher-owned and pending before verifier PASS. No Linux run or new Claude capture is required.
+Run the exact unchanged recorded Agent method using `scripts/android-test-gate.py ui --tests`; device execution is necessary for real Activity destruction, process lifecycle and background dispatcher delivery. Retain counted XML, phone/replay logs, source/APK hashes, exit status and cleanup receipts in durable private evidence. Full configured UI execution remains dispatcher-owned; its completed acceptance is recorded below. No Linux run or new Claude capture is required.
 
 ## Open Questions
 
@@ -73,7 +73,7 @@ The explicit entry points are `LiveSessionCleanupRule.endWhileActivityAlive` and
 
 2026-10-23: Open questions resolved by the controlled probes and fresh macOS native evidence. All six new regression methods passed after repair. The exact recorded Agent method passed 1/1, with zero failures/errors/skips and exit 0 on pushed source `e6cd03c62227ea99e18f012559afd57d3e4471ce`. The phone trace records terminal preparation completing with `early_checkpoint=true`; strict finish consumed the tape. Raw XML, phone logs, effective APK hashes, source identity, exit status, cleanup phases, and verified manifests are retained under `$AGENTS_REPO_PATH/logs/evidence/2491/builder-20261023-macos/`, including every failed attempt. The recording SHA256 remains `40b136aa8f28f08091e179f8e7ba3ae2be644d357554db0f87e862691d9be786`.
 
-The final main merge includes #2483's independent owned-run reveal helper. Its original Agent ownership, collapsed/expanded visibility, uniqueness, and separate main-lane reply assertions remain in place; this ticket does not edit the scenario. The focused pass therefore covers their current main integration as well as terminal cleanup. The configured dispatcher UI gate must still execute and pass this method before verifier PASS; full suites remain pending for that stage. Linux is outside this ticket's verification scope.
+The final main merge includes #2483's independent owned-run reveal helper. Its original Agent ownership, collapsed/expanded visibility, uniqueness, and separate main-lane reply assertions remain in place; this ticket does not edit the scenario. The focused pass therefore covers their current main integration as well as terminal cleanup. At this revision, the configured dispatcher UI gate still had to execute and pass this method before verifier PASS; see final acceptance below. Linux is outside this ticket's verification scope.
 
 Final scope measurement before this evidence entry: 478 inserted + 13 deleted lines across nine files, including the plan, with no production edits and no new exported production type. This is a historical size measurement, not a completion ceiling. No split or wider diagnostic is needed.
 
@@ -97,6 +97,31 @@ configured acceptance and independent re-review. No old focused pass is relabell
 
 The retained diagnosis, early-end/captured-close ordering, shared terminal deadline and evidence
 limits are now written in `docs/recorded-tests.md` and the owning verification scheduling topic.
-The documentation records pending configured acceptance honestly. Release the obsolete manual
+At manual continuation, the documentation recorded configured acceptance as pending. Release the obsolete manual
 hold after publishing so the normal verifier can collect the required gates and review; keep
 this ticket selected through its eventual documentation handoff. No merge/release is claimed.
+
+## Final accepted verification — 2026-10-23
+
+Independent review accepted `eb99f99da89e217aff4ed11365b536576c24a827`, integrating
+main `f1f9c3adb2b733c28247ea81d0cdd4353b607f1a`, with no findings on macOS arm64.
+Configured acceptance is complete: 220/220 script tests, 5411/5411 JVM tests
+(including all five lifecycle and three failure regressions), and 24/24 scripted
+tests passed, each with zero failures/errors/skips and exit 0. Build/static checks passed.
+
+The original complete UI gate executed 333: 327 passed, six failed, zero errors,
+with one additional ignored `RenameDialogCaptureTest#renameAtFigmaViewport`, exit 1.
+The six unrelated failures passed the exact same-tree rerun: 6 executed/passed,
+zero failures/errors/skips, exit 0. The dispatcher accepted this gate under its
+flaky-rerun policy; historical failures are preserved. The exact
+`RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent`
+passed in the original full run: 1 executed/passed, zero failures/errors/skips,
+8.877 seconds. Its phone trace confirmed early checkpoint completion and finished cleanup.
+
+This fresh integrated result is distinct from the retained focused pass at
+`00055df3565663f87e0ec378fd5b3bc793a9b833`; its original source/APK identities and
+all failed attempts remain recorded in
+[terminal preparation and counted evidence](../../recorded-tests.md#recorded-terminal-preparation-2491).
+That section also records the authoritative accepted fleet run and evidence limits.
+No recording, Agent assertions, strict replay rules or production behavior changed.
+No new provider capture was needed; Linux remains outside this ticket's scope.

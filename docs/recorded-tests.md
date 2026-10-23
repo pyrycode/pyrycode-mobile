@@ -562,13 +562,51 @@ including `unit-red`, `cleanup-red`, `deadline-red`, `deadline-green`,
 `native-baseline-fail` and `native-verified-pass`. The prior verifier authenticated
 these manifests; the manual continuation also read their raw counted reports.
 
-That verifier found no implementation defect but could not approve: the macOS scripts
-gate executed 218 tests, passed 217 and failed one independent readiness fixture (#2500).
-Later configured gates did not run. Main now includes the #2500 repair; clean integration
-`33015f5e5b8d03eca56a09a4c92da94d95a87cb9` preserves the lifecycle repair. Complete
-configured acceptance, including execution/pass of this exact method in the full UI gate,
-and independent re-review remain pending. Historical focused passes are not acceptance
-of the integrated candidate. No Linux or new Claude capture is required for this ticket.
+The earlier verifier could not approve after 218 script tests: 217 passed and one
+independent readiness fixture failed (#2500); later configured gates did not run.
+That attempt remains failed. The #2500 repair was subsequently integrated without
+changing the lifecycle implementation.
+
+**Accepted integrated-candidate evidence (2026-10-23, macOS arm64).** Independent
+review accepted `eb99f99da89e217aff4ed11365b536576c24a827`, with main
+`f1f9c3adb2b733c28247ea81d0cdd4353b607f1a` integrated, with no findings.
+The configured gate results were:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped/ignored | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scripts | 220 | 220 | 0 | 0 | 0 | 0 |
+| JVM with build checks | 5411 | 5411 | 0 | 0 | 0 | 0 |
+| Complete UI, original run | 333 | 327 | 6 | 0 | 1 | 1 |
+| Exact rerun of six unrelated UI failures | 6 | 6 | 0 | 0 | 0 | 0 |
+| Scripted-all | 24 | 24 | 0 | 0 | 0 | 0 |
+
+The UI count excludes the additional ignored
+`RenameDialogCaptureTest#renameAtFigmaViewport`. The dispatcher accepted the gate
+under its flaky-rerun policy; the original six failures remain failures. Existing
+trackers #2476, #2368 and #2360 and dispatcher first-sighting records retain them.
+The JVM run included all five `RecordedTerminalLifecycleTest` methods and all three
+`RecordedTerminalFailureTest` methods, each executed and passed. Lint, Spotless,
+assembly, instrumented compilation, pre-verify and docs guard also passed.
+
+`RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_replyStaysUnderAgent`
+executed and passed in the **original complete UI run**: 1 executed, 1 passed,
+zero failures/errors/skips, in 8.877 seconds. This is distinct from the retained
+focused run above and from the six-method rerun. The verifier's XML/phone-log review
+confirmed `terminal_preparation_finished early_checkpoint=true`, effective test
+BuildConfig `eb99f99da` and finished device cleanup phases. Original Agent child
+attribution, collapsed/expanded visibility, uniqueness and separate main-lane reply
+assertions remain intact.
+
+The accepted verdict and gate logs are retained in fleet evidence run
+`037ec7668cd2ad20d1039a053188da0b3e3111cd508d1f75af2344a2bfbfe318`
+(`handoff/verifier-2491.md` and `logs/` in the downloadable bundle). Its accepted
+stage result is authoritative even though the worker ended with a timeout.
+The transient gate worktree reports have been removed; their paths are not durable
+references. The focused source identity above is unchanged; its effective app APK
+SHA-256 is `536bc19fbec540d9968b9a5e18d40cdf76300cc53e7f82fb83a33978ae12288c`
+and test APK SHA-256 is `8b1fca1faa064af4b534e5a1864968d84a2a2c4b916f551d925aff9dd01b0093`.
+No new provider capture was required: replay does not prove current provider behavior.
+Linux is outside this macOS ticket's verification scope.
 
 ### Downstream consumption before close (#2348)
 
