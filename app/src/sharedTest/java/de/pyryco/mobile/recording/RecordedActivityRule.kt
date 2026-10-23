@@ -12,14 +12,37 @@ internal class RecordedActivityRule(
     override fun apply(
         base: Statement,
         description: Description,
-    ): Statement =
-        activity.apply(
-            object : Statement() {
-                override fun evaluate() {
-                    base.evaluate()
-                    beforeTeardown()
+    ): Statement {
+        var primary: Throwable? = null
+        val wrapped =
+            activity.apply(
+                object : Statement() {
+                    override fun evaluate() {
+                        try {
+                            base.evaluate()
+                            beforeTeardown()
+                        } catch (error: Throwable) {
+                            primary = error
+                            throw error
+                        }
+                    }
+                },
+                description,
+            )
+        return object : Statement() {
+            override fun evaluate() {
+                primary = null
+                try {
+                    wrapped.evaluate()
+                } catch (error: Throwable) {
+                    val original = primary
+                    if (original != null && original !== error) {
+                        original.addSuppressed(error)
+                        throw original
+                    }
+                    throw error
                 }
-            },
-            description,
-        )
+            }
+        }
+    }
 }
