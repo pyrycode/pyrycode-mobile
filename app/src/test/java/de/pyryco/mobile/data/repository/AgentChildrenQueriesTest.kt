@@ -376,24 +376,24 @@ class AgentChildrenQueriesTest {
             f.observe(24, 0)
             f.demand()
             f.success()
-            f.observe(44, null)
+            f.observe(74, null)
             val full =
                 ThreadItemDto.decode(
                     json(
-                        """{"id":50,"rev":7,"order":0,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"child","content":{"name":"Agent","input":"private"}}""",
+                        """{"id":50,"rev":70,"order":0,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"child","content":{"name":"Agent","input":"private"}}""",
                     ),
                 )
-            f.store.applyBatch("h", "c", "e", 43, listOf(full), 0)
+            assertEquals(AuthoritativeThreadOutcome.Applied, f.store.applyBatch("h", "c", "e", 73, listOf(full), 0))
             assertFalse(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
-            f.store.applyBatch("h", "c", "e", 45, listOf(full), 0)
+            assertEquals(AuthoritativeThreadOutcome.Applied, f.store.applyBatch("h", "c", "e", 75, listOf(full), 0))
             assertTrue(f.snapshot().hasToolBody(f.snapshot().expansionItems.single { it.id == 50L }))
             f.demand()
-            f.lane.accept(f.reply(version = 46))
-            f.lane.accept(f.reply(true, version = 46))
+            f.lane.accept(f.reply(version = 76))
+            f.lane.accept(f.reply(true, version = 76))
             repeat(3) { f.demand() }
             assertEquals(2, f.sent.size)
             // Another genuinely newer unknown observation invalidates once again.
-            f.observe(47, null)
+            f.observe(77, null)
             repeat(3) { f.demand() }
             assertEquals(3, f.sent.size)
         }
