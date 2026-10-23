@@ -17,7 +17,7 @@
 
 The #2462 macOS gate at `4711539ab3` reached the final ten-second absence wait after Finished display and a 5,100 ms clock advance. Its retained stack and counted gate result remain historical failures. Begin with fresh isolated host/attention state and the exact method. Inspect preceding gate failures and available native logs before considering wider investigation. No decision record is needed.
 
-One deliverable: a causally demonstrated expiry repair with its controlled regression and unchanged strict recorded scenario. Forecast: at most 450 written lines, one production file, no exported declarations or signature migrations, three acceptance criteria and fewer than ten decision branches. In-flight branches share `InteractiveStreamE2ETest` in other methods; none changes this method or `ThreadAttention`. Keep any edits local.
+One deliverable: a causally demonstrated expiry repair with its controlled regression and unchanged strict recorded scenario. Forecast: at most 450 written lines, one production file, no exported declarations or signature migrations, three acceptance criteria and fewer than ten decision branches. In-flight branches share `InteractiveStreamE2ETest` in other methods; none changes this method or `ThreadAttention`. Keep any edits local. Overlaps: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1947, #2009, #2032, #2052, #2057, #2088, #2089, #2090, #2091, #2092, #2098, #2099, #2100, #2102, #2104, #2112, #2114, #2117, #2118, #2119, #2138, #2139, #2175, #2311, #2351, #2462.
 
 ## Design
 
@@ -31,11 +31,11 @@ The cold attention flow and its children remain owned by the RESUMED destination
 
 | Event | Required check |
 | --- | --- |
-| Same completion is recertified before or after expiry | New controlled `ThreadAttentionTest` case distinguishes replay from new completion and proves actual null removal. |
+| Same completion is recertified before or after expiry | `recertifyingSameCompletionCannotRenewOrResurrectFinished` distinguishes replay from new completion and proves actual null removal. |
 | New completion on the same target | Existing `anotherFinishForSameConversation_restartsExpiry` retains renewal. |
-| Colliding completion key on another host/conversation | New controlled identity test retains separate completions. |
-| Finished publication precedes timer scheduling | Controlled scheduler probe determines whether registration can lag the scenario's clock advance. |
-| Waiting replaces Finished or suppresses completion | Existing waiting/suppression tests retain precedence and no replay. |
+| Colliding completion key on another host/conversation | `equalCompletionKeysOnDifferentTargetsRemainIndependent` retains separate completions on each identity axis. |
+| Finished publication precedes timer scheduling | `finishedPublicationAlreadyOwnsItsScheduledExpiry` requires registration before publication, presence at 4,999 ms and removal at 5,000 ms. |
+| Waiting replaces Finished or suppresses completion | Existing waiting/suppression tests and `recertifyingCompletionSuppressedByWaitingCannotReplayIt` retain precedence and no replay. |
 | Navigation, Back, background and reopen | Existing `ThreadAttentionNavigationTest` and the exact recorded method retain cancellation, fresh waiting and no old finish. |
 
 ## Error handling
@@ -52,3 +52,15 @@ Run lint, assembleDebug, instrumented Kotlin compilation and forced formatting c
 
 - Does the failing expiry reflect late timer registration, repeated identical completions, or both? Resolve with controlled scheduling and native content-free evidence; record the selected repair under Revisions.
 - Are fresh isolated checks sufficient to explain the gate failure? Retain the observed preceding-test state and request a wider sequence investigation only if focused proof leaves a dependency unresolved.
+
+## Revisions
+
+- 2026-10-23: controlled `recertifyingSameCompletionCannotRenewOrResurrectFinished` and `finishedPublicationAlreadyOwnsItsScheduledExpiry` both fail against unchanged production (17 executed, 15 passed, 2 failed, zero skipped). The former reproduces renewal at the original five-second boundary. The latter observes publication with a receiver running before the queued expiry child: registration is still false. Its original report includes that assertion as a suppressed failure after the cancelled collector also fails final removal; the refined probe records registration at publication and asserts it directly outside the collector.
+- The final pre-repair run executes 18 tests: 15 passed, 3 failed, zero errors/skips. It directly fails registration, duplicate renewal and `recertifyingCompletionSuppressedByWaitingCannotReplayIt`. Retained raw XML, unchanged production source and test snapshot: `logs/evidence/2490/controlled-direct-red/` in the agents checkout.
+- Fresh unchanged-production native runs each pass once (1 executed/passed, zero failed/skipped). The passive diagnostic confirms that the second publication is the same completion key, not a second turn: `repeated=false` followed 44 ms later by `repeated=true`, before the successful clock advance. `HostConversationSource.launchAttention` republishes the retained completion list when its certificate changes; `AuthoritativeCompletion.key` remains unchanged. This explains how a later certificate can renew the timer after a one-shot clock advance even though the rendered value is unchanged.
+- Selected repair: `observeThreadAttention` remembers host/conversation/key pairs within its existing collection, after current/muted filtering and before Waiting suppression. Repeated identities neither renew nor resurrect Finished; a new terminal identity still replaces it for five seconds. Suppressed identities remain discarded when Waiting clears. Start the expiry child undispatched and publish only after its first suspension registers the delay. Static scheduled, duplicate-suppressed and expired events distinguish registration, renewal rejection and removal without logging identities.
+- The historical #2462 final-wait stack and reports are retained under the private evidence root `logs/evidence/2490/baseline/`. The bundle is `18ddeeede50af3312b066b5571ec64d526f549729171adc788b23a62599b240c`; the original phone log and host-load samples were not present in that bundle or the removed gate worktree. Its five preceding cases in report order passed (rename, host system prompt, reconnect slash commands, markdown, remembered model). Earlier unrelated offscreen/background-agent failures remain tracked separately. Fresh single-host attention state and the controlled regressions reproduce the failure mechanisms without preceding state; no wider investigation is needed on current evidence. Raw controlled red and native diagnostic reports, source patches, revisions and verified manifests are retained under `logs/evidence/2490/{controlled-red,diagnostic-before-repair}/` in the agents checkout. The baseline native run exercised `45b86ff05dd71c8904a006c8b8c8a7c6489616c7`; its `revision.txt` records the later plan-only retention head, whose product/test scenario was unchanged when that run began.
+
+## Documentation handoff
+
+Pending for documentation stage: `docs/recorded-tests.md`, Attention destination acquisition (#2350), update the expiry paragraph to explain completion identity deduplication and registration before publication; preserve the separate acquisition fence and unchanged recording contract. `docs/knowledge/features/thread-top-overlay.md`, attention pill/testing, record that only a new terminal identity renews the existing five-second lifetime and link the counted evidence.

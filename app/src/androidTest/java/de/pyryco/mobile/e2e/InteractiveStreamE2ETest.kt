@@ -179,6 +179,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -4839,6 +4840,7 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
         var acquisitionGate: InitialAttentionQueryGate? = null
+        var completionProbe: Job? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4851,6 +4853,20 @@ class InteractiveStreamE2ETest {
                     }
                     val (chatA, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-a-")
                     val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-b-")
+                    // Passive identity evidence: recertification must not be mistaken for a new turn.
+                    completionProbe =
+                        CoroutineScope(Dispatchers.Default).launch(start = CoroutineStart.UNDISPATCHED) {
+                            val seen = mutableSetOf<String>()
+                            source.alerts.collect { alert ->
+                                if (alert.serverId == serverId &&
+                                    alert.conversationId == chatB &&
+                                    alert.kind == AttentionAlert.Kind.TurnCompleted
+                                ) {
+                                    val repeated = !seen.add(alert.key)
+                                    android.util.Log.i("AttentionPillProbe", "event=attention_completion_probe repeated=$repeated")
+                                }
+                            }
+                        }
                     peerStep(peer, "open attention peer") { peer.open(CONNECT_TIMEOUT_MS) }
                     openChatRow(nameA)
                     val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -4936,21 +4952,33 @@ class InteractiveStreamE2ETest {
                             .isNotEmpty()
                     }
                     composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
+                    android.util.Log.i(
+                        "AttentionPillProbe",
+                        "event=attention_expiry_probe stage=displayed clock_ms=${composeTestRule.mainClock.currentTime}",
+                    )
                     awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
-                    // The pill's five-second expiry runs on the rule's virtual clock, which waitUntil advances one frame per
-                    // poll. In the full suite each poll is slow enough that five virtual seconds outlast a real ten-second
-                    // wait (#1735; same cause as #1664), so advance the clock past the expiry instead.
+                    // Finished owns a registered timer before publication; recertifying its terminal fact cannot renew it.
+                    // Advance virtual time explicitly: slow suite polls can exhaust the wall deadline first (#1735).
                     composeTestRule.mainClock.advanceTimeBy(5_100)
+                    android.util.Log.i(
+                        "AttentionPillProbe",
+                        "event=attention_expiry_probe stage=advanced clock_ms=${composeTestRule.mainClock.currentTime}",
+                    )
                     composeTestRule.waitUntil(10_000) {
                         composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
                     }
                     composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
+                    android.util.Log.i(
+                        "AttentionPillProbe",
+                        "event=attention_expiry_probe stage=removed clock_ms=${composeTestRule.mainClock.currentTime}",
+                    )
                     leaveThread()
                     openChatRow(nameA)
                     composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
                 }
             }
         } finally {
+            completionProbe?.cancel()
             acquisitionGate?.close()
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }

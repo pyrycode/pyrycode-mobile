@@ -9,12 +9,20 @@ import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Delay
+import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -25,6 +33,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadAttentionTest {
@@ -163,6 +172,120 @@ class ThreadAttentionTest {
             advanceTimeBy(4_000)
             runCurrent()
             assertNull(shown)
+        }
+
+    @Test fun recertifyingSameCompletionCannotRenewOrResurrectFinished() =
+        runTest {
+            start()
+            runCurrent()
+            finish(other, "terminal")
+            runCurrent()
+            advanceTimeBy(4_999)
+            // A fresh alert object from a later certificate still names the same terminal fact.
+            finish(other, "terminal")
+            runCurrent()
+            advanceTimeBy(1)
+            runCurrent()
+            assertNull("Repeated certification must not restart the five-second lifetime", shown)
+            finish(other, "terminal")
+            runCurrent()
+            assertNull("An expired completion must not reappear", shown)
+            finish(other, "next-terminal")
+            runCurrent()
+            assertEquals(other, shown?.target)
+            advanceTimeBy(5_000)
+            runCurrent()
+            assertNull(shown)
+        }
+
+    @Test fun equalCompletionKeysOnDifferentTargetsRemainIndependent() =
+        runTest {
+            start()
+            runCurrent()
+            finish(other, "terminal")
+            runCurrent()
+            advanceTimeBy(4_999)
+            val sameHost = HostConversationTarget(other.serverId, third.conversationId)
+            finish(sameHost, "terminal")
+            runCurrent()
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(sameHost, shown?.target)
+            advanceTimeBy(4_999)
+            runCurrent()
+            assertNull(shown)
+            finish(third, "terminal")
+            runCurrent()
+            assertEquals(third, shown?.target)
+            advanceTimeBy(5_000)
+            runCurrent()
+            assertNull(shown)
+        }
+
+    @Test fun recertifyingCompletionSuppressedByWaitingCannotReplayIt() =
+        runTest {
+            start()
+            runCurrent()
+            waiting(third)
+            finish(other, "suppressed-terminal")
+            runCurrent()
+            assertEquals(1, shown?.waitingCount)
+            waiting()
+            runCurrent()
+            finish(other, "suppressed-terminal")
+            runCurrent()
+            assertNull(shown)
+            finish(other, "new-terminal")
+            runCurrent()
+            assertEquals(other, shown?.target)
+        }
+
+    @OptIn(InternalCoroutinesApi::class)
+    @Test
+    fun finishedPublicationAlreadyOwnsItsScheduledExpiry() =
+        runTest {
+            val scheduled = StandardTestDispatcher(testScheduler)
+            var expiryRegistered = false
+            var registeredAtPublication = false
+            val dispatcher =
+                object : CoroutineDispatcher(), Delay {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) = scheduled.dispatch(context, block)
+
+                    override fun scheduleResumeAfterDelay(
+                        timeMillis: Long,
+                        continuation: CancellableContinuation<Unit>,
+                    ) {
+                        expiryRegistered = true
+                        (scheduled as Delay).scheduleResumeAfterDelay(timeMillis, continuation)
+                    }
+
+                    override fun invokeOnTimeout(
+                        timeMillis: Long,
+                        block: Runnable,
+                        context: CoroutineContext,
+                    ): DisposableHandle = (scheduled as Delay).invokeOnTimeout(timeMillis, block, context)
+                }
+            // The receiver can observe a channel send before the sender's next child launch runs.
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                observeThreadAttention(current, snapshots, attention, alerts).flowOn(dispatcher).collect {
+                    shown = it
+                    if (it != null) registeredAtPublication = expiryRegistered
+                }
+            }
+            runCurrent()
+            finish(other)
+            runCurrent()
+            assertEquals(other, shown?.target)
+            assertTrue("Finished was published before expiry registration", registeredAtPublication)
+            advanceTimeBy(4_999)
+            runCurrent()
+            assertEquals(other, shown?.target)
+            advanceTimeBy(1)
+            runCurrent()
+            assertNull("A registered timer must actually remove Finished", shown)
         }
 
     @Test fun delayedConsumerReceivesLatestFinish_andItsReplacementExpiry() =
