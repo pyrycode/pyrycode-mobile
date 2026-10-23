@@ -9,6 +9,7 @@
 - `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedSuiteNative.kt`: owns the current phone connection and offline-only synchronization seams.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: authoritative settings replace the current reading, including an omitted applied field.
 - `docs/recorded-tests.md`: variable successful poll counts use delivered snapshots; payload matching and complete consumption remain strict.
+- `../pyrycode/docs/protocol-mobile.md`: Session settings (v2) and Thread query messages supply the controlled frame contracts; no wire contract changes.
 - `docs/knowledge/features/thread-composer-footer.md`, `thread-composer-footer-effort-recall.md`, and `remote-conversation-repository-session-settings-read.md`: omitted applied effort must not stick; fresh correlation does not guarantee the reading remains current forever.
 
 ## Context
@@ -22,18 +23,19 @@ One behaviour slice: reliably observe inherited applied effort after the owned c
 N/A: test/replay synchronization only; product UI and its visual contract do not change.
 
 ## Design
-Add an offline-only observation fence to `SuiteConnections`, exposed through `RecordedSuiteNative` and used only before the inherited-effort scenario's final `freshSettings`. Drain already released delivery work and await the current phone pump's downstream-consumed prefix, repeating only if consumption released more delivery work. Resolve the exact current phone owner and reject replacement/closure. The fence observes scheduling and consumption, never expected settings contents, and sends no request or reply. Keep the existing correlated fresh read after the fence and both exact sheet assertions.
+Add an offline-only observation fence to `SuiteConnections`, exposed through `RecordedSuiteNative` and used only before the inherited-effort scenario's final `freshSettings`. Require the current action's captured settings on that phone to be released by their real causal requests, drain delivery work and await the current phone pump's downstream-consumed prefix. `RecordedSuiteTape.settingsObservationReady` checks the existing next-command boundary without releasing anything itself. Resolve the exact current phone owner and reject replacement/closure. The fence observes scheduling and consumption, never expected settings contents, and sends no request or reply. Keep the existing correlated fresh read after the fence and both exact sheet assertions.
 
 The regression drives the real replay hub and authoritative repository with controlled captured-shaped minimal/full settings and holds downstream consumption. It first demonstrates the independent correlated reading succeeding and then being replaced by a later minimal notification while the complete snapshot remains only in the replay cache. The fenced read must wait for actual delivery and consumption, then obtain the exact applied reading. A separate missing-field arm must still return Unavailable and fail the applied expectation. Existing section semantics coverage remains in `RunConfigurationWaitTest`.
 
 ## State and concurrency model
-The replay hub retains its existing parent-owned scope and single scheduled-delivery channel. The observation fence runs in the test coroutine, bounded by 30 seconds, and uses the existing delivery barrier and pump consumption counter. No extra inbound collector, product coroutine, dispatcher, fixture or saved state is introduced. The current pump identity is captured and checked across suspension; cancellation follows the test scope.
+The replay hub retains its existing parent-owned scope and single scheduled-delivery channel. The observation fence runs in the test coroutine, bounded by 30 seconds, and uses the existing delivery barrier and pump consumption counter. A content-free `MutableStateFlow<Long>` progress version advances under the existing request, lifecycle and routing monitor; an incomplete frontier suspends until a real event changes that version. Capture the version before observing work to avoid losing a concurrent release. No extra inbound collector, product coroutine, dispatcher, genuine fixture or saved state is introduced. The current pump identity is captured and checked across suspension; cancellation follows the test scope.
 
 ## State transitions and identity reuse
 | Event | Required regression |
 | --- | --- |
 | Complete correlated read then later minimal notification | Controlled regression demonstrates admitted applied value becoming unavailable before the repair boundary. |
 | Scheduled snapshot not routed yet | Fenced read waits, then uses the final delivered snapshot. |
+| A causal query has not released later settings yet | `observationWaitsForSettingsStillHeldBehindTheirCausalQuery` proves the settings remain held and the fence waits for the actual query. |
 | Routing completed but downstream emission held | Fenced read remains blocked until the selected pump consumes the prefix. |
 | Repeated observation on the same owner | Fence completes without extra traffic or an old receipt supplying a new correlated read. |
 | Owner ends/replaces during observation | Fence fails rather than borrowing another pump's consumption. |
@@ -50,6 +52,7 @@ Write the controlled shared regression first and observe its causal red using th
 
 ## Revisions
 - 2026-10-23: Controlled pre-repair JVM execution ran four tests and failed all four, with zero skips. The primary failure retains the independent correlated `Applied(high)` reading while the subsequently admitted repository value is `Unavailable`. The missing-field control instead receives the stale earlier applied snapshot; the held-consumer and closed-owner controls also fail. This establishes the replay boundary defect without a preceding scenario or load trigger. The native command was still queued when the repair was applied, so it validates the repaired committed source, not a native pre-repair failure. Original macOS phone logs remain unavailable; the exact historical interleaving is inferred from its section diagnostics, unchanged fixture and this causal reproduction.
+- 2026-10-23: Self-review found that a query can still hold later settings while the queue is empty, as the genuine scenario's post-turn thread queries can do. The added causal-query control first proved its minimal notification was still held, then failed the initial fence: one executed, one failed, zero skipped. The contract now includes release of this action's captured settings before routing/consumption can finish the observation. A versioned event signal waits for real requests or delivery rather than spinning or sending a read retry. The original four controls passed natively before this refinement; final five-control native evidence remains required.
 
 ## Documentation handoff
 Pending for documentation stage: `docs/recorded-tests.md`, successful settings polling/observation boundaries: explain the scenario's scheduling-and-consumption fence and preserve correlation, omission failure and strict consumption. `docs/knowledge/features/remote-conversation-repository-session-settings-read.md`, Native test reads: distinguish a fresh independently admitted reply from the later sheet's current reading. Record evidence limits: original macOS phone logs were not in its retained bundle.

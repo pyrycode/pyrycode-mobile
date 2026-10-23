@@ -38,6 +38,8 @@ class InheritedEffortReplayTest {
                 fixture.ready()
                 assertEquals(EffectiveEffort.Applied("high"), fixture.read().effectiveEffort)
                 fixture.releaseLaterSettings()
+                runCurrent()
+                assertFalse("the causal query still holds the minimal settings", fixture.minimalEntered.isCompleted)
                 val observation = async { fixture.beforeObservation() }
                 runCurrent()
                 assertFalse("an empty queue cannot skip unreleased settings", observation.isCompleted)
@@ -186,9 +188,9 @@ class InheritedEffortReplayTest {
             object : ManagedSessionPump by pump {
                 override val inbound =
                     pump.inbound.onEach {
-                        if (holdMinimal && it.id == minimal.id) {
+                        if (it.id == minimal.id) {
                             minimalEntered.complete(Unit)
-                            allowMinimal.await()
+                            if (holdMinimal) allowMinimal.await()
                         }
                     }
             }

@@ -317,6 +317,16 @@ internal class RecordedSuiteTape(
         return precedingWorkReleased(boundary, name != "scenario-complete" || !requireRecordedReadProgress)
     }
 
+    /** Queue emptiness cannot stand in for settings still held behind an actual causal query. */
+    @Synchronized fun settingsObservationReady(owner: String): Boolean {
+        failure?.let { fail(it) }
+        return (0 until commandBoundary()).all { index ->
+            val step = steps[index]
+            index in released || step.owner != owner || step.message?.type != "session_settings" ||
+                step.direction !in setOf("daemon", "settings_snapshot")
+        }
+    }
+
     /** Negative assertions observe every earlier released message before their short replay wait. */
     @Synchronized fun negativeObservationReady(name: String): Boolean {
         failure?.let { fail(it) }
