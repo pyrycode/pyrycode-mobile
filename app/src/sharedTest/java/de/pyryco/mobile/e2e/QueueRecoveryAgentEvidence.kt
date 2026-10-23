@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -279,30 +280,36 @@ internal fun ThreadEvidence.settledAgentPrecedes(
         owned.all { it in 0 until reply }
 }
 
-/** Rejoin the captured launch after a certified generation reset, retaining source and fact ownership. */
+/** Reconcile a captured launch with certified facts on the explicitly current supported connection. */
 internal fun ThreadEvidence.settledAgentAfterRecovery(
     launched: ThreadEvidence,
     captured: AgentFamilyEvidence,
     followingText: String,
+    currentSupport: ThreadSupport,
 ): AgentFamilyEvidence? {
     if (!admitted || !launched.admitted) return null
     if (owner.kind == ThreadEvidenceKind.Legacy) {
         return agentFamily(launched.owner)?.takeIf { settledAgentPrecedes(launched.owner, captured, followingText) }
     }
     val before = launched.owner
+    val supported = currentSupport as? ThreadSupport.Supported ?: return null
+    val host = before.host?.takeIf { it.isNotBlank() } ?: return null
+    val previousSnapshot = launched.sourceSnapshot ?: return null
+    val snapshot = sourceSnapshot ?: return null
     val oldGeneration = before.generation ?: return null
     val currentGeneration = owner.generation ?: return null
     if (before.kind != owner.kind ||
-        before.connection !== owner.connection ||
-        before.host != owner.host ||
-        owner.host.isNullOrBlank() ||
-        before.conversation != owner.conversation ||
+        !isCurrentReplay(host, before.conversation, supported.connection, snapshot) ||
+        !launched.isCurrentReplay(host, before.conversation, before.connection, previousSnapshot) ||
         before.epoch != owner.epoch ||
         owner.epoch.isNullOrBlank() ||
-        currentGeneration < oldGeneration
+        currentGeneration < oldGeneration ||
+        (currentGeneration == oldGeneration && previousSnapshot.incarnation != snapshot.incarnation)
     ) {
         return null
     }
+    val capturedFamily = launched.agentFamily(before) ?: return null
+    if (captured.root !== capturedFamily.root || captured.children != capturedFamily.children) return null
     val family = agentFamily(owner) ?: return null
     val capturedTool = captured.root.rawToolUseId()?.takeIf { it.isNotBlank() } ?: return null
     if (family.root.rawToolUseId() != capturedTool) return null
@@ -347,7 +354,6 @@ internal fun ThreadEvidence.settledAgentAfterRecovery(
         records.singleOrNull {
             it.message.role == Role.Assistant && it.agentId == null && it.fullText == followingText
         } ?: return null
-    val snapshot = sourceSnapshot ?: return null
     val coverage = snapshot.coverage ?: return null
     val proven = listOf(family.root, reply) + family.children
     if (proven.any {
