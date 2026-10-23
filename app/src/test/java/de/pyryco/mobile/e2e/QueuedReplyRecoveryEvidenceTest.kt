@@ -65,6 +65,15 @@ class QueuedReplyRecoveryEvidenceTest {
         assertNotNull(current.settledQueuedReplyAfterRecovery(started, held, queued, REPLY, replacement))
     }
 
+    @Test fun recoveryRejectsAgentOwnedSuffixInTheCapturedTurn() {
+        val started = evidence(initial, connection = original)
+        val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))
+        val current = evidence(finished(scenarioItem(4, "agent"), scenarioItem(5, text = "extra suffix", parent = 4)))
+        assertNotNull("the suffix belongs to a projected Agent block", current.records.single { it.fact?.id == 5L }.agentId)
+        assertNotNull("main-family settlement alone misses the suffix", current.settledReply(current.owner, "session", "turn"))
+        assertNull(current.settledQueuedReplyAfterRecovery(started, held, queued, REPLY, replacement))
+    }
+
     @Test fun recoveryRejectsRetiredForeignReplacedAndUnadmittedDocuments() {
         val started = evidence(initial, connection = original)
         val held = requireNotNull(started.heldOpenReply(started.owner, "Hello, streamed"))
