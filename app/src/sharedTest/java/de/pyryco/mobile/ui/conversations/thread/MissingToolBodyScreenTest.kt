@@ -62,9 +62,12 @@ class MissingToolBodyScreenTest {
 
     @Test fun collapsedQueuedBodyWithdrawsDemandBeforeLoadingPresentationArrives() = mountedBody(collapseQueuedBeforeLoading = true)
 
+    @Test fun capacityRetryUsesExpandedBodyStylingAndRecoversAfterOtherDemandCloses() = mountedBody(capacity = true)
+
     private fun mountedBody(
         stopBeforeLoading: Boolean = false,
         collapseQueuedBeforeLoading: Boolean = false,
+        capacity: Boolean = false,
     ) {
         val frames = Channel<Long>(Channel.UNLIMITED)
         frames.trySend(1L)
@@ -180,6 +183,7 @@ class MissingToolBodyScreenTest {
                 ),
             )
         }
+        val pressure = if (capacity) occupyExpansionCapacity(repo.authoritativeThreads, "host") else null
         try {
             repo.authoritativeThreads.establishComplete("host", "c", "e", 23, listOf(tool(23), tool(23, 18, 6, "Bash")), 0)
             compose.setContent {
@@ -276,6 +280,21 @@ class MissingToolBodyScreenTest {
             compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
             assertTrue(seen.isEmpty())
             reply(true)
+            if (capacity) {
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn’t load tool details").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Retry").assertExists()
+                compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
+                compose.mainClock.advanceTimeBy(500)
+                assertEquals(1, reads().size)
+                pressure?.close()
+                compose.onNodeWithText("Retry").performClick()
+                compose.waitUntil(5000) { reads().size == 2 }
+                reply(false)
+                reply(true)
+                compose.waitUntil(5000) { compose.onAllNodesWithText("loaded contents").fetchSemanticsNodes().isNotEmpty() }
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             compose.waitUntil(5000) { compose.onAllNodesWithText("loaded contents").fetchSemanticsNodes().isNotEmpty() }
             toggle()
             toggle()
@@ -311,6 +330,7 @@ class MissingToolBodyScreenTest {
             compose.waitForIdle()
             compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
         } finally {
+            pressure?.close()
             compose.runOnIdle { vmStore.clear() }
             scope.cancel()
         }

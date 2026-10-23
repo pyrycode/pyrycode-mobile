@@ -76,9 +76,15 @@ Pending documentation stage: update expansion/retention sections in `docs/knowle
 - SHOULD FIX implemented by design: protect loaded bodies and ancestor pages, and reconcile stale ledger entries on reset so bookkeeping cannot retain retired capacity or evict a live descendant's ancestry.
 - OUT OF SCOPE: subtree freshness repair #2391; compact activation #2431–#2433; genuine paired capture #2393. Existing holds and historical failures remain.
 
-**Reviewer:** builder self-review per `builder/security-review.md`  
+**Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-23
 
 ## Scope measurement
 
 Forecast: about 1250 written lines (350 production, 800 regression/helpers, 100 plan); three internal declarations, two existing admission consumers, four acceptance criteria, one additional capacity rejection category. One independently useful budget behavior, below all numeric ceilings.
+
+## Revisions
+
+2026-10-23: Exact byte review found that `decodeThreadSummary` decorates a summary with DTO-only `summary` and null `content` fields. Preserve the original validated summary object in `ThreadItemDto` through a dedicated internal factory, and account that object rather than the decorated full-item shape. This adds small local edits to `ThreadQueryPayloads.kt` and `ThreadUpdatePayloads.kt`, without changing wire validation, limits, full-fact decoding or existing factory signatures. The original object also preserves unknown fields for exact accounting. The byte-boundary probe measures the actual transmitted summary object plus cursor.
+
+Final probe names live in `ExpansionDetailBudgetTest`: `byteBoundary`, `oneByteOverIsRejectedAndCapacityRetryIsExplicit`, `summaryBoundaryAndPageCapacityRetry`, `combinedByteBoundaryIncludesRawSummariesAndUnknownCursorFields`, `combinedBudgetAndLru`, `reuseAndConsumerProtection`, `ancestorProtection`, `hostAndResetIsolation` and `recompositionDoesNotRefreshLru`. Mounted capacity methods are added to the existing body/agent screen classes. Fixture roots and captures use revisions above every generated ID, preserving `valid` and decoder constraints.
