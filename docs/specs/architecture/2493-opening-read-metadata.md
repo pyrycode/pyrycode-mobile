@@ -220,5 +220,11 @@ On this integration the affected activation class executed/passed 41/41, zero
 failures/errors/skips, and lint passed, command exit 0. The repair and its
 regression source bytes are unchanged. Earlier native/scripted receipts remain
 bound to `51738b973`; they are not new device acceptance of this integration.
-Final pre-verification and normal independent re-review remain pending; complete
-configured acceptance stays dispatcher-owned.
+A second final pre-verification stopped on the later #2351 diagnostic-test main
+advance. It merged cleanly as `404c51225970d5bd6242ebcce53b3526111a6913`;
+the recovery implementation and activation regression bytes are unchanged.
+Final `pre-verify.py --gradle` then passed, exit 0: current main merged, Spotless
+clean, all Kotlin source sets compiled, and security/theme/live/operator-file
+checks passed. Earlier scoped runtime checks keep the revisions stated above.
+Normal independent source/security re-review and complete configured acceptance
+remain dispatcher-owned; no author check is an independent PASS.
