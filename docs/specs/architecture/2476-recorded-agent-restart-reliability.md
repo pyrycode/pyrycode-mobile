@@ -201,6 +201,65 @@ The earlier pending recovery assessment supplied the missing stderr rather than 
 new native execution. Complete configured acceptance, including counted execution of
 the named method in the dispatcher UI gate, and independent review remain pending.
 
+### 2026-10-23 — reopened generation-0 rotation boundary
+
+The newly published #2462 verifier bundle
+`db5461c8f6c2f795f941b095d278cb092cf3f6c602d586d56879963b8dcda166`
+(digest `6a6b24f31c0b914c6968c7d6cc0f1f10d35cc296709078899f7aaf85ad89e193`)
+has 138 verified manifest entries. Its reviewed source is
+`2db93ebd8a8280d25c7c071fc11b2af4da55b198`. The initial configured UI run
+executed 333 methods: 331 passed, two failed, zero errors, one additional skip.
+The separate same-candidate rerun passed both methods without skips. This
+occurrence's primary error is a 30000 ms timeout; cleanup then records step 41's
+`background-fixture` mismatch. The pending work is generation 0's request 35,
+checkpoint 81, before graph replacement. Request 30/checkpoint 77 matched and
+its replies make the session divider visible. The failed stderr is
+`logs/verifier-gate__2462_5.stderr.log.failure-1792716578639.log`; the rerun is
+`logs/2026-10-23T00-49-38-642Z_verifier-gate-rerun__2462.log`.
+
+This differs from the repaired lexical close (generation 2), the earlier
+checkpoint-87-versus-0 mismatch, and #2483's pre-rotation run lookup. The original
+phone log and effective APK hashes are not included in this bundle; do not claim
+their identity or historical load/order beyond the retained reports.
+
+Source exposes a bounded rotation race to test: `authoritativeThreadEvidence`
+admits live divider facts before the catch-up terminal certifies them. Reopening
+the destination at that point calls `AuthoritativeThreadQueries.acquire` while
+the preceding query is active; `enqueue` coalesces the reopen. After its terminal,
+no new query remains to supply the recorded checkpoint-81 catch-up. The restart
+fence cannot create missing application demand. Test this mechanism before
+changing readiness; no product query-coalescing change is intended.
+
+Extract the existing next-session lookup into test-only
+`SessionRotationReadiness.certifiedNextSession`. A real-repository regression
+holds the rotation terminal while the live divider is already visible, then
+reopens through the same lookup and requires the next exact-checkpoint query.
+Run the old lookup red before requiring certification of the observed live
+version. The repaired lookup must stay unready until the same owned snapshot
+has a checkpoint covering its completed version, then reopen once. Keep passive
+observation, all original assertions and matching, no retries, recording edits
+or deadline changes. Add missing/stale/foreign rotation negatives as needed.
+
+Files additionally read: `AuthoritativeThreadQueries.acquire`, `enqueue` and
+`accept`; `ThreadEvidence.authoritativeThreadEvidence`;
+`SuiteCloseConsumptionTest`; `SuiteConnections.beforePhoneRestart` and
+`beforeClose`; current #2462 and #2483 branch diffs. #2462 changes the later
+placement sampler and process-stop fence; #2175 contains the superseded proof.
+Keep this earlier rotation edit local. Forecast under 650 newly written lines,
+no production exports or signature migrations, one reliability behavior with its
+causal regression. If the controlled test does not establish this mechanism,
+retain its result and revise the diagnosis before implementing a repair.
+
+| Event | Regression |
+| --- | --- |
+| Live session divider precedes its query terminal and destination reopen | `rotationReopenWaitsForCertificationBeforeAcquiringItsQuery` |
+| Missing, stale or unrelated rotation evidence | Focused readiness negatives beside the causal regression |
+| Actual graph/cache replacement and settlement | Three fresh Linux invocations of the unchanged recorded method |
+
+The unchanged Linux baseline at `a48e9ced0e9bc7e9193445d576afb6fb498a7b99`
+is queued for shared admission, zero tests executed so far. Complete configured
+acceptance remains dispatcher-owned; historical macOS failures remain failed.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
