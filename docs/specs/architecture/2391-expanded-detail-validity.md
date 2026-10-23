@@ -43,16 +43,23 @@ Reuse synchronized store admission and query-lane methods. No new coroutine, dis
 
 | Event | Proof |
 | --- | --- |
-| Equal parent revision with changed/zero/missing freshness, nested open child | Repository freshness probes and mounted refresh test |
-| Source revision changes with unchanged freshness | Repository revision probe |
-| Recomposition after replacement or Retry failure | Repository repeat-demand probe and mounted sticky Retry |
-| Collapse/hidden ancestor while queued or between data and marker | Existing ownership probes plus invalidation drain probe |
-| Two consumers, one withdraws | Existing coalescing probe plus invalidation consumer probe |
-| Stale cursor/refused continuation, replacement, empty and tied later pages | Child restart probes and mounted restart |
-| Reset/reused epoch, conversation/host removal or collision | Existing ownership probes plus retained invalidation retirement probe |
-| Background/navigation/reconnect/connection replacement | Existing mounted stop proof plus mounted replacement test and retired-lane probe |
-| Unchanged reopen including offline | Existing mounted reopen and repeat-demand freshness probe |
-| Data then invalidation then terminal, late old capture after replacement | Controlled repository drain probe |
+| Equal parent revision with changed/zero/missing freshness | `AgentChildrenQueriesTest.freshnessInvariantEqualRevisionAncestorObservationRefreshesOnlyDemandedPages` |
+| Open nested body under changed ancestor freshness | `AgentChildrenQueriesTest.freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight` |
+| Source revision changes with unchanged freshness | `AgentChildrenQueriesTest.freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement` |
+| Recomposition after replacement or Retry failure | `AgentChildrenQueriesTest.freshnessInvariantNestedBodyRefreshIsDemandedStickyAndNeverReadSight`; `AgentChildrenScreenTest.invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart` |
+| Collapse/hidden ancestry while queued | `AgentChildrenQueriesTest.stalePresentationWithdrawsQueuedChildPageBeforeLoadingFrame`; `AgentChildrenScreenTest.collapsedConsumerWithdrawsBeforeLoadingFrame` |
+| Two consumers, one withdraws | `AgentChildrenQueriesTest.ownershipInvariantInvalidatedConsumerUnionRejectsHeldAdditionsAndOldCaptures`; `anotherExpandedConsumerRetainsAnActiveContinuation` |
+| Stale/refused continuation and first-page replacement | `AgentChildrenQueriesTest.rejectedContinuationRetainsRowsUntilSuccessfulExplicitRestart`; `AgentChildrenScreenTest.invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart` |
+| Authoritative empty replacement | `AgentChildrenQueriesTest.freshnessInvariantRevisionChangeRetainsRowsUntilAuthoritativeEmptyReplacement` |
+| Subsequent tied pages | `AgentChildrenQueriesTest.pageInvariantFiftyZeroOrderTiesContinueWithoutDuplicates` |
+| Reset/reused epoch and deletion | `AgentChildrenQueriesTest.ownershipInvariantRevisionEpochDeletionDisconnectAndHostCollisionCannotPublish` |
+| Colliding host/conversation/item identities | `AgentChildrenQueriesTest.ownershipInvariantRevisionEpochDeletionDisconnectAndHostCollisionCannotPublish`; `AgentChildrenScreenTest.lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds` |
+| Background/destination retirement | `AgentChildrenScreenTest.stoppedConsumerWithdrawsBeforeLoadingFrame`; `MissingToolBodyScreenTest.stoppedDestinationReleasesDemandBeforeLoadingPresentationArrives` |
+| Reconnect/connection replacement and retired callbacks | `AgentChildrenScreenTest.lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds`; `AgentChildrenQueriesTest.ownershipInvariantLateRetirementCannotClearReplacementRetryWithCollidingIds` |
+| Unchanged reopen including offline | `AgentChildrenScreenTest.mountedAgentExpansionPagesNestedSummariesRetriesAndReopensOffline`; `MissingToolBodyScreenTest.mountedProductionConsumerLoadsRetriesAndReusesRetainedBodyWithoutFalseSight` |
+| Data then invalidation then terminal, late old capture | `AgentChildrenQueriesTest.captureInvariantInvalidationBetweenDataAndMarkerDrainsBeforeReplacement` |
+| Older full batch versus current full replacement | `AgentChildrenQueriesTest.captureInvariantOlderFullBatchCannotClearNewerAncestorInvalidation`; `freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant` |
+| Revision invalidation before the next consumer frame | `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` |
 
 ## Error handling
 
