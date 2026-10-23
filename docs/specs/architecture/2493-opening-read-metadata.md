@@ -300,8 +300,71 @@ generation boundaries and existing missing-list, foreign-Agent, removed-marker,
 reset and collapse-isolation controls. Instrumented Kotlin compilation passed,
 exit 0. Private counted XML is `affected/jvm-lvhux16q/dispatcher.xml`, SHA-256
 `7c2f7db9adb02d29a1651070189138fea257f9a620a56152dce1c87695e0a546`.
-The exact native recording remains pending. The normal documentation stage should
-also fold the reviewed
-navigation-boundary lesson and its actual evidence into
+On committed `d18cfe8b3d2f094e07b1602a3430d5e5423bfc34`, the exact twice-failed
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished` recording freshly
+executed/passed 1/1, zero failures/errors/skips, exit 0. Raw phone pointer proof,
+XML, finished phases, built APK hashes and app/test BuildConfig are retained in
+private `native/ui-otn5y02f/`. Built hashes are not installed-byte readback; this
+recording does not identify a current daemon or reconstruct the old interleaving.
+No separate independent per-process cleanup audit is claimed.
+
+The normal documentation stage should fold the reviewed navigation-boundary
+lesson and its actual evidence into
 `docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, preserving
 the earlier finished-marker repair and its historical evidence.
+
+
+## Scripted runtime disposition and final handoff — 2026-10-23
+
+The five unresolved scripted methods ran on `d18cfe8b3`: five executed, four
+passed, one failed, zero errors/skips, exit 1. Both background-Agent methods and
+both ping methods passed. In the session-error retained arm, the reply was
+already displayed; the subsequent original 20-second error-pill-clear assertion
+failed at `SessionErrorRecoveryScenario.kt:224`. The broad `reply_render` phase
+name must not be interpreted as failure to render the reply. Four retained
+harness bundles verified all four declared manifest entries each.
+
+A single exact session-error comparison on main `d87abdc13` passed 1/1 with the
+same inputs. The scenario, diagnostics, selected method and harness sources were
+byte-identical. That one pass establishes neither inheritance nor a cause. After
+merging that main as `65b91873c2dd84669c095e63cbf39dc71dbd9abd`, the exact method
+failed again at the same status-clear assertion, one executed/failed, zero
+errors/skips. All three runs used the dedicated `e2e_realclaude` recovery daemon
+built from stale Core `fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe`, SHA-256
+`aa8594b761c2d2d11cf47a26ab4f50801c43e9dbcdbef5f468ad064a7a2441e3`.
+This is a separate daemon from the harness's outer binary.
+
+That Core source lacks the already merged Core #3711 publisher repair. The phone
+received idle progress while the independent peer also recorded responding, the
+same signature documented by finished Mobile #2344. Reuse that completed repair
+for isolated test inputs; do not change Mobile's admitted-progress status rules,
+reopen #2344, or infer the original verifier failures' cause. No assertion or
+deadline changed. No deployed binary, consumer pin or service changed.
+
+With clean guarded Core source `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, the
+exact method freshly passed 1/1 on `65b91873`, zero failures/errors/skips, gate exit
+0. Both retained and dropped arms completed their child-delivery, queue, reply,
+status restoration and original identity assertions. The unchanged harness built
+its tagged recovery daemon from that same isolated `PYRYCODE_SRC`. Its context
+reports revision `unavailable` and binary SHA-256
+`15a3488e326966beb8605ad5f862ee3a30fdb8dfc3d7c87479486954d31b1769`;
+the guarded build-source record supplies provenance, not an embedded revision
+claim. Its hash differs from the outer daemon. One harness manifest verified 4/4
+entries; raw phone, both daemon/control/child traces and finished phases remain
+private under `scripted-repaired-runtime/`. No installed-byte readback or extra
+independent cleanup audit is claimed. These focused author checks do not replace
+complete configured acceptance or the independent source/security verdict.
+
+Conditional pre-verification then stopped before Gradle because main advanced
+with #2508's saved-file fixture retention repair. That failure is retained; main
+`4a5459864` merged cleanly as `fd10cb88a5ca32d96c8d5074021f44976e308064`.
+The navigation repair and authority-regression bytes remain unchanged. Earlier
+native and scripted checks keep their actual revisions and runtime identities;
+they are not device acceptance of this later integration. Final `pre-verify.py --gradle` passed, exit 0: current main merged, Spotless clean,
+and all Kotlin source sets compiled, with security/theme/live/operator-file
+checks green. An initial sandbox attempt failed to open the protected admission
+lock before any check ran; the authorized protected invocation completed. Normal
+independent configured review and actual normal documentation pickup remain
+required. Independent scripted acceptance must use
+a test Core containing #3711 for both outer and separately built recovery daemons
+and authenticate their actual inputs. No author check is an independent PASS.
