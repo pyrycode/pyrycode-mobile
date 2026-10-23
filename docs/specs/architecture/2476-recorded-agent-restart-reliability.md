@@ -423,6 +423,38 @@ UI gate, and independent review remain pending. Historical artifact gaps and
 the accepted #2478 repair retain their separate status. No macOS test, complete
 suite or genuine Claude turn was launched for this unchanged recording.
 
+### 2026-10-23 — historical acceptance finding routed for refinement
+
+Verifier finding 1 at `6720222f055e2985e2d3722fccb466f13c4416d0`
+remains unresolved. The historical first boundary is identified, but its cause
+and effective APK identities are not established. The controlled readiness
+defect does not distinguish coalescing, cancellation or another reader in the
+original occurrence. No historical identity is inferred from the repaired runs.
+
+The authoritative verifier record `c6f33e1223c15230ce8b0f476e7e86d0fc6c34a3f6131998949fdeddacca5ac3`
+accepts the implementation and its focused evidence. Its Linux configured UI
+gate executed/passed 333 methods, including the exact restart method, with zero
+failures/errors and one additional skip. The JVM gate passed 5,365 methods;
+scripted acceptance retains its unrelated #2442 failure and separate passing
+rerun. These results do not satisfy the missing historical diagnosis.
+
+Rechecked all 138 original recurrence manifest entries and retrieved the latest
+retained recovery assessment and #2462 builder/refiner bundles. None supplies
+the original `ui-q2ll4ly_` / `ui-7b4oc0t5` phone traces, effective APK identity
+receipts or cleanup phases. Recovery assigned the useful certification repair
+without changing acceptance criterion 1. The criterion therefore remains open.
+
+Artifact-recovery assessment
+`76eec13279d1e25036333c00ca0eeec63be1f18b2ce94614418894bed6dcc244`
+is queued with zero executed tests. It references the retained verifier finding
+and original failure, requests only recovery of existing artifacts, and asks
+for an explicit refinement decision if they cannot be recovered. No new native
+execution or wider suite is requested: a later pass cannot recover historical
+binary identities or prove that occurrence's interleaving. Preserve PR #2492,
+its repair and all counted evidence while resolving this requirement through
+refinement. No source, recording, assertion, deadline or acceptance criterion
+changed in this handoff; no new tests ran.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
