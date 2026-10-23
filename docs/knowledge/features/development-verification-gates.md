@@ -316,9 +316,9 @@ exercises sorted and reverse-sorted `Path.rglob` results. Assert the exact multi
 of method names before building a map, which alone hides duplicates. Check each
 outcome by identity and launch order separately; the retained failure must survive,
 and restart must have no failure, error or skip. Sorting cannot prove completeness.
-For stream reports (#2455), retain each execution's XML before filename reuse and
+For stream and background-Agent reports (#2455, #2481), retain each execution's XML before filename reuse and
 restore collected evidence even on interruption. [Selected-device ownership and
-counted regression evidence](development-verification-test-scheduling.md#stream-report-execution-ownership-2455)
+counted regression evidence](development-verification-report-ownership.md)
 explain why pre-launch cleanup replaces mtime filtering.
 
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
