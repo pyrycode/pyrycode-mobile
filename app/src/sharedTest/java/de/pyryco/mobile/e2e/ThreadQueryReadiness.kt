@@ -26,19 +26,35 @@ internal object ThreadQueryReadiness {
         private val request: Long,
     ) {
         fun isCurrent(): Boolean = sources[source.host]?.value === source && source.ready(conversation) == request
+
+        /** The acquired destination must finish a different request on this same physical source. */
+        suspend fun awaitNext(): Receipt = awaitCurrent(source.host, conversation, this)
+
+        fun follows(previous: Receipt): Boolean =
+            source === previous.source && conversation == previous.conversation && request != previous.request
     }
 
-    fun register(
+    @Synchronized fun register(
         host: String,
         isOpen: () -> Boolean,
     ): ThreadQueryProgress = ThreadQueryProgress(host, isOpen).also { sources.getOrPut(host) { MutableStateFlow(null) }.value = it }
 
+    @Synchronized fun retire(source: ThreadQueryProgress) {
+        // Keep the holder for waiting readers, but release the connection graph it referenced.
+        sources[source.host]?.let { if (it.value === source) it.value = null }
+    }
+
     suspend fun awaitCurrent(
         host: String,
         conversation: String,
+        after: Receipt? = null,
     ): Receipt =
         sources.getOrPut(host) { MutableStateFlow(null) }.firstOnLive(
-            { source -> source.changes.map { source.ready(conversation)?.let { Receipt(source, conversation, it) } } },
+            { source ->
+                source.changes.map {
+                    source.ready(conversation)?.let { Receipt(source, conversation, it) }?.takeIf { after == null || it.follows(after) }
+                }
+            },
             { it.isCurrent() },
         )
 
@@ -167,6 +183,7 @@ internal class ThreadQueryProgress(
         pending.values.forEach { it.decoder.abandon() }
         pending.clear()
         completed.clear()
+        ThreadQueryReadiness.retire(this)
         changed()
     }
 

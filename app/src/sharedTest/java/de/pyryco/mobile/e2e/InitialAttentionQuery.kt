@@ -31,7 +31,7 @@ internal class ThreadAcquisitionGate private constructor(
     private val generation: Long,
     private val timeoutMillis: Long,
 ) : Closeable {
-    private val acquired = CompletableDeferred<Unit>()
+    private val acquired = CompletableDeferred<ThreadQueryReadiness.Receipt>()
     private val closed = MutableStateFlow(false)
 
     val finished get() = acquired.isCompleted
@@ -96,7 +96,7 @@ internal class ThreadAcquisitionGate private constructor(
                         }
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
-                        val ready =
+                        val receipt =
                             withTimeout(gate.timeoutMillis) {
                                 coroutineScope {
                                     val observation =
@@ -105,7 +105,7 @@ internal class ThreadAcquisitionGate private constructor(
                                             awaitInitialAttentionQuery(
                                                 store.observe(host, conversationId).filter { it.generation == gate.generation },
                                             )
-                                            receipt.isCurrent()
+                                            receipt.takeIf { it.isCurrent() }
                                         }
                                     val retired =
                                         async(start = CoroutineStart.UNDISPATCHED) {
@@ -114,9 +114,9 @@ internal class ThreadAcquisitionGate private constructor(
                                             }.first { it }
                                         }
                                     try {
-                                        select<Boolean> {
+                                        select<ThreadQueryReadiness.Receipt?> {
                                             observation.onAwait { it }
-                                            retired.onAwait { false }
+                                            retired.onAwait { null }
                                         }
                                     } finally {
                                         observation.cancel()
@@ -124,7 +124,8 @@ internal class ThreadAcquisitionGate private constructor(
                                     }
                                 }
                             }
-                        if (!ready ||
+                        if (receipt == null ||
+                            !receipt.isCurrent() ||
                             synchronized(Companion) { active !== gate } ||
                             (support.value as? ThreadSupport.Supported)?.connection !== connection ||
                             store.current(host, conversationId).generation != gate.generation
@@ -133,7 +134,7 @@ internal class ThreadAcquisitionGate private constructor(
                             return null
                         }
                         val lease = delegate.acquire(conversationId, connection)
-                        if (lease == null) gate.acquired.cancel() else gate.acquired.complete(Unit)
+                        if (lease == null) gate.acquired.cancel() else gate.acquired.complete(receipt)
                         return lease
                     } catch (failure: Exception) {
                         gate.acquired.completeExceptionally(failure)

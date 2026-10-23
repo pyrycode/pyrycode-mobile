@@ -527,6 +527,20 @@ The controlled regression seeds an older valid checkpoint, holds a newer query, 
 attempts acquisition. The original snapshot-only wait acquires early and fails. The
 shared wait requires the newer terminal to be consumed before acquisition can issue
 its own real query. Retired-owner and incomplete-consumption checks remain separate.
+
+Acquisition also returns the completion receipt captured before the destination
+opens. The model scenario waits for a different successfully consumed request for
+that same conversation on the same current physical source. Its old receipt cannot
+satisfy the wait while the new request is queued behind another conversation. Merely
+dispatching the new request is insufficient. A replacement connection cannot finish
+the retired destination's wait. The pre-acquisition and post-acquisition waits share
+the original timeout.
+
+Closing the phone wrapper or completing or cancelling its inbound collector clears
+the current registered source. The holder remains available to waiting readers.
+Registration and retirement share an identity check so a late old close cannot clear
+its replacement or retain the closed connection graph.
+
 ### Recorded terminal preparation (#2491)
 
 A successful scenario return does not imply that its Activity can close. Under

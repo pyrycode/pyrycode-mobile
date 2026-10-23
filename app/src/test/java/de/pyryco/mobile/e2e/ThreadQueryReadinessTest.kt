@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -23,6 +24,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -103,7 +107,8 @@ class ThreadQueryReadinessTest {
                     runCurrent()
                     assertEquals("acquisition must send its own query after the current terminal is consumed", 3, sent.size)
                     assertTrue(gate.finished)
-                    val reopened = async { ThreadQueryReadiness.awaitCurrent(HOST, CHAT) }
+                    val previous = gate.awaitAcquired()
+                    val reopened = async { previous.awaitNext() }
                     runCurrent()
                     assertFalse("Back must not cancel the newly acquired destination's pending query", reopened.isCompleted)
                     complete(3)
@@ -115,6 +120,150 @@ class ThreadQueryReadinessTest {
                 queries.abandon()
                 progress.close()
             }
+        }
+
+    @Test fun queuedReopeningCannotSpendThePreviousCompletion() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            val connection = Any()
+            val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(connection))
+            val progress = ThreadQueryReadiness.register(HOST) { true }
+            val sent = mutableListOf<Envelope>()
+            var next = 0L
+            val queries =
+                AuthoritativeThreadQueries(HOST, store, AuthoritativeThreadRoute(HOST, store), { true }, { ++next }, {
+                    progress.sending(it)
+                    sent += it
+                    progress.sent(it.id, true)
+                    true
+                }, { 0L })
+            val thread =
+                object : NegotiatedThread() {
+                    override val host = HOST
+                    override val store = store
+                    override val support = support
+
+                    override fun observe(conversationId: String) = store.observe(host, conversationId)
+
+                    override suspend fun acquire(
+                        conversationId: String,
+                        connection: Any,
+                    ) = queries.acquire(conversationId)
+
+                    override suspend fun open(conversationId: String) = queries.open(conversationId)
+
+                    override fun older(conversationId: String) = queries.older(conversationId)
+
+                    override fun cancel(conversationId: String) = queries.cancel(conversationId)
+                }
+
+            fun complete(
+                id: Long,
+                conversation: String,
+                initial: Boolean,
+            ) {
+                val reply = terminal(id, initial, conversation)
+                queries.accept(reply)
+                progress.consumed(reply)
+            }
+            try {
+                queries.open(CHAT)
+                complete(1, CHAT, true)
+                queries.open("other")
+                assertEquals(2, sent.size)
+                ThreadAcquisitionGate.arm(thread, CHAT, 30000).use { gate ->
+                    val lease = checkNotNull(ThreadAcquisitionGate.negotiated(thread).acquire(CHAT, connection))
+                    assertTrue(gate.finished)
+                    assertEquals("X's request must remain queued behind Y", 2, sent.size)
+                    val previous = gate.awaitAcquired()
+                    val reopened = async { previous.awaitNext() }
+                    runCurrent()
+                    assertFalse("a queued reopening must not spend X's previous completion", reopened.isCompleted)
+                    complete(2, "other", true)
+                    runCurrent()
+                    assertEquals(3, sent.size)
+                    assertFalse("dispatch alone cannot finish X's new request", reopened.isCompleted)
+                    complete(3, CHAT, false)
+                    runCurrent()
+                    assertTrue(reopened.await().isCurrent())
+                    lease.close()
+                }
+            } finally {
+                queries.abandon()
+                progress.close()
+            }
+        }
+
+    @Test fun wrapperCloseReleasesTheRegisteredSource() {
+        val source = ThreadQueryReadiness.wrap(HOST, Pump())
+        assertNotNull(registeredSource())
+        source.close()
+        assertNull("closed source must not retain the delegate connection", registeredSource())
+    }
+
+    @Test fun collectorCompletionAndCancellationReleaseTheRegisteredSource() =
+        runTest {
+            for (cancelled in listOf(false, true)) {
+                val raw = Pump()
+                val source = ThreadQueryReadiness.wrap(HOST, raw)
+                val collector = backgroundScope.launch { source.inbound.collect {} }
+                runCurrent()
+                assertNotNull(registeredSource())
+                if (cancelled) collector.cancelAndJoin() else raw.frames.close()
+                runCurrent()
+                assertNull("retired collector must release its source", registeredSource())
+                source.close()
+            }
+        }
+
+    @Test fun oldRetirementCannotClearTheReplacementSource() =
+        runTest {
+            for (retirement in listOf("close", "complete", "cancel")) {
+                val raw = Pump()
+                val old = ThreadQueryReadiness.wrap(HOST, raw)
+                val collector = backgroundScope.launch { old.inbound.collect {} }
+                runCurrent()
+                val replacement = ThreadQueryReadiness.register(HOST) { true }
+                when (retirement) {
+                    "close" -> old.close()
+                    "complete" -> raw.frames.close()
+                    "cancel" -> collector.cancelAndJoin()
+                }
+                runCurrent()
+                assertSame(retirement, replacement, registeredSource())
+                send(replacement, 1)
+                replacement.consumed(terminal(1))
+                assertTrue(ThreadQueryReadiness.awaitCurrent(HOST, CHAT).isCurrent())
+                collector.cancelAndJoin()
+                old.close()
+                replacement.close()
+            }
+        }
+
+    private fun registeredSource(): Any? {
+        val field = ThreadQueryReadiness.javaClass.getDeclaredField("sources").also { it.isAccessible = true }
+        return ((field.get(ThreadQueryReadiness) as Map<*, *>)[HOST] as? StateFlow<*>)?.value
+    }
+
+    @Test fun theNextCompletionCannotComeFromAReplacementOrAnotherConversation() =
+        runTest {
+            val first = ThreadQueryReadiness.register(HOST) { true }
+            send(first, 1)
+            first.consumed(terminal(1))
+            val previous = ThreadQueryReadiness.awaitCurrent(HOST, CHAT)
+            val wait = async { previous.awaitNext() }
+            send(first, 2, "other")
+            first.consumed(terminal(2, conversation = "other"))
+            runCurrent()
+            assertFalse(wait.isCompleted)
+            val replacement = ThreadQueryReadiness.register(HOST) { true }
+            send(replacement, 3)
+            replacement.consumed(terminal(3))
+            runCurrent()
+            assertFalse("a replacement cannot certify the old acquired destination", wait.isCompleted)
+            wait.cancelAndJoin()
+            first.close()
+            replacement.close()
         }
 
     @Test fun replacementCannotSpendThePreviousConnectionsReceipt() =

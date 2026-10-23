@@ -48,3 +48,13 @@ Accepted main `f1f9c3adb` merged cleanly into this branch as `1436e17548b815cc94
 Raw integrated JVM XML is in `build/manual-shared-fixture/integrated-jvm`. The phone XML, logs and source/binary identities are in `build/dispatcher-tests/scripted-soiasyw1`. A copy is preserved under the evidence bundle's `integrated-1436e1754` folder. The earlier four recorded and four scripted passes retain their original source and APK identities.
 
 Configured dispatcher acceptance and independent review remain pending. Remaining manual holds and independent work retain their current state. Focused passes do not establish one cause for every historical flake.
+
+## Rework plan for 2505, 2026-10-23
+
+Written before implementing the review repair. Preserve the original failing gates and saved FAIL verdict at 12aeedf5a. The queued reopening gap is a new blocking finding. The pre-acquisition gate must retain its source, connection, generation and certified-snapshot safeguards.
+
+1. Reproduce the missing interleaving with the real AuthoritativeThreadQueries queue: certify X, leave Y active, acquire X, and prove that X cannot finish while its new request is queued or merely dispatched. Keep the immediate-dispatch regression.
+2. Carry the pre-acquisition completion receipt through the real acquisition. The post-acquisition wait must consume a different successful request for X from that same current source. It must not accept X's earlier receipt, another conversation, partial work or retired sources. Preserve the existing shared timeout.
+3. Retire the current registry holder on explicit wrapper close and inbound completion or cancellation. Use source identity and the same registration lock so a late old close cannot clear its replacement. Keep waiting flows connected to their holder. Add deterministic retention checks without garbage-collector timing.
+4. Run controlled failing regressions, then affected unit and lifecycle checks, format, documentation and pre-verification checks. Run the affected recorded model scenario through the maintained focused gate. Preserve raw results. Full configured acceptance stays with the dispatcher.
+5. Push normal commits to feature/2505 and return the existing PR to independent review through the protected operator. Preserve unrelated ticket states and failed gate evidence. Reconcile the tracking comment for inherited 2476 without presenting it as an accepted stage result.

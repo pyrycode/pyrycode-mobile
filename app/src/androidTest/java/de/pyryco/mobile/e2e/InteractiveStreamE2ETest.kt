@@ -8863,9 +8863,9 @@ class InteractiveStreamE2ETest {
             val remaining = THREAD_TIMEOUT_MS - (System.nanoTime() - waitingSince) / 1_000_000
             runBlocking {
                 withTimeout(remaining) {
-                    gate.awaitAcquired()
+                    val previous = gate.awaitAcquired()
                     // Back must not release the new destination's producer before its own reply finishes.
-                    val receipt = ThreadQueryReadiness.awaitCurrent(host, conversation)
+                    val receipt = previous.awaitNext()
                     check(receipt.isCurrent()) { "Reopened thread query owner changed" }
                 }
             }
