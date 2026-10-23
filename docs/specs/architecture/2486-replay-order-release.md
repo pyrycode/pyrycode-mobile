@@ -29,7 +29,7 @@ Keep exact rendered `alpha bravo charlie`, completion, item identity/order and s
 
 Shared-file overlaps include #1766, #2052, #2088, #2090, #2091, #2097, #2104, #2114, #2121, #2175, #2442 and #2462. Changes stay local to replay-order and its regression; inspected active #2104/#2462 work changes the rule/ping paths, not this release boundary.
 
-Forecast: roughly 350 written lines including this plan, diagnostics, shell regression and invariant probes; 0 exported types, 0 signature migrations, 4 acceptance criteria, no new production reject branches. This is one repair with its regression, below the 1600-line ceiling.
+The original size forecast is superseded by the accepted implementation and the documentation-only continuation below. No new production change is required.
 
 ## State and concurrency model
 
@@ -112,3 +112,21 @@ Write and run the real shell watcher regression before the repair; it must fail 
 - 2026-10-23: add `ThreadEvidence.isCurrentReplay` and a focused identity probe to enforce the ticket's current-source invariant. Keep completion/order/echo checks separate and unchanged. It rejects retired/null connections, colliding host/conversation identifiers, replaced snapshots/generations and reset state.
 - 2026-10-23: the initial native method executed/passed 1/1, but its harness exited 2 because the builder edited the running shell script before it finished. Preserve this unsuccessful command separately; it is not repaired acceptance evidence. Subsequent validation runs use an unchanged tree throughout each command.
 - 2026-10-23: resolve the open question with the historical timing inference above and controlled watcher failure. The repaired Linux native run on `d16145cdcca126f90fe048b735972daa1bd72117` executed/passed 1 with no failures/errors/skips. Phone phases prove thinking, close, successful offline release, the unchanged five-second window, restore, rendered text and current-source/order/echo completion. Three focused JVM classes total 29 executed/passed; the harness tests total 10 passed. Private raw evidence and binary/APK hashes are retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2486/builder-release-20261023/`. Full scripted-all acceptance stays with the dispatcher.
+
+## Manual documentation continuation — 2026-10-23
+
+The exact-ticket hold was accepted at central revision 90 after confirming no active worker,
+open support task or remaining process with a 2486 working directory. The implementation remains
+at independently accepted `6653e221e12cd9ce5a3dcca5655a63bc49647b66`; no code, fixture or test changes
+are needed. Remove the obsolete 650-line/two-production-file ticket forecast. Behavioral, ownership,
+security, deadline, cleanup and meaningful evidence requirements remain relevant and satisfied by
+retained accepted evidence; repeating green suites would add no acceptance value.
+
+The runbook's scenario table, replay-order instructions and queued-follow-up section now describe
+explicit offline release, fresh source facts after rendering and durable queued recovery with
+whole-turn exclusivity. Its new #2486 evidence section records the controlled failures, historical
+limits, 5397 JVM passes, 333 executed UI passes plus one skip, and 24 scripted passes including both
+named methods. These are the normal verifier's accepted results, confirmed from retained raw XML,
+not new operator runs. The non-blocking shell failure-cleanup finding remains honestly recorded.
+The manual handoff releases obsolete human holds back to the normal documentation stage after
+publishing this documentation-only commit; no merge, release or deployment is claimed here.
