@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -226,7 +227,19 @@ internal class SuiteConnections private constructor(
                 delay(10)
             }
             awaitIdle()
+            val pump = synchronized(this@SuiteConnections) { pumps[owner] }
+            pump?.awaitConsumedPrefix()
         }
+    }
+
+    /** Drain only this graph's phones while its activity and request-producing jobs are alive. */
+    suspend fun beforePhoneRestart() {
+        if (tape == null) return
+        val owners =
+            synchronized(this) {
+                transports.values.filter { it.owner.startsWith("phone/") && !it.localClose.get() }.map { it.owner }
+            }
+        for (owner in owners) beforeClose(owner)
     }
 
     suspend fun beforePhoneTeardown() {
@@ -238,6 +251,17 @@ internal class SuiteConnections private constructor(
             beforeClose(owner)
         }
     }
+
+    /** Test-end has run; retain producers through the captured terminal observation or close prefix. */
+    suspend fun completeBeforePhoneTeardown(): Boolean =
+        withTimeout(30000) {
+            val replay = tape ?: return@withTimeout false
+            beforePhoneTeardown()
+            if (!replay.scenarioCompletesBeforePhoneClose()) return@withTimeout false
+            checkpoint("scenario-complete")
+            beforePhoneRestart()
+            true
+        }
 
     suspend fun checkpoint(name: String) {
         require(name.matches(Regex("[a-z][a-z0-9-]{0,79}"))) { "Invalid test checkpoint name" }
@@ -291,6 +315,35 @@ internal class SuiteConnections private constructor(
             return runBlocking { withTimeout(65000) { reply.await() } }
         } finally {
             controlReplies.remove(frame.id)
+        }
+    }
+
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean =
+        if (tape == null) {
+            true
+        } else {
+            val replay = pump as? ReplayPump
+            replay != null &&
+                synchronized(this) {
+                    pumps[replay.connection.owner] === replay && tape.peerPermissionReady(replay.connection.owner, modalId)
+                }
+        }
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        if (tape == null) return
+        withTimeout(timeoutMs) {
+            while (!peerPermissionReady(pump, modalId)) {
+                failure.get()?.let { throw it }
+                if (pump.state.value is PumpState.Closed) return@withTimeout
+                delay(10)
+            }
         }
     }
 
@@ -451,8 +504,23 @@ internal class SuiteConnections private constructor(
     ) : ManagedSessionPump {
         override val state = MutableStateFlow<PumpState>(PumpState.Handshaking)
         val frames = Channel<Envelope>(Channel.UNLIMITED)
-        override val inbound = frames.receiveAsFlow()
+        private val queuedFrames = AtomicLong()
+        private val consumedFrames = AtomicLong()
+        override val inbound =
+            flow {
+                for (frame in frames) {
+                    emit(frame)
+                    // Receipt in the channel is not application consumption. In particular, the
+                    // repository must apply a terminal history marker before its scope is cancelled.
+                    consumedFrames.incrementAndGet()
+                }
+            }
         private val started = AtomicBoolean()
+
+        suspend fun awaitConsumedPrefix() {
+            val boundary = queuedFrames.get()
+            while (consumedFrames.get() < boundary) delay(10)
+        }
 
         override fun start() {
             if (started.compareAndSet(false, true)) register(this)
@@ -487,7 +555,9 @@ internal class SuiteConnections private constructor(
                 "daemon" -> {
                     val frame = checkNotNull(step.message)
                     check(frames.trySend(frame).isSuccess)
+                    queuedFrames.incrementAndGet()
                     tape!!.delivered(connection.owner, frame)
+                    enqueue(tape.initial())
                 }
                 "inbound_end" -> {
                     tape!!.connectionEnded(connection.owner)

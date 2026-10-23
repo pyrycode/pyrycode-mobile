@@ -1,0 +1,287 @@
+{
+  "ticket": 2367,
+  "scope": "Manual follow-through after the rejected first candidate. Final independent verification remains required.",
+  "implementationRevision": "14abd5e14cb907787ef8cbafde4310d7d26c9a46",
+  "integratedMain": "d2130e229e5ae7382cf7f6cebe790db6ae8574d5",
+  "codeSourceSha256": {
+    "app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt": "8b56a9e6816216f4121e4b57442d020cab8b7a2a7b5a0e72ebf78e3e7c98e724",
+    "app/src/sharedTest/java/de/pyryco/mobile/data/network/ProducerContentPayloads.kt": "68e060f6c6a0796053def343308eb81ec2ea0093bd6750347149bbe90f7ae252",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/AgentNavigationScreenTest.kt": "3d4bf1a1d2776b174c443f75dded35aadba68f944d2f79276fbc4426803fbcec",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/AuthoritativeThreadScreenTest.kt": "db4f33081178c174a5b0a043f0062afea55c9253f338f44dfa6e32137f6cbc95",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentRestGapTest.kt": "32d7abe40f504eb2fe45def60d6008a6cdc2c8a6da0c655b208a80c111a4c037",
+    "app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentViewportTest.kt": "0e446b9133b78e548a666cb2046433a58b34af0cd09190879e696cc32bf422db",
+    "app/src/test/java/de/pyryco/mobile/data/diagnostics/MessageTrailTest.kt": "b5924dc3c9351d10cccd2557cf090e5b13075a2827e1b9b66bbe81239776fe80",
+    "app/src/test/java/de/pyryco/mobile/data/repository/NegotiatedThreadActivationTest.kt": "28e242cccc5cf2cf1efa4ba67ab0eadc6d74658dd6e2a014f6453c11a8bf5d81",
+    "app/src/test/java/de/pyryco/mobile/data/repository/OwnedSessionFrames.kt": "918c96aab55088958955d2491d4af0e1a59902e1fc32f37bd26e28cbb0d2cc36",
+    "app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt": "fc369f0a0482355926378774a39504571834f6d8d6bf019ed1a07ab6da3c66be",
+    "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryAttachmentTest.kt": "29365e3490e295929412f6f79d4b516e7532625d8dca9e946f258f61ca9e651e",
+    "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryContextUsageTest.kt": "2edb633a712d85ab555619e5e162abc79a3cdcacd1ed70049a9c58703328ae14",
+    "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryMessageTrailTest.kt": "7e271b391539d67332d98ddda254c8d87dccc3783854e7c83930344266fd37dd",
+    "app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryRunReadingsTest.kt": "ffa8d380e52c223002ba85ebdf66addd69c7c02882b55e80182d339d894ce0ab",
+    "app/src/test/java/de/pyryco/mobile/data/repository/StableConversationRepositoryTest.kt": "4cf0853441ef4be8dbc6fd692322a1dde12d79b81011c36b3bf629a5b3176111",
+    "app/src/test/java/de/pyryco/mobile/di/HostConversationSourceAttentionTest.kt": "8a1526d72c555a6638d63e236544e44642ec2090fecc29e52bc1889b45aab3b8",
+    "app/src/test/java/de/pyryco/mobile/di/RelayConnectionFactoryTest.kt": "8e1a80940da10ae0fdb968fa542e0998350e284defe49f01ee726b6d9d9333ee",
+    "app/src/test/java/de/pyryco/mobile/e2e/HarnessThreadEvidenceBindingTest.kt": "3620283bb5abf108216beef5101468e7c5290588cae8a724049f7aac92bf1087",
+    "app/src/test/java/de/pyryco/mobile/notifications/AttentionNotifierSourceTest.kt": "3e196d3e739fc79ffa5bee0bf78c17f18be46fbf34d84f417389e686339010eb",
+    "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelAgentSwitchTest.kt": "b1075c89c903e1de6cb426841ab10383a52e149275a5e2bab4aef797872754c2",
+    "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelContextFreshnessTest.kt": "3c3b7d32138df87779d83a3811e9a06ce3683afc35f8a64b7c15d80d2f60cd88",
+    "app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTurnPhaseTest.kt": "de703d79517ed5aa20f42bfaa86bf90db703589c6ebf8039d415f392127e2888"
+  },
+  "groups": [
+    {
+      "name": "mixed presentation, prompts and diagnostics",
+      "source": "Working repair tree before the later session fixtures and held-settings addition. This is not an exact final-candidate full-suite result.",
+      "executed": 192,
+      "passed": 192,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "reports": [
+        {
+          "class": "de.pyryco.mobile.data.diagnostics.MessageTrailTest",
+          "executed": 8,
+          "passed": 8,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "4b331128e4ba5f082dc1f31d1ac809282e78e37cd278cd6b96c2bbb02ccff32e"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.NegotiatedThreadActivationTest",
+          "executed": 18,
+          "passed": 18,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "a54de6eab6ca6dea039d5678b974956675085e56c002f79e559203f7003950c7"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.RemoteConversationRepositoryAttachmentTest",
+          "executed": 21,
+          "passed": 21,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "33d90fa709e5ea9dd6cf741f9be1a764ed86e55014bc3289626f16a957a4f2ad"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.RemoteConversationRepositoryMessageTrailTest",
+          "executed": 10,
+          "passed": 10,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "f036c60efb246b1509df55b7a70614681bc742fce8262f79f6bda52d1f650fcf"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.StableConversationRepositoryTest",
+          "executed": 52,
+          "passed": 52,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "8f80d9ff933b0c6e389073d00fc81c272426a70051b1779588db99816f557e0b"
+        },
+        {
+          "class": "de.pyryco.mobile.di.HostConversationSourceAttentionTest",
+          "executed": 11,
+          "passed": 11,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "b22b223b48096b2210435128690f66ae05b71611aab866463231baba3eda8cdd"
+        },
+        {
+          "class": "de.pyryco.mobile.e2e.HarnessThreadEvidenceBindingTest",
+          "executed": 6,
+          "passed": 6,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "bf3b165b5587281df8e115690bc2b8684d4fb8414b34a29409700e7260aab506"
+        },
+        {
+          "class": "de.pyryco.mobile.e2e.ProducerReplyPreviewTest",
+          "executed": 3,
+          "passed": 3,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "b9c0638857bc2be88c9530c51fd9b351d996d1501468f5bdcd3a606ea614ee9c"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.AgentNavigationScreenTest",
+          "executed": 9,
+          "passed": 9,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "de7c01f84f49db0bf0f01b908e37c1f76fc5edbb328ceb9d0ece0069c8bac5ca"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.AuthoritativeThreadScreenTest",
+          "executed": 23,
+          "passed": 23,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "81cce98c166e4b11773577e801c6443e8babd5793569f7aed0a8da7c8493d452"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.BackgroundAgentRestGapTest",
+          "executed": 8,
+          "passed": 8,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "41a41c639da763bc77b66d45485f760d4a3d414ba18b33acb33e266a88569919"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.BackgroundAgentViewportTest",
+          "executed": 23,
+          "passed": 23,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "4ac6ee2fa70b8cb7181fe8cd0aeb50ac7c64a7134584fe9a9953de1678c9ad8c"
+        }
+      ]
+    },
+    {
+      "name": "session ownership, reconnect, notifications and settings",
+      "source": "Working code and selected tests committed unchanged as implementationRevision. The subsequent plan/evidence edits do not change Kotlin sources.",
+      "executed": 185,
+      "passed": 185,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "reports": [
+        {
+          "class": "de.pyryco.mobile.data.repository.AuthoritativeSessionLiveTest",
+          "executed": 29,
+          "passed": 29,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "7953814d4561c34bde076d7e8b9af0925000de9576e11cf57976cdc920de5df5"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.RelayRepositoryCoordinatorTest",
+          "executed": 55,
+          "passed": 55,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "c843b5a4a49ff2d27e111b753ddd1890092c1ff19ad3211f3f0addddf66f195e"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.RemoteConversationRepositoryContextUsageTest",
+          "executed": 16,
+          "passed": 16,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "1934502ba6b6943cfbaa5a461a19f2e7dcdfeb8256d94c076881f09e5752b5c9"
+        },
+        {
+          "class": "de.pyryco.mobile.data.repository.RemoteConversationRepositoryRunReadingsTest",
+          "executed": 10,
+          "passed": 10,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "80b097e0156ad28634d61f3e09f7c808bc43794da48639acfa6cadab3811a47e"
+        },
+        {
+          "class": "de.pyryco.mobile.di.RelayConnectionFactoryTest",
+          "executed": 29,
+          "passed": 29,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "e4ee89003b16d0042b4a97f97c63a6db248ce9a39fa048253c4cde4afce28d88"
+        },
+        {
+          "class": "de.pyryco.mobile.notifications.AttentionNotifierSourceTest",
+          "executed": 1,
+          "passed": 1,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "25cec00a6cacadbeaee853ce83c8a88562645b0869ff5239e21bd73094eab7e2"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelAgentSwitchTest",
+          "executed": 33,
+          "passed": 33,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "f1eea3e6de3ed10af52b1d09615d1df7f697580d33bc027a5597672945fcbad3"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelContextFreshnessTest",
+          "executed": 10,
+          "passed": 10,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "dc31219b71a4936d6b38cd687f21f1436bc5b4fce59a1e7c143be8a6bc01248d"
+        },
+        {
+          "class": "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTurnPhaseTest",
+          "executed": 2,
+          "passed": 2,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "06797f74c39d0b1680d5b102689b8d4dad6040ce785b71c1ea1d9ee933309f9c"
+        }
+      ]
+    }
+  ],
+  "rejectedCandidate": {
+    "revision": "7b839c6a51ec5d4e04232943e5257022cc619f8f",
+    "fullUnitExecuted": 5326,
+    "fullUnitFailed": 62,
+    "exactCandidateRerunExecuted": 62,
+    "exactCandidateRerunFailed": 62,
+    "mainComparisonExecuted": 62,
+    "mainComparisonPassed": 62
+  },
+  "historicalRepairRuns": [
+    {
+      "run": "migration-group-b-3",
+      "executed": 156,
+      "failed": 20,
+      "outcome": "fail"
+    },
+    {
+      "run": "migration-group-b-4",
+      "outcome": "JVM halted by per-test watchdog, incomplete evidence",
+      "usableAsCompletePassEvidence": false
+    },
+    {
+      "run": "migration-group-b-6",
+      "executed": 156,
+      "failed": 3,
+      "outcome": "fail"
+    },
+    {
+      "runs": [
+        "migration-group-b-2",
+        "migration-group-b-5"
+      ],
+      "outcome": "formatting failure, no tests executed"
+    },
+    {
+      "runs": [
+        "migration-group-b",
+        "migration-group-b.log queued predecessors"
+      ],
+      "outcome": "cancelled while waiting, no pass claimed"
+    }
+  ],
+  "privateEvidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2367/manual-takeover-20261021/manual-checks",
+  "retainedEarlierEvidence": "2367-manual-validation.json remains attributed to its original source revisions. Original live/recorded evidence and failures are unchanged."
+}

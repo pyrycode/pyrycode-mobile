@@ -238,6 +238,19 @@ internal object RecordedSuiteNative {
         live: () -> ManagedSessionPump,
     ): ManagedSessionPump = current?.hub?.pump(transport, live) ?: live()
 
+    fun peerPermissionReady(
+        pump: ManagedSessionPump?,
+        modalId: String,
+    ): Boolean = current?.hub?.peerPermissionReady(pump, modalId) ?: true
+
+    suspend fun beforePeerPermission(
+        pump: ManagedSessionPump,
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        current?.hub?.beforePeerPermission(pump, modalId, timeoutMs)
+    }
+
     fun control(
         action: String,
         body: String,
@@ -264,6 +277,12 @@ internal object RecordedSuiteNative {
     }
 
     val replaying get() = current?.document != null
+
+    /** Passive only: do not drain, checkpoint, or consult the upstream connection. */
+    fun modelReopenProgress(serverId: String): String {
+        val session = current ?: return "recording=inactive"
+        return "phone_owner=${session.currentOwner("phone", serverId)} ${session.tape?.progress() ?: "recording=capture"}"
+    }
 
     fun beforeHostLinkClose(serverId: String) {
         val session = current?.takeIf { it.document != null } ?: return
@@ -311,17 +330,27 @@ internal object RecordedSuiteNative {
         runBlocking { session.hub.checkpoint(name) }
     }
 
+    /** A graph rebuild must drain its current phones before destroying their request producers. */
+    fun beforePhoneRestart() {
+        val session = current?.takeIf { it.document != null } ?: return
+        runBlocking { session.hub.beforePhoneRestart() }
+    }
+
     /** Keep the real screen active while a replay catches up with its captured pre-close requests. */
-    fun beforePhoneTeardown() {
+    fun beforePhoneTeardown(endSession: () -> Unit) {
         val session = current ?: return
         if (session.document == null || session.document.document["checkpointPolicy"] != JsonPrimitive("test-observations-v1")) return
+        android.util.Log.i("RecordedSuite", "event=terminal_preparation_started")
         runBlocking { session.hub.beforePhoneTeardown() }
+        endSession()
+        session.scenarioCompletePrepared = runBlocking { session.hub.completeBeforePhoneTeardown() }
+        android.util.Log.i("RecordedSuite", "event=terminal_preparation_finished early_checkpoint=${session.scenarioCompletePrepared}")
     }
 
     fun finish(success: Boolean) {
         val session = current ?: return
         try {
-            if (success) checkpoint("scenario-complete")
+            if (success && !session.scenarioCompletePrepared) checkpoint("scenario-complete")
             GlobalContext.get().get<RelayConnectionRegistry>().dispose()
             runBlocking {
                 withTimeout(10000) {
@@ -421,6 +450,7 @@ internal object RecordedSuiteNative {
         args: Bundle,
     ) {
         val originalArguments = Bundle(args)
+        var scenarioCompletePrepared = false
         var originalPreferences: Preferences? = null
         var originalPairings: List<PairedServer>? = null
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

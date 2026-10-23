@@ -181,6 +181,65 @@ class SessionErrorDiagnosticsTest {
     ) = Envelope(id = 1L, type = type, ts = "2026-10-20T19:00:00Z", payload = MobileJson.parseToJsonElement(payload))
 
     @Test
+    fun peerTracePreservesOrderWithoutPublishingPrivateFields() {
+        val frames =
+            listOf(
+                traceFrame("session_error", """{"code":"session.child_crashing","message":"private-prompt"}"""),
+                traceFrame("turn_state", """{"state":"responding","conversation_id":"private-id"}"""),
+                traceFrame("assistant_delta", """{"text":"private-reply"}"""),
+                traceFrame("turn_state", """{"state":"idle"}"""),
+                traceFrame("session_error", """{"code":"private-unknown-code"}"""),
+                traceFrame("private-type", """{"token":"private-token"}"""),
+            )
+        assertEquals(
+            listOf(
+                "peer_frames=6 omitted=0",
+                "index=0 type=session_error state=none error=child_crashing clear=false",
+                "index=1 type=turn_state state=responding error=none clear=false",
+                "index=2 type=assistant_delta state=none error=none clear=false",
+                "index=3 type=turn_state state=idle error=none clear=false",
+                "index=4 type=session_error state=none error=unknown clear=false",
+                "index=5 type=other state=none error=none clear=false",
+            ),
+            sessionErrorPeerTrace(frames),
+        )
+        assertFalse(sessionErrorPeerTrace(frames).joinToString().contains("private"))
+    }
+
+    @Test
+    fun peerTraceBoundsMalformedFramesAndRetainsOriginalOrdinals() {
+        val frames = List(300) { traceFrame("turn_state", """{"state":{"private":"value"}}""") }
+        val trace = sessionErrorPeerTrace(frames)
+        assertEquals("peer_frames=300 omitted=44", trace.first())
+        assertEquals(257, trace.size)
+        assertEquals("index=44 type=turn_state state=unknown error=none clear=false", trace[1])
+        assertEquals("index=299 type=turn_state state=unknown error=none clear=false", trace.last())
+        assertEquals(listOf("peer_frames=0 omitted=0"), sessionErrorPeerTrace(emptyList()))
+    }
+
+    @Test
+    fun peerTraceDistinguishesClearIdleAndMalformedFlags() {
+        val frames =
+            listOf(
+                traceFrame("turn_state", "{}").copy(sessionStateCleared = kotlinx.serialization.json.JsonPrimitive(true)),
+                traceFrame("turn_state", """{"state":"idle"}"""),
+                traceFrame(
+                    "session_error",
+                    """{"code":123}""",
+                ).copy(sessionStateCleared = kotlinx.serialization.json.JsonPrimitive("true")),
+            )
+        assertEquals(
+            listOf(
+                "peer_frames=3 omitted=0",
+                "index=0 type=turn_state state=unknown error=none clear=true",
+                "index=1 type=turn_state state=idle error=none clear=false",
+                "index=2 type=session_error state=none error=unknown clear=unknown",
+            ),
+            sessionErrorPeerTrace(frames),
+        )
+    }
+
+    @Test
     fun bothArmsRetainPhaseReadinessAndOriginalTimeoutWithoutFormattingIt() {
         val timeout = ComposeTimeoutException("private-pairing-token authorization private-frame")
         for (arm in listOf("retained", "dropped")) {

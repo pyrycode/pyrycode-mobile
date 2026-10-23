@@ -8,7 +8,6 @@ import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -66,7 +65,7 @@ class ArchivedDiscussionsViewModelTest {
                         return source
                     }
 
-                    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+                    override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
                     override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
@@ -562,7 +561,7 @@ class ArchivedDiscussionsViewModelTest {
         object : ConversationRepository {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+            override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
@@ -604,7 +603,7 @@ class ArchivedDiscussionsViewModelTest {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
                 flow { throw RuntimeException(message) }
 
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+            override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
@@ -648,7 +647,7 @@ class ArchivedDiscussionsViewModelTest {
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+        override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
         override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
@@ -696,7 +695,7 @@ class ArchivedDiscussionsViewModelTest {
         object : ConversationRepository {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+            override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
@@ -740,7 +739,7 @@ class ArchivedDiscussionsViewModelTest {
     ) : ConversationRepository {
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+        override val negotiatedThread: de.pyryco.mobile.data.repository.NegotiatedThread get() = TODO("not used")
 
         override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 

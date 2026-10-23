@@ -48,7 +48,7 @@ stopped turn whose category is some other value, or none, shows nothing — e.g.
 against a closed set of known tokens, never rendered — the render trust boundary #805 needed
 (`inertOutcomeToken`, the 40-character cut, the control/format-character scrub) no longer applies to this
 component, because nothing agent-authored crosses into a `Text` argument here any more. See
-[Live-session events § 1. DTOs](live-session-events.md#1-dtos--datanetworkinteractivepayloadskt-internal)
+[Live-session events § 1. DTOs](live-session-events.md)
 for the decode half these fields come from; [Stopped-turn row](stopped-turn-row.md) now holds the only
 sanitizer in this area that still renders daemon text (`stoppedReportText`, which iterates code points and
 has no truncation gap).

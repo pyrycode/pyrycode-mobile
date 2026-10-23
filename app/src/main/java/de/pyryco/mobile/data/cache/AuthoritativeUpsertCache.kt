@@ -7,6 +7,60 @@ internal class AuthoritativeRemovalRejected(
     val held: ThreadItemDto,
 ) : Exception("authoritative removal superseded")
 
+/** A partial opening has no paging exhaustion or daemon-continuation meaning. */
+internal class AuthoritativeThreadWindow(
+    val serverId: String,
+    val conversationId: String,
+    val saved: SavedAuthoritativeThread,
+    val rows: Set<Pair<Long, Boolean>> = emptySet(),
+    val cursor: AuthoritativeDisplayCursor? = null,
+) {
+    override fun toString(): String = "AuthoritativeThreadWindow(redacted)"
+}
+
+/** Opaque local cursor; its storage owner retains the committed contribution seek bound. */
+internal class AuthoritativeDisplayCursor(
+    val host: String,
+    val conversation: String,
+    val epoch: String,
+    val incarnation: String,
+) {
+    override fun toString(): String = "AuthoritativeDisplayCursor(redacted)"
+}
+
+/** Opening projections remain distinct from full compatibility reads and daemon continuations. */
+internal interface AuthoritativeWindowCache {
+    fun authoritativeLifetime(
+        host: String,
+        conversation: String,
+    ): Pair<Long, Long>
+
+    suspend fun newestAuthoritativeWindow(
+        serverId: String,
+        conversationId: String,
+        size: Int,
+    ): AuthoritativeThreadWindow?
+
+    suspend fun beforeAuthoritativeWindow(
+        serverId: String,
+        conversationId: String,
+        cursor: AuthoritativeDisplayCursor,
+        admitted: Set<Pair<Long, Boolean>>,
+        size: Int,
+    ): AuthoritativeThreadWindow?
+
+    /** [placementRoots] names winning unordered agents; durable revisions may still be ordered. */
+    suspend fun authoritativeParentClosure(
+        serverId: String,
+        conversationId: String,
+        epoch: String,
+        parents: Set<Long>,
+        evidence: Set<Long>,
+        placementRoots: Set<Long> = emptySet(),
+        structuralChanges: List<ThreadItemDto> = emptyList(),
+    ): SavedAuthoritativeThread?
+}
+
 /** Optional owned-write capability; full-file compatibility continues using the replacement API. */
 internal interface AuthoritativeUpsertCache {
     /**

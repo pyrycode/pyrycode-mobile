@@ -20,9 +20,46 @@ adds the thread-row family and the thread restore — see
 writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` and
 `removeConversation` to unpair and to permanent deletion — see
 [§ Removal on unpair](#removal-on-unpair--forgetremovedhost) below and
-[Caching conversation repository § delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798).
+[Caching conversation repository § delete](caching-conversation-repository.md).
 
 ## The contract
+
+Fetched missing tool bodies (#2388) stay in the host thread snapshot's separate
+in-memory ID/revision map and can be reused on unchanged reopen or offline. They
+do not rewrite saved full source facts or extend the disk format. Process restore
+retains only the existing persisted facts, not fetched-body availability or
+transient Loading/Retry state. See [body retention and completion](remote-conversation-repository.md#missing-tool-body-queries-2388).
+
+Direct-child pages (#2389) likewise stay in the snapshot's separate in-memory
+parent/revision map, including their captured version and certified continuation.
+Unchanged offline reopen can reuse them; process restore does not promise pages,
+cursors or child Loading/Retry state. Summary enumeration never certifies root or
+saved-history completeness, rewrites newer complete facts or extends persisted
+coverage. Selection/activation and subtree invalidation remain
+with #2431–#2433 and #2391. See [page admission and completion](remote-conversation-repository.md#direct-child-pages-2389)
+and [the child evidence contribution to #2376](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
+**Expansion retention (#2390).** One in-memory budget per host spans fetched
+bodies and child enumerations in every conversation, including open, closed and
+unreachable entries: inclusive 16,777,216 serialized UTF-8 bytes and 1000 child
+summaries. Charge each body content object, original raw child-summary object and
+current cursor object once per retained entry, including unknown fields, escaped
+and multibyte text. Multiple consumers do not multiply cost. Complete source facts
+and their existing app-private no-backup persistence stay outside this budget;
+there is no new database, migration, background download or process-restore state.
+
+Current expanded demand protects loaded details and ancestry needed to expose open
+descendants. Other consumers keep protection after one collapses or retires.
+Admission evicts whole unprotected bodies or accumulated parent enumerations in
+cross-kind LRU order; successful admission or retained reopen records use, while
+recomposition does not. If admission cannot satisfy both limits, rejection preserves existing
+entries and the previous page/cursor atomically, with sticky inline Retry for the
+current owner. Closing other demand permits explicit Retry to reclaim capacity.
+Retained unchanged reopen works offline; evicted reopen is missing and follows the
+bounded read path. Eviction clears availability, cursor and detail completion,
+never saved full facts, root/history coverage, checkpoints, join watermarks or
+read marks, including reconnect. See [accounting and ownership](remote-conversation-repository.md#retained-expansion-budget-2390)
+and [counted parent handoff](../../e2e-interactive-stream.md#retained-expansion-budget-evidence-2390).
 
 **Read positions are the older-daemon fallback (#1883).** The host-keyed
 `ReadPosition` family keeps its existing format, storage custody and restart behavior.
@@ -39,7 +76,7 @@ nearest unresolved older edge is shown, preferring a known gap over unknown cove
 Lifecycle evidence and queued echoes establish neither occupied spans nor targets, and empty eligible
 history shows no markers. Hiding a marker changes no anchor, opaque cursor or coverage claim;
 restoration and reconnect retain hidden gaps for later displayed content. See
-[marker projection](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+[marker projection](thread-screen-oldest-end-history-demand.md).
 This display repair changes no cache schema, retention bound or persistence policy. The suspected
 cache-retention source of fragmentation remains unconfirmed and outside this repair.
 
@@ -120,7 +157,7 @@ cleared by the next successful write of that document or by `removeHost`.
   for that thread. Accepted in #797's security review as a residual, deferred until observed. The
   row count moved from 200 to 100000 in #1353, matching desktop's own saved-timeline cap, once
   banners, compaction dividers and model refusals started counting toward it (see § The contract
-  above) — raising it is what made [`mergeCachedRows`](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)'s
+  above) — raising it is what made [`mergeCachedRows`](caching-conversation-repository.md)'s
   per-emission cost worth a look; see that section for the fix and why a bound this large changed
   what "cheap enough to run on every streaming delta" means.
 

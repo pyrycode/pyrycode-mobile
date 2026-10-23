@@ -37,8 +37,6 @@ import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.SystemPromptReading
-import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
@@ -1493,11 +1491,13 @@ class HostChannelListViewModelTest {
             // #798 AC #1 and #4, driven from the gesture through the production removal hook.
             val f = fixture()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            val thread = listOf<ThreadItem>(ThreadItem.MessageItem(message("cached reply")))
+            val thread =
+                de.pyryco.mobile.data.cache
+                    .savedTextFixture("cached reply")
             // "Host" and "host" differ only in case and hold a conversation of the same id.
             for (id in listOf("Host", "host")) {
                 f.cache.writeConversations(id, listOf(row("c1", promoted = true, label = "cached name")))
-                f.cache.writeThread(id, "c1", thread)
+                f.cache.writeAuthoritativeThread(id, "c1", thread)
             }
 
             f.vm.openHostEditor("Host")
@@ -1511,7 +1511,7 @@ class HostChannelListViewModelTest {
             runCurrent()
             assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).unpairFailed)
             assertEquals(listOf("c1"), f.cache.readConversations("Host").map { it.id })
-            assertEquals(thread, f.cache.readThread("Host", "c1"))
+            assertEquals(thread, f.cache.readAuthoritativeThread("Host", "c1"))
 
             f.store.failRemove = false
             f.vm.confirmHostUnpair()
@@ -1520,10 +1520,10 @@ class HostChannelListViewModelTest {
             assertNull(f.store.loadById("Host"))
             assertNull(f.vm.hostState.value.hostEditor)
             assertEquals(emptyList<Conversation>(), f.cache.readConversations("Host"))
-            assertEquals(emptyList<ThreadItem>(), f.cache.readThread("Host", "c1"))
+            assertNull(f.cache.readAuthoritativeThread("Host", "c1"))
             // Every other paired host keeps its content.
             assertEquals(listOf("c1"), f.cache.readConversations("host").map { it.id })
-            assertEquals(thread, f.cache.readThread("host", "c1"))
+            assertEquals(thread, f.cache.readAuthoritativeThread("host", "c1"))
             assertTrue(
                 "no server id, conversation id or cached text may reach a log line: $logs",
                 logs.none { "Host" in it || "c1" in it || "cached" in it },
@@ -2845,42 +2845,6 @@ class HostChannelListViewModelTest {
      * previous read-only stub could not serve. Every other test here supplies a static flow and writes
      * nothing, so they read exactly what they did before.
      */
-    @Test
-    fun everyRowCarriesItsOwnHostsAttentionAndTappingClearsOnlyThatHost() =
-        runTest(dispatcher) {
-            val f = fixture()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.a.repo.rows.value = listOf(row("chat"), row("other"))
-            f.b.repo.rows.value = listOf(row("chat"))
-            runCurrent()
-            val previews =
-                f.vm.hostState.value.hosts[0]
-                    .recentChats
-
-            f.a.events.emit(LiveSessionEvent.TurnEnd("chat", "turn-1", "end_turn"))
-            f.b.events.emit(LiveSessionEvent.TurnEnd("chat", "turn-1", "end_turn"))
-            runCurrent()
-            val (hostA, hostB) = f.vm.hostState.value.hosts
-            assertEquals(ConversationAttention.Unread, hostA.attentionFor("chat"))
-            assertEquals(ConversationAttention.Idle, hostA.attentionFor("other"))
-            assertEquals(ConversationAttention.Unread, hostB.attentionFor("chat"))
-            // An attention change is not a new snapshot, so the rows and their previews are untouched.
-            assertSame(previews, hostA.recentChats)
-
-            f.vm.onHostRowTapped(HostConversationTarget("Host", "chat"))
-            runCurrent()
-            assertEquals(
-                ConversationAttention.Idle,
-                f.vm.hostState.value.hosts[0]
-                    .attentionFor("chat"),
-            )
-            assertEquals(
-                ConversationAttention.Unread,
-                f.vm.hostState.value.hosts[1]
-                    .attentionFor("chat"),
-            )
-        }
-
     private fun channel(
         id: String,
         pinnedAt: String? = null,

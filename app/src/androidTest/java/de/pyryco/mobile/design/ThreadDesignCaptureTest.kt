@@ -35,12 +35,12 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollToIndexAction
-import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -50,7 +50,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -73,7 +72,6 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
-import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
@@ -86,7 +84,6 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -105,7 +102,7 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
-import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
@@ -113,7 +110,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -153,9 +149,6 @@ class ThreadDesignCaptureTest {
     private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
     private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
     private val hostAvailable = MutableStateFlow(true)
-
-    /** While set, the override's `requestHistory` answers with this gate instead of the fake's page. */
-    @Volatile private var historyGate: CompletableDeferred<HistoryPage>? = null
 
     /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
     @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
@@ -279,7 +272,7 @@ class ThreadDesignCaptureTest {
         inputs.connectionState.value = ConnectionState.Connected
         inputs.pairingRejected.value = true
         usageLimit.value = UsageLimitReading("allowed_warning", "seven_day", 0, 0.94, null)
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTaskCount(2)
         thinking()
         await("2 tasks running")
         await("usage", substring = true)
@@ -304,7 +297,7 @@ class ThreadDesignCaptureTest {
         design.capture(FOLDER, "notification-text", "620:1577")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to Opus")
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
     }
@@ -329,7 +322,7 @@ class ThreadDesignCaptureTest {
         await("Show details")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to Opus")
         val write = CompletableDeferred<Unit>()
         settingsGate = write
@@ -349,28 +342,28 @@ class ThreadDesignCaptureTest {
 
     @Test fun backgroundTaskPanelAt412By892() {
         openThread()
-        inputs.backgroundTasks.value = populated()
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTasks(populated())
+        showTaskPanel(populated())
         openPanel()
         await("npm run build")
         design.capture(FOLDER, "tasks-populated", "568:877")
         closePanel()
 
-        inputs.backgroundTasks.value = capped()
-        inputs.backgroundTaskCount.value = 11
+        inputs.taskFacts.value = captureTasks(capped())
+        showTaskPanel(capped(), 11)
         openPanel()
         await("python3 scripts/replay_capture.py")
         design.capture(FOLDER, "tasks-capped", "568:932")
         closePanel()
 
-        inputs.backgroundTasks.value = BackgroundTaskRoster(emptyList(), 0)
-        inputs.backgroundTaskCount.value = 0
+        inputs.taskFacts.value = emptyList()
+        showTaskPanel(BackgroundTaskRoster(emptyList(), 0))
         openPanel()
         await("No background tasks")
         design.capture(FOLDER, "tasks-empty", "568:981")
         closePanel()
 
-        inputs.backgroundTasks.value = null
+        showTaskPanel(null)
         openPanel()
         await("No background-task report yet")
         design.capture(FOLDER, "tasks-never-reported", "568:997")
@@ -548,7 +541,7 @@ class ThreadDesignCaptureTest {
     fun compactAt320By700() {
         openThread()
         inputs.contextUsage.value = CONTEXT
-        inputs.backgroundTaskCount.value = 2
+        inputs.taskFacts.value = captureTaskCount(2)
         thinking()
         await("2 tasks running")
         design.capture(FOLDER, "compact-thread", "16:8")
@@ -567,7 +560,7 @@ class ThreadDesignCaptureTest {
         val refusal = refusal()
         extraItems.value = listOf(refusal)
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
-        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        emitRefusal(refusal)
         await("Switch back to", substring = true)
         rule.onNodeWithText("Switch back to", substring = true).performScrollTo()
         await("usage", substring = true)
@@ -587,7 +580,13 @@ class ThreadDesignCaptureTest {
         Espresso.pressBack()
         rule.waitForIdle()
 
-        inputs.backgroundTasks.value = populated()
+        val tasks = populated()
+        inputs.taskFacts.value = captureTasks(tasks)
+        inputs.taskProgress.value =
+            de.pyryco.mobile.data.repository.AuthoritativeLiveProgress(
+                sessionId = "old-session",
+                tasks = tasks.tasks.mapNotNull { task -> task.progress?.let { task.taskId to it } }.toMap(),
+            )
         openPanel()
         await("npm run build")
         design.capture(FOLDER, "compact-tasks", "568:877")
@@ -600,7 +599,7 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
 
         // Last: the focused composer's cursor handle is its own popup root, which would confuse openMenu.
-        inputs.backgroundTasks.value = null
+        inputs.taskFacts.value = emptyList()
         keyboard()
         design.capture(FOLDER, "compact-keyboard", "676:3981")
         design.closeKeyboard()
@@ -612,15 +611,42 @@ class ThreadDesignCaptureTest {
         inputs.contextUsage.value = CONTEXT
         extraItems.value = unrecognized()
         await("Unrecognized message", substring = true)
+        // This presentation-only scene includes a historical truncation flag absent from thread facts.
+        val literal = unrecognized()
+        val current = checkNotNull(inputs.thread.value).state.value
+        val scene =
+            current.copy(
+                authoritativeThread = null,
+                items = literal,
+                displayRows =
+                    literal.map {
+                        de.pyryco.mobile.ui.conversations.thread.ThreadRow
+                            .Delivered(it)
+                    },
+            )
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ThreadScreen(scene, {}, {}, ConnectionState.Connected, {})
+                }
+            }
+        }
+        rule.waitForIdle()
         rule.onNodeWithText("server_tool_use", substring = true).performClick()
         await("Payload truncated by the daemon.")
         design.capture(FOLDER, "unrecognized-message", "685:4112")
 
+        // Return to the subscribed production screen for the remaining outcome and control assertions.
+        inputs.thread.value = null
+        openThread()
+
         // #1603: the outcome is a combined Error pill in the top overlay.
         extraItems.value = listOf(ThreadItem.StoppedTurn("design-turn", "prompt_too_long", "", at(10)))
         runBlocking {
-            inputs.liveSessionEvents.emit(
-                LiveSessionEvent.TurnEnd(CONVERSATION, "design-turn", "end_turn", isError = true, terminalReason = "prompt_too_long"),
+            inputs.turnEnds.emit(
+                de.pyryco.mobile.data.repository
+                    .LiveRootTurnEnd(true, "", "end_turn", "prompt_too_long", "", { true }, inputs.turnSourceOwner),
             )
         }
         await("Stopped: context too long, compact or reset")
@@ -666,33 +692,6 @@ class ThreadDesignCaptureTest {
     }
 
     /** #1529: the oldest-end row's four states, `689:4281`, `689:4330`, `689:4379` and `689:4427`. */
-    @Test fun historyTailFramesAt412By892() {
-        // Held before the open, whose newest-page ask is the walk's first page.
-        val loading = CompletableDeferred<HistoryPage>()
-        historyGate = loading
-        openThread()
-        inputs.contextUsage.value = CONTEXT
-        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
-        design.capture(FOLDER, "history-loading", "689:4281")
-
-        loading.completeExceptionally(RelayErrorException("history.unavailable", true, ""))
-        awaitHistoryTail(ThreadHistoryTail.Retry, "Try again")
-        design.capture(FOLDER, "history-retry", "689:4330")
-
-        val retry = CompletableDeferred<HistoryPage>()
-        historyGate = retry
-        checkNotNull(inputs.thread.value).onRetryOlderHistory()
-        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
-        retry.completeExceptionally(RelayErrorException("history.not_found", false, ""))
-        awaitHistoryTail(ThreadHistoryTail.DeadEnd, "Earlier messages are unavailable")
-        design.capture(FOLDER, "history-dead-end", "689:4379")
-
-        hostAvailable.value = false
-        awaitHistoryTail(ThreadHistoryTail.Offline, "Older messages require a connection.")
-        design.capture(FOLDER, "history-offline", "689:4427")
-    }
-
-    /** #1529: the composer strip while its send uploads, `689:4475`; the first upload stops at 4 of 10 chunks. */
     @Test fun uploadingFrameAt412By892() {
         openThread()
         inputs.contextUsage.value = CONTEXT
@@ -809,21 +808,53 @@ class ThreadDesignCaptureTest {
         await("Thinking", substring = true)
     }
 
-    /** Waits for the oldest-end row to read [tail], scrolls the reverse list to it and waits for its [text]. */
-    private fun awaitHistoryTail(
-        tail: ThreadHistoryTail,
-        text: String,
-    ) {
-        rule.waitUntil(5_000) { checkNotNull(inputs.thread.value).state.value.historyTail == tail }
-        rule.onNode(hasScrollToKeyAction() and hasAnyAncestor(hasTestTag("thread-message-region"))).performScrollToKey("history-tail")
-        await(text)
-    }
-
     /** The bubble's photo is fetched by the view model, then decoded off the main clock, so wait for both. */
     private fun awaitImageLoaded() {
         rule.waitUntil(10_000) { checkNotNull(inputs.thread.value).attachmentStates.value["design-photo"] is AttachmentViewState.Ready }
         val spinner = hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate)
         rule.waitUntil(10_000) { rule.onAllNodes(spinner).fetchSemanticsNodes().isEmpty() }
+        rule.waitForIdle()
+    }
+
+    /** Use the exact projected row identity that arms the production switch-back offer. */
+    private fun emitRefusal(refusal: ThreadItem.ModelRefusal) {
+        val vm = checkNotNull(inputs.thread.value)
+
+        fun resolvedRefusals(): List<ThreadItem.ModelRefusal> {
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
+            return presentation
+                .demandRows(presentation.rows, emptySet())
+                .filterIsInstance<ThreadRow.Delivered>()
+                .map {
+                    it.item
+                }.filterIsInstance<ThreadItem.ModelRefusal>()
+        }
+        rule.waitUntil(5_000) { resolvedRefusals().any { it.banner == refusal.banner } }
+        val shown = resolvedRefusals().single { it.banner == refusal.banner }
+        runBlocking { refusals.emit(LiveRefusalEvent.Refused(shown, "session")) }
+    }
+
+    /** Panel-only states retain literal truncation/progress metadata absent from authoritative content. */
+    private fun showTaskPanel(
+        roster: BackgroundTaskRoster?,
+        count: Int = roster?.liveCount ?: 0,
+    ) {
+        val current = checkNotNull(inputs.thread.value).state.value
+        val scene =
+            current.copy(
+                authoritativeThread = null,
+                displayRows = current.authoritativeThread?.rows,
+                backgroundTasks = roster,
+                backgroundTaskCount = count,
+            )
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    de.pyryco.mobile.ui.conversations.thread
+                        .ThreadScreen(scene, {}, {}, ConnectionState.Connected, {})
+                }
+            }
+        }
         rule.waitForIdle()
     }
 
@@ -1056,13 +1087,20 @@ class ThreadDesignCaptureTest {
 
     @Test fun threadSavedFrameAt412By892() {
         val file = MessageAttachment("design-save-file", "report.txt", "text/plain")
+        val report =
+            File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "design-save-report.txt").apply {
+                writeText("The report is ready.\n")
+            }
+        attachmentGates[file.attachmentId] = CompletableDeferred(AttachmentRetrievalResult.Retrieved(report, "report.txt", "text/plain"))
         openThread()
         extraItems.value = listOf(message("design-save-message", Role.Assistant, "Here is the report.", 12, file))
         await("Here is the report.")
         withSavedDocument { destination ->
-            checkNotNull(inputs.thread.value).onAttachmentRequested(file, AttachmentAction.SAVE)
+            await("report.txt")
+            rule.onNodeWithText("report.txt").performTouchInput { longClick() }
             await("File saved")
             assertTrue("production save wrote its destination", destination.length() > 0)
+            assertEquals(report.readText(), destination.readText())
             captureConfirmation("thread-saved", "File saved", "thread-top-bar", "696:5065")
         }
     }
@@ -1155,12 +1193,17 @@ class ThreadDesignCaptureTest {
                     val fake = get<FakeConversationRepository>()
                     val repository =
                         object : ConversationRepository by fake {
-                            override fun observeMessages(conversationId: String) =
-                                combine(fake.observeMessages(conversationId), extraItems, seedShown) { items, extra, seed ->
-                                    (if (seed) items else emptyList()) + extra
-                                }
+                            override val negotiatedThread =
+                                CaptureThread(
+                                    checkNotNull(fake.negotiatedThread),
+                                    extraItems,
+                                    seedShown,
+                                    queue,
+                                    inputs.taskFacts,
+                                    inputs.taskProgress,
+                                )
 
-                            override fun observeQueue(conversationId: String) = queue
+                            override fun observeLiveRootTurnEnds(conversationId: String) = inputs.turnEnds
 
                             override fun observeLiveRefusalEvents(conversationId: String) = refusals
 
@@ -1179,12 +1222,6 @@ class ThreadDesignCaptureTest {
                                 attachmentId: String,
                             ) = attachmentGates[attachmentId]?.await()
                                 ?: AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
-
-                            override suspend fun requestHistory(
-                                conversationId: String,
-                                cursor: String,
-                                limit: Int,
-                            ) = historyGate?.await() ?: fake.requestHistory(conversationId, cursor, limit)
 
                             override suspend fun setSessionSettings(
                                 sessionId: String,
@@ -1233,12 +1270,11 @@ class ThreadDesignCaptureTest {
                         liveSessionEvents = inputs.liveSessionEvents,
                         hostModal = inputs.hostModal,
                         questionBatch = { inputs.questionBatch },
-                        backgroundTasks = { inputs.backgroundTasks },
-                        backgroundTaskCount = { inputs.backgroundTaskCount },
                         repositoryAvailable = hostAvailable,
                         pairingRejected = inputs.pairingRejected,
                         attachmentReader = get<AttachmentReader>(),
                     ).also {
+                        inputs.turnSourceOwner = checkNotNull(repository.negotiatedThread)
                         inputs.thread.value = it
                         val handle = get<SavedStateHandle>()
                         it.addCloseable(

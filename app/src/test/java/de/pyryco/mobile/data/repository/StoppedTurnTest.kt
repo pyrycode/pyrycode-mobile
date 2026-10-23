@@ -1,9 +1,7 @@
 package de.pyryco.mobile.data.repository
 
-import de.pyryco.mobile.data.model.LiveSessionEvent
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -11,84 +9,6 @@ import org.junit.Test
  * leaves a row, the reason token it carries, and the inert report text every token crosses.
  */
 class StoppedTurnTest {
-    private val failed = LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", isError = true)
-
-    @Test
-    fun terminalReason_isPreferredOverTheOutcome() {
-        for (terminal in listOf("max_turns", "budget_exhausted", "prompt_too_long", "api_error", "hook_stopped", "model_error", "future")) {
-            val row = failed.copy(terminalReason = terminal, outcome = "error_max_turns").stoppedTurn(AT)
-            assertEquals(terminal, ThreadItem.StoppedTurn(TURN, terminal, "", AT), row)
-        }
-    }
-
-    @Test
-    fun completedTerminalReason_fallsBackToTheOutcome() {
-        val cases =
-            listOf(
-                "error_max_turns" to "max_turns",
-                "error_max_budget_usd" to "budget_exhausted",
-                "future" to "future",
-                "" to "",
-                "success" to "",
-            )
-        for ((outcome, reason) in cases) {
-            val row = failed.copy(outcome = outcome, terminalReason = "completed").stoppedTurn(AT)
-            assertEquals(outcome, reason, row?.reason)
-        }
-    }
-
-    @Test
-    fun aNonSuccessOutcome_addsARowWithoutIsError() {
-        val row = LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", outcome = "error_max_turns").stoppedTurn(AT)
-
-        assertEquals("max_turns", row?.reason)
-    }
-
-    @Test
-    fun cancellation_cleanSuccess_andALegacyTurn_addNothing() {
-        assertNull(LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn").stoppedTurn(AT))
-        assertNull(LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", outcome = "success").stoppedTurn(AT))
-        assertNull(failed.copy(stopReason = "cancelled", outcome = "error_max_turns").stoppedTurn(AT))
-    }
-
-    @Test
-    fun earlyStopReasons_addNothingOnTheirOwn() {
-        for (stopReason in listOf("max_tokens", "max_turn_requests", "refusal")) {
-            assertNull(stopReason, LiveSessionEvent.TurnEnd(CONVERSATION, TURN, stopReason, outcome = "success").stoppedTurn(AT))
-        }
-    }
-
-    @Test
-    fun aCategory_readsAsAnApiError_andIsCarried() {
-        val row = LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", outcome = "error_during_execution", errorCategory = "overloaded")
-
-        assertEquals(ThreadItem.StoppedTurn(TURN, "api_error", "overloaded", AT), row.stoppedTurn(AT))
-    }
-
-    @Test
-    fun aCategoryAloneOnACleanTurn_addsNothing() {
-        assertNull(
-            LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", outcome = "success", errorCategory = "overloaded").stoppedTurn(AT),
-        )
-    }
-
-    @Test
-    fun anOutcomeThatSanitizesToEmpty_addsNothingWithoutIsError() {
-        assertNull(LiveSessionEvent.TurnEnd(CONVERSATION, TURN, "end_turn", outcome = "\u0000\u202E\n").stoppedTurn(AT))
-    }
-
-    @Test
-    fun hostileTokens_reachTheRowInert() {
-        val row = failed.copy(terminalReason = "<img>\nfuture\u0000", errorCategory = "\u202Ebad\u2028").stoppedTurn(AT)
-
-        assertEquals(ThreadItem.StoppedTurn(TURN, "<img>future", "bad", AT), row)
-    }
-
-    @Test
-    fun anOversizedTerminalReason_isAbsent() {
-        assertEquals("", failed.copy(terminalReason = "x".repeat(257)).stoppedTurn(AT)?.reason)
-    }
-
     @Test
     fun reportText_removesControlFormatAndSeparatorCharacters() {
         // Line breaks, NUL, DEL, ESC, a bidi override and isolate, the zero-width joiner, the two

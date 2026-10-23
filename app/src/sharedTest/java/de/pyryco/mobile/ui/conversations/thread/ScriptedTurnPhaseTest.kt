@@ -6,6 +6,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -40,6 +42,22 @@ class ScriptedTurnPhaseTest {
 
     @Test
     fun aTurnRunningInAnotherChat_showsAtOnceWhenThatChatOpens() {
+        // Both chats have an owning session before B's reading arrives; opening B sends no new phase.
+        harness.pushEnvelope(
+            Envelope(
+                1L,
+                "conversations",
+                "2026-05-31T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversations":[
+                        {"id":"chat-a","name":"Harness channel","agent":"claude","is_promoted":true,
+                         "cwd":"/p/chat-a","last_message_ts":"2026-05-31T00:00:00Z","last_used_at":"2026-05-31T00:00:00Z","current_session_id":"session"},
+                        {"id":"chat-b","name":"Chat B","agent":"claude","is_promoted":true,
+                         "cwd":"/p/chat-b","last_message_ts":"2026-05-31T00:00:00Z","last_used_at":"2026-05-31T00:00:00Z","current_session_id":"session"}
+                    ]}""",
+                ),
+            ),
+        )
         harness.pushTurnState("thinking", targetConversationId = CHAT_B)
         harness.pushTurnState("responding", targetConversationId = CHAT_B)
         composeRule.waitForIdle()

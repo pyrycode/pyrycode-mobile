@@ -6,11 +6,16 @@ import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -23,11 +28,13 @@ internal class BackgroundTaskStops(
     private val requests: RelayRequests,
     private val send: (Envelope) -> Boolean,
     private val negotiatedCapabilities: () -> Set<String>,
+    private val scope: CoroutineScope,
 ) {
     private val lock = Any()
     private var ended = false
     private var attempted = false
     private val pending = mutableMapOf<Long, Pair<String, String>>()
+    private val expiries = mutableMapOf<Long, Job>()
     private val refusals = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     val supported: Boolean
@@ -54,8 +61,21 @@ internal class BackgroundTaskStops(
                 return Result.failure(IllegalStateException("Background task stop unsupported"))
             }
             val target = conversationId to taskId
-            pending.entries.removeAll { it.value == target }
+            pending
+                .filterValues { it == target }
+                .keys
+                .toList()
+                .forEach(::retireRequest)
             pending[request.id] = target
+            // Stop is fire-and-forget. A successful distinct target must not stay until disconnect.
+            val expiry =
+                scope.launch(start = CoroutineStart.LAZY) {
+                    delay(30_000)
+                    retireRequest(request.id)
+                    RelayLog.d { "event=background_task_stop code=expired" }
+                }
+            expiries[request.id] = expiry
+            expiry.start()
         }
         val accepted =
             try {
@@ -98,23 +118,10 @@ internal class BackgroundTaskStops(
         if (error.code != "stop_background_task.refused") return
         synchronized(lock) {
             val target = pending.remove(inReplyTo) ?: return
+            expiries.remove(inReplyTo)?.cancel()
             refusals.tryEmit(target)
             RelayLog.d { "event=background_task_stop code=refused" }
         }
-    }
-
-    fun taskFinished(
-        conversationId: String,
-        taskId: String,
-    ) {
-        synchronized(lock) { pending.entries.removeAll { it.value == conversationId to taskId } }
-    }
-
-    fun rosterReported(
-        conversationId: String,
-        taskIds: Set<String>,
-    ) {
-        synchronized(lock) { pending.entries.removeAll { it.value.first == conversationId && it.value.second !in taskIds } }
     }
 
     fun end() {
@@ -122,11 +129,16 @@ internal class BackgroundTaskStops(
             if (ended) return
             ended = true
             pending.clear()
+            expiries.values.forEach { it.cancel() }
+            expiries.clear()
             if (attempted) RelayLog.d { "event=background_task_stop code=connection_ended" }
         }
     }
 
     private fun retireRequest(id: Long) {
-        synchronized(lock) { pending.remove(id) }
+        synchronized(lock) {
+            pending.remove(id)
+            expiries.remove(id)?.cancel()
+        }
     }
 }

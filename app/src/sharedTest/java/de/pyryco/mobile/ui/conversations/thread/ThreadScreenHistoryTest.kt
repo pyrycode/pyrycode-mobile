@@ -16,7 +16,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
@@ -39,7 +38,6 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.e2e.pullHistoryPage
 import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -56,245 +54,6 @@ import kotlin.math.roundToInt
 class ThreadScreenHistoryTest {
     @get:Rule
     val composeRule = createComposeRule()
-
-    @Test
-    fun unsignedMarkersTargetFirstCrossedGap() {
-        val items = rows(3)
-        val lower = Long.MAX_VALUE.toULong()
-        val upper = ULong.MAX_VALUE - 1u
-        val markers =
-            listOf(
-                ThreadHistoryMarker(beforeRow = items[1].historyKeys().first(), unsignedAnchor = lower),
-                ThreadHistoryMarker(beforeRow = items[2].historyKeys().first(), unsignedAnchor = upper),
-            )
-        var oldest = 0
-        val demands = mutableListOf<ULong>()
-        setScreen(
-            { threadState(items, ThreadHistoryTail.None).copy(historyMarkers = markers) },
-            onDemand = { oldest++ },
-            onUnsignedGap = { demands += it },
-        )
-        for (anchor in listOf(lower, upper)) composeRule.onNodeWithTag("history-gap:$anchor").assertIsDisplayed()
-        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
-        val marker = composeRule.onNodeWithTag("history-gap:$upper").fetchSemanticsNode().boundsInRoot
-        assertTrue(
-            composeRule
-                .onNodeWithText("Row 2.")
-                .fetchSemanticsNode()
-                .boundsInRoot.bottom <= marker.top,
-        )
-        assertTrue(
-            marker.bottom <=
-                composeRule
-                    .onNodeWithText("Row 3.")
-                    .fetchSemanticsNode()
-                    .boundsInRoot.top,
-        )
-        pullTowardOlder()
-        composeRule.runOnIdle {
-            assertEquals(listOf(upper), demands)
-            assertEquals(0, oldest)
-        }
-    }
-
-    @Test
-    fun unsignedGapSettlementKeepsSelectedTouch() {
-        val items = rows(3)
-        val lower = Long.MAX_VALUE.toULong() + 1u
-        val upper = ULong.MAX_VALUE - 1u
-        val remaining = ThreadHistoryMarker(beforeRow = items[1].historyKeys().first(), unsignedAnchor = lower)
-        var state by mutableStateOf(
-            threadState(items, ThreadHistoryTail.None).copy(
-                historyMarkers =
-                    listOf(
-                        remaining,
-                        ThreadHistoryMarker(beforeRow = items[2].historyKeys().first(), unsignedAnchor = upper),
-                    ),
-            ),
-        )
-        var oldest = 0
-        val demands = mutableListOf<ULong>()
-        setScreen({ state }, onDemand = { oldest++ }, onUnsignedGap = {
-            demands += it
-            state = state.copy(historyTail = ThreadHistoryTail.Loading)
-        })
-        val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
-        region.performTouchInput {
-            down(Offset(center.x, height * 0.2f))
-            moveBy(Offset(0f, 40f), delayMillis = 400)
-        }
-        composeRule.runOnIdle {
-            assertEquals(listOf(upper), demands)
-            state = state.copy(historyTail = ThreadHistoryTail.None, historyMarkers = listOf(remaining))
-        }
-        composeRule.onNodeWithTag("history-gap:$upper").assertIsNotDisplayed()
-        region.performTouchInput {
-            moveBy(Offset(0f, 40f), delayMillis = 400)
-            advanceEventTime(200)
-            up()
-        }
-        composeRule.runOnIdle {
-            assertEquals(listOf(upper), demands)
-            assertEquals(0, oldest)
-        }
-        pullTowardOlder(fraction = 0.1f)
-        composeRule.runOnIdle {
-            assertEquals(listOf(upper, lower), demands)
-            assertEquals(0, oldest)
-        }
-    }
-
-    @Test
-    fun markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap() {
-        val items = rows(3)
-        val markers = listOf(ThreadHistoryMarker(1, items[1].historyKeys().first()), ThreadHistoryMarker(2, items[2].historyKeys().first()))
-        var oldest = 0
-        val demands = mutableListOf<Long>()
-        setScreen({ threadState(items, ThreadHistoryTail.None).copy(historyMarkers = markers) }, onDemand = { oldest++ }, onGap = {
-            demands +=
-                it
-        })
-        composeRule.onNodeWithTag("history-gap:2").assertIsDisplayed()
-        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
-        val marker = composeRule.onNodeWithTag("history-gap:2").fetchSemanticsNode().boundsInRoot
-        val older = composeRule.onNodeWithText("Row 2.").fetchSemanticsNode().boundsInRoot
-        val newer = composeRule.onNodeWithText("Row 3.").fetchSemanticsNode().boundsInRoot
-        assertTrue(older.bottom <= marker.top)
-        assertTrue(marker.bottom <= newer.top)
-        pullTowardOlder()
-        composeRule.runOnIdle {
-            assertEquals(listOf(2L), demands)
-            assertEquals(0, oldest)
-        }
-    }
-
-    @Test
-    fun gapPageRemovingItsMarkerKeepsTheHeldDragOnTheSelectedWalk() {
-        assertGapDragStaysSelected(removeMarker = true)
-    }
-
-    @Test
-    fun gapPageSettlingThenDraggingPastItsMarkerKeepsTheSelectedWalk() {
-        assertGapDragStaysSelected(removeMarker = false)
-    }
-
-    private fun assertGapDragStaysSelected(removeMarker: Boolean) {
-        val items = rows(30)
-        val marker = ThreadHistoryMarker(20, items[19].historyKeys().first())
-        var state by mutableStateOf(threadState(items, ThreadHistoryTail.None).copy(historyMarkers = listOf(marker)))
-        var oldest = 0
-        val gaps = mutableListOf<Long>()
-        setScreen({ state }, onDemand = {
-            oldest++
-            state = state.copy(historyTail = ThreadHistoryTail.Loading)
-        }, onGap = {
-            gaps += it
-            state = state.copy(historyTail = ThreadHistoryTail.Loading)
-        })
-        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(10)
-        composeRule.onNodeWithTag("history-gap:20").assertIsDisplayed()
-        val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
-        region.performTouchInput {
-            down(Offset(center.x, height * 0.2f))
-            moveBy(Offset(0f, 40f), delayMillis = 400)
-        }
-        composeRule.runOnIdle {
-            assertEquals(listOf(20L), gaps)
-            assertEquals(0, oldest)
-            // A controlled response frees the slot and may close the selected gap.
-            state = state.copy(historyTail = ThreadHistoryTail.None, historyMarkers = if (removeMarker) emptyList() else listOf(marker))
-        }
-        composeRule.runOnIdle { assertEquals(0, oldest) }
-        region.performTouchInput {
-            moveBy(Offset(0f, height * 0.4f), delayMillis = 600)
-        }
-        composeRule.onNodeWithTag("history-gap:20").assertIsNotDisplayed()
-        composeRule.runOnIdle {
-            assertEquals(listOf(20L), gaps)
-            assertEquals("A settled gap pull must not switch to the backwards walk", 0, oldest)
-        }
-        region.performTouchInput {
-            advanceEventTime(200)
-            up()
-        }
-        // Taller accessible message rows put this position outside the oldest-end pull window.
-        // Enter that window without a touch, then prove a fresh touch can select the backwards walk.
-        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(items.lastIndex - 2)
-        composeRule.onNodeWithTag("history-gap:20").assertIsNotDisplayed()
-        composeRule.runOnIdle { assertEquals(0, oldest) }
-        pullTowardOlder(fraction = 0.1f)
-        composeRule.runOnIdle { assertEquals(1, oldest) }
-    }
-
-    @Test
-    fun gapPageRemovingItsMarkerKeepsTheContinuingFlingOnTheSelectedWalk() {
-        assertGapFlingStaysSelected(removeMarker = true)
-    }
-
-    @Test
-    fun gapPageSettlingThenFlingingPastItsMarkerKeepsTheSelectedWalk() {
-        assertGapFlingStaysSelected(removeMarker = false)
-    }
-
-    private fun assertGapFlingStaysSelected(removeMarker: Boolean) {
-        val items = rows(30)
-        val marker = ThreadHistoryMarker(20, items[19].historyKeys().first())
-        var state by mutableStateOf(threadState(items, ThreadHistoryTail.None).copy(historyMarkers = listOf(marker)))
-        var oldest = 0
-        val gaps = mutableListOf<Long>()
-        setScreen({ state }, onDemand = {
-            oldest++
-            state = state.copy(historyTail = ThreadHistoryTail.Loading)
-        }, onGap = {
-            gaps += it
-            state = state.copy(historyTail = ThreadHistoryTail.Loading)
-        })
-        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(10)
-        composeRule.onNodeWithTag("history-gap:20").assertIsDisplayed()
-        val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
-        composeRule.mainClock.autoAdvance = false
-        // Keep the fling's dp/s speed equal on Robolectric and the managed device.
-        val flingVelocity = 5000f * composeRule.density.density
-        region.performTouchInput {
-            swipeWithVelocity(
-                start = Offset(center.x, height * 0.2f),
-                end = Offset(center.x, height * 0.4f),
-                endVelocity = flingVelocity,
-            )
-        }
-        composeRule.runOnIdle {
-            assertEquals(listOf(20L), gaps)
-            assertEquals(0, oldest)
-            state = state.copy(historyTail = ThreadHistoryTail.None, historyMarkers = if (removeMarker) emptyList() else listOf(marker))
-        }
-        composeRule.mainClock.advanceTimeByFrame()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Row 1.").assertIsNotDisplayed()
-        composeRule.mainClock.advanceTimeBy(1000)
-        composeRule.mainClock.autoAdvance = true
-        composeRule.onNodeWithTag("history-gap:20").assertIsNotDisplayed()
-        composeRule.onNodeWithText("Row 1.").assertIsDisplayed()
-        composeRule.runOnIdle {
-            assertEquals(listOf(20L), gaps)
-            assertEquals("A gap fling must not switch to the backwards walk", 0, oldest)
-        }
-        pullTowardOlder(fraction = 0.1f)
-        composeRule.runOnIdle { assertEquals(1, oldest) }
-    }
-
-    @Test
-    fun aNonRenderingNewerSpanHasAPullableMarker_withoutAskingOnArrival() {
-        val demands = mutableListOf<Long>()
-        setScreen({
-            threadState(rows(2), ThreadHistoryTail.None).copy(historyMarkers = listOf(ThreadHistoryMarker(2, "")))
-        }, onDemand = {}, onGap = {
-            demands += it
-        })
-        composeRule.onNodeWithTag("history-gap:2").assertIsDisplayed()
-        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
-        pullTowardOlder()
-        composeRule.runOnIdle { assertEquals(listOf(2L), demands) }
-    }
 
     @Test
     fun loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight() {
@@ -896,35 +655,18 @@ class ThreadScreenHistoryTest {
         state: () -> ThreadUiState,
         onDemand: () -> Unit,
         onRetryOlder: () -> Unit = {},
-        onGap: (Long) -> Unit = {},
-        onUnsignedGap: ((ULong) -> Unit)? = null,
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                if (onUnsignedGap == null) {
-                    ThreadScreen(
-                        state = state(),
-                        onBack = {},
-                        onSendMessage = {},
-                        connectionState = ConnectionState.Connected,
-                        onRetry = {},
-                        onDemandOlderHistory = onDemand,
-                        onDemandHistoryGap = onGap,
-                        onRetryOlderHistory = onRetryOlder,
-                    )
-                } else {
-                    ThreadScreen(
-                        state = state(),
-                        onBack = {},
-                        onSendMessage = {},
-                        connectionState = ConnectionState.Connected,
-                        onRetry = {},
-                        onDemandOlderHistory = onDemand,
-                        onDemandHistoryGap = onGap,
-                        onDemandUnsignedHistoryGap = onUnsignedGap,
-                        onRetryOlderHistory = onRetryOlder,
-                    )
-                }
+                ThreadScreen(
+                    state = state(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onDemandOlderHistory = onDemand,
+                    onRetryOlderHistory = onRetryOlder,
+                )
             }
         }
     }

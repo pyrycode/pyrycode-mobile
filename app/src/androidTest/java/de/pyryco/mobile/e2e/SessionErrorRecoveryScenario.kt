@@ -56,6 +56,7 @@ internal class SessionErrorRecoveryScenario(
     private var phase = "fixture_start"
     private var fixtureReady = false
     private var diagnosticServerId: String? = null
+    private var diagnosticPeer: Pair<String, SecondClientPeer>? = null
 
     fun run() {
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
@@ -76,6 +77,7 @@ internal class SessionErrorRecoveryScenario(
             phase = "fixture_start"
             fixtureReady = false
             diagnosticServerId = null
+            diagnosticPeer = null
             var diagnosed: AssertionError? = null
             try {
                 sessionErrorCleanup(
@@ -104,6 +106,16 @@ internal class SessionErrorRecoveryScenario(
             } catch (failure: Throwable) {
                 if (failure === diagnosed) throw failure
                 throw sessionErrorDiagnosticFailure(arm, phase, fixtureReady, failure, ::diagnosticSnapshot)
+            } finally {
+                val observed = diagnosticPeer
+                diagnosticPeer = null
+                if (observed != null) {
+                    runCatching {
+                        sessionErrorPeerTrace(observed.second.recorded(observed.first)).forEach {
+                            Log.i("SessionErrorRecovery", "arm=$arm observer=legacy $it")
+                        }
+                    }
+                }
             }
         }
         // Regression: this Application/Koin graph is reused by subsequent instrumentation methods.
@@ -138,7 +150,7 @@ internal class SessionErrorRecoveryScenario(
                 relayUrl = fixture.value("relayUrl"),
                 serverStaticPublicKey = fixture.value("serverStaticPublicKey"),
             ),
-        ).use { peer ->
+        ).also { diagnosticPeer = conversation to it }.use { peer ->
             try {
                 stage(arm, "observer_open")
                 runBlocking { peer.open(30_000) }

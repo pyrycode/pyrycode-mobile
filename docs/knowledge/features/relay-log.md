@@ -216,21 +216,21 @@ the only build where these bugs show up, and `RelayLog`'s `BuildConfig.DEBUG` ga
 second, separate channel instead, and `RelayLog`'s gate is untouched. Because this project runs unit tests
 only in the debug variant (no `testReleaseUnitTest` task) and `BuildConfig.DEBUG` is a compile-time constant
 Kotlin inlines away, the release proof is a source check, not a release-build test run: nothing in
-`MessageTrail.kt`, `MessageCommands.kt`, `ThreadProjection.kt`, `RelayRequests.kt` or the trail's `AppModule`
+`MessageTrail.kt`, `MessageCommands.kt`, `RelayRequests.kt` or the trail's `AppModule`
 binding reads or names `BuildConfig`, and a test asserts the trail still writes with `RelayLog.enabled` held
 at `false`.
 
 It is safe in release the same way `RelayLog`'s redaction is safe — by taking no free-form text at all,
 rather than by gating emission:
 
-- **States:** `sent` (the `send_message` frame was handed to the open connection; carries the connection
-  token), `acknowledged` (the daemon's `ack` arrived), `queued` (a `queue_state` snapshot carried the
-  `message_id`), `delivered` (the message left the daemon's queue, or came back as a pushed, delivered
-  `message`), `failed`, `dropped`. A state already reached for a `message_id` is never logged twice.
-- **Failure reasons:** `not_connected` (not sent at all), `daemon_error` with `code=<the daemon's error
-  code>` (never its message), `torn_down` (the connection tore down before the reply, e.g. `failAllPending`'s
-  `PENDING_REQUEST_TORN_DOWN`). `dropped` always carries `reason=user_dropped` (a confirmed
-  `dropQueuedMessage`, which is a user action, not a failure).
+- **Current observations:** `sent`, `acknowledged` and send failures remain diagnostic
+  observations. An ack proves receipt only. Raw queue/message pushes no longer emit
+  queued/delivered/dropped settlement after #2367; the minted-id ledger is removed.
+  Canonical item state owns content acceptance. Diagnostic methods or historical lines
+  cannot substitute for that state.
+- **Failure reasons:** `not_connected`, static daemon error codes and `torn_down`
+  distinguish send/reply failures without recording daemon prose. A queued-drop
+  command retains its actual supplied target; sending it proves no content outcome.
 - **Line format:** `<ISO-8601 instant> id=<uuid> state=<state>[ conn=<token>][ reason=<reason>][
   code=<code>]`.
 - **Never logs:** message text, attachment names, the relay host, the pairing token, a full `conn_id`, or
@@ -263,17 +263,10 @@ owned writer coroutine, so a slow or failing disk can delay or drop a line but n
 write (missing external storage, a directory in the way, a full disk) loses that line and nothing else;
 `sendMessage`'s own exception contract is unchanged by the trail.
 
-**Known gap: the trail is blind across a reconnect.** `queued`, `delivered` and `dropped` are gated on
-`ThreadProjection.mintedMessageIds`, a per-connection, in-memory ledger (one `ThreadProjection` per
-connection, since each connection gets its own `RemoteConversationRepository`). If a message is sent on
-connection A and A drops before the daemon's reply, then on connection B a `queue_state` naming that
-message, its drain, or a pushed `message` delivering it records nothing — the id isn't in B's ledger. The
-trail's last line for that message then stays `queued` or `failed reason=torn_down` even though the phone
-later saw it delivered, which is exactly the reconnect case this trail exists to diagnose. Read a trail that
-ends on `queued` or `torn_down` with this gap in mind rather than as proof the message never arrived; cross-
-check the daemon's own journal. Fixing it would mean having the process-wide `MessageTrail` itself track
-reached states across connections rather than relying on a connection-scoped ledger to gate `queued` /
-`delivered` — left as a follow-up, not done in #1564.
+Historical queued/delivered/dropped lines retain their original meaning. Their old
+per-connection minted-ledger gaps are not current runtime settlement instructions.
+A missing diagnostic line cannot prove that a message never arrived; inspect actual
+admitted canonical state and the daemon journal. Logging remains best-effort.
 
 See [ADR 0008](../decisions/0008-separate-release-kept-message-trail.md) for why this is a second facility
 beside `RelayLog` rather than an adoption of it.

@@ -15,6 +15,31 @@ action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
 
+For reconnect assertions, synchronize rendered text before projecting fresh evidence
+from the tested host's current supported, authenticated source. Compose synchronization
+can publish a newer snapshot of the same document; snapshot reference identity would
+misclassify that progress as source retirement. Check connection, host, conversation,
+epoch, generation and document incarnation against current state, rejecting reset or
+repair state. Then run completion, identity, order and echo assertions on the fresh
+facts without another Compose synchronization. Correct captured text cannot excuse a
+duplicate echo in those newer facts. The paired
+`replayRefreshAcceptsSameDocumentAdvanceDuringRender` and
+`replayRefreshRejectsNewDuplicateEchoDespiteCorrectOldFactsAndRender` screen probes
+exercise both sides of this boundary (#2486).
+
+When recovery intentionally replaces the authenticated connection, observe the tested
+host's negotiated route and reconcile the held reply's durable identity on that current
+source. Keep ordinary `ThreadEvidenceOwner.matches` strict. In
+`settledQueuedReplyAfterRecovery`, main-family settlement alone cannot prove that the
+held reply is the only assistant in its session/turn: an Agent-owned suffix belongs to
+another rendered family and escapes that check. Compare every assistant in the captured
+session/turn with the reconciled reply. A distinct later queued turn remains valid;
+counting every assistant in the conversation would reject it. The initial memory
+document's empty incarnation is valid only while both captured and current generations
+are zero and the epoch still matches. The recovery controls retain these success cases
+alongside retired-source, replaced-document, duplicate and changed-identity negatives.
+See the runbook's [replay and queued recovery contract and counted evidence](../../e2e-interactive-stream.md#replay-and-queued-recovery-evidence-2486).
+
 For history proofs requiring exactly one request, control the pointer movement as
 well as the response. A `swipeDown` contains repeated movements and can leave a
 fling running after a fast page completes; either can legitimately demand another
@@ -77,50 +102,15 @@ A chrome pointer node can exclude underlying siblings without consuming child
 movement; gradual attachment swipes and composer selection drags must cross touch
 slop successfully. A tap-only test misses cancellation of those recognizers.
 
-A valid earlier geometry sample also does not establish a completed reveal while
-content is growing. In #1973, following the newest end let later owned Agent prose
-growth move an earlier paragraph behind the header between measurement and the
-result check. An Agent progress frame does not prove that the fixture's HTTP hold
-has been reached. `questionAnswerTarget` keeps the owned matcher, takes at most
-three fresh measurements/corrections, and rechecks the target and both chrome
-edges after each displacement, including a zero displacement. It returns only
-when the physical center clears the measured header and composer; otherwise the
-chrome guard still fails. This adds no tap, sleep or timeout. Its defaulted evidence
-sink records only geometry and static stages, without content or identifiers.
-
-Peer `turn_end` is not a phone render fence (#1994). Before the first held-Agent
-marker reveal, wait for the phone repository's finalized main newer reply and Idle
-phase using the existing timeout. Later layout can still dispose the revealed row.
-Supply `agent-start:<agentId>` as `questionAnswerTarget`'s optional `lazyKey`:
-a zero-node sample must retain that key in `IndexForKey`, then reveal the same key
-and take fresh geometry within the existing three-measurement budget. Read node
-count and bounds together from one synchronized semantics sample. A removed key
-or ambiguous selector fails; neither is a reason to retry a physical click.
-The live matcher also includes the held task's bounded, inert launch description,
-which must not be logged. Default helper callers retain their existing behavior.
-
-`BackgroundAgentBlocksScreenTest` supplies three independent real-screen probes:
-`lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent` grows the newer
-reply after the first reveal and establishes a running task, a projected marker
-and zero composed nodes before recovery;
-`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` uses two equally labelled
-markers and proves one chrome-clear pointer tap reaches only the held Agent;
-`removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` rejects projection removal.
-The recovery probe fails before repair, before any tap, and passes afterward.
-The historical missing-node trace establishes the first failed tap but contains
-no projection/composition samples, so it cannot identify that occurrence's exact
-update. See [counted evidence](../../e2e-interactive-stream.md#held-agent-marker-reveal-1994).
-
-Use one center pointer tap per open/close transition and prove the resulting state
-independently of lazy disposal. Reveal the owned prose before checking that it
-appears exactly once, then require its lazy-list key absent through `IndexForKey`
-after closing. Semantics absence alone can mean that an open paragraph went off
-screen. `BackgroundAgentProseScreenTest.lateOwnedProseGrowthIsRemeasuredBeforeClosingItsRun`
-injects growth after the first sample on the real screen with a scoped 320×480dp
-fixture and positively asserts that growth covers the paragraph.
-`expandedOwnedRunBehindHeaderIsCorrectedBeforeItsCloseTap` separately covers the
-owned expanded control behind the header and its guarded physical close. See
-[the Agent proof and counted evidence](../../e2e-interactive-stream.md#verification-status).
+A settled repository reply and an earlier geometry sample do not fence later layout.
+Proof-entry readiness and the earlier finished-marker reveal are separate boundaries.
+For generation-scoped markers, resolve the same raw Agent from current admitted evidence
+before each key read, then validate its index and dispatch the scroll in one UI-thread
+operation. Retain the absolute readiness deadline, three geometry measurements, owned
+finished-label assertion and one physical tap per navigation transition.
+See [Agent reveal evidence](development-verification-agent-reveal-evidence.md) for
+controlled growth, disposal, reset and generation-replacement probes, and
+[counted recurrence acceptance](thread-screen-agent-navigation-evidence.md#finished-marker-reveal-recurrence-2373).
 
 The [thread chrome evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
 uses full `pixel8Api35`, real bars and hardware framebuffer captures for progressive
@@ -653,6 +643,28 @@ paint, not full-screen geometry at the device's native density. See the
 [list attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878).
 
 ## Probe the evidence itself
+
+Supported-flow fixtures must supply the ownership that makes their negatives meaningful
+(#2366). Admit both conversations and current producing sessions before testing foreign
+session errors, reset or turn state; otherwise rejecting an unknown producer can conceal an
+isolation bug. A valid foreign suggestion must stay hidden here and appear from held state
+when its own conversation opens. Replacement settings and suggestions require fresh current
+producer delivery; old readings cannot become current through a session switch. Preserve
+explicit producer tags and retired-session negatives.
+
+The authoritative harness route probe requires rendered text, an actual catch-up request,
+completed coverage and no legacy content request. Its revision probe requires one newest
+row after duplicate and older facts; local-send acceptance checks device plus message identity.
+The destination-only parser-gap tap must fire on a supplied notice without creating another
+subscription or query. Passive replacement checks reject retired evidence even if connection
+identity is reused. See the [checked 18-client / 91-method inventory](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366)
+and [recorded observation contract](../../recorded-tests.md#passive-thread-assertion-evidence-2317).
+
+Keep the three missing/reordered/duplicate delta-sequence negatives as literal presentation
+inputs until runtime removal #2367. Authoritative items carry no client-reduced delta metadata;
+inventing it would let those probes test a path the screen does not use. Their literals never
+enter the repository, ViewModel or rendered screen. Positive reply order and duplicate-row
+negatives instead use admitted `ThreadEvidence` facts and scoped presentation identities.
 
 An injection or sanitizer test must forge the exact line shape its reader matches.
 For the unrecognized-row sentinel, the hostile value must include the report's row

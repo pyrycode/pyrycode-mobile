@@ -128,6 +128,58 @@ class AgentReplyEvidenceTest {
         assertNull(evidence(split).settledMainReply(evidence(split).owner, "main"))
     }
 
+    @Test fun heldParagraphProvesOwnershipWithoutSettling() {
+        for ((status, active) in listOf("running" to true, "interrupted" to false, "done" to true)) {
+            val reading =
+                evidence(agentReplySnapshot(child = authoritativeItem(2, parent = 1, active = active, status = status, turn = "child")))
+            val held = requireNotNull(reading.heldAgentReplyEvidence(reading.owner, "raw-task", "raw-agent", "child", "main"))
+            assertEquals(2L, held.heldReply.fact?.id)
+            assertEquals(held.agent.block, held.heldReply.agentId)
+            assertNull("owned active prose must not qualify as settled", reading.reply())
+        }
+    }
+
+    @Test fun heldParagraphRejectsRetiredOwnersAndAmbiguousSessions() {
+        val reading = evidence(agentReplySnapshot())
+        val owners =
+            listOf(
+                reading.owner.copy(host = "other"),
+                reading.owner.copy(conversation = "other"),
+                reading.owner.copy(connection = Any()),
+                reading.owner.copy(epoch = "other"),
+                reading.owner.copy(generation = requireNotNull(reading.owner.generation) + 1),
+            )
+        for (owner in owners) assertNull(reading.heldAgentReplyEvidence(owner, "raw-task", "raw-agent", "child", "main"))
+        val split =
+            evidence(
+                agentReplySnapshot().let {
+                    it.copy(
+                        items =
+                            it.items + authoritativeItem(6, parent = 1, session = "other", turn = "child"),
+                    )
+                },
+            )
+        assertNull(split.heldAgentReplyEvidence(split.owner, "raw-task", "raw-agent", "child", "main"))
+        val unadmitted = evidence(agentReplySnapshot().copy(repairNeeded = true))
+        assertNull(unadmitted.heldAgentReplyEvidence(unadmitted.owner, "raw-task", "raw-agent", "child", "main"))
+    }
+
+    @Test fun heldParagraphNeedsItsOwnParentToolsAndSettledMainReply() {
+        val baseline = agentReplySnapshot()
+        val invalid =
+            listOf(
+                agentReplySnapshot(child = authoritativeItem(2, parent = 99, turn = "child")),
+                agentReplySnapshot(main = authoritativeItem(5, active = true, turn = "main")),
+                agentReplySnapshot(main = authoritativeItem(5, status = "interrupted", turn = "main")),
+                baseline.copy(items = baseline.items.filter { it.kind != "tool_call" }),
+                agentReplySnapshot(child = authoritativeItem(2, parent = 1, content = """{"text":" "}""", turn = "child")),
+            )
+        for (snapshot in invalid) {
+            val reading = evidence(snapshot)
+            assertNull(reading.heldAgentReplyEvidence(reading.owner, "raw-task", "raw-agent", "child", "main"))
+        }
+    }
+
     @Test fun stopMainReplySettlesOnItsOwnTurnOnly() {
         val task =
             authoritativeItem(

@@ -109,14 +109,13 @@ and it must never infer daemon support from cached or empty data. `ThreadEvidenc
 authoritative factory exists and is exercised by fixtures now, ahead of that activation,
 precisely so the later seam change carries no risk of its own.
 
-**Where this plugged in.** `awaitFinishedSelectionReply` and
-`assertReplySuggestionLongPress` (`ReplySuggestionE2EAssertions.kt`) now observe through
-`harnessThreadEvidence(repository).observe(conversationId)` instead of calling
-`observeMessages` directly, but kept their existing signatures and callers unchanged.
-`awaitFinishedSelectionReply` still means "a loaded main reply appeared"; the suggestion
-helper's echo check still means "exactly one delivered copy of this exact text exists," and
-its revisioned-clear check is untouched. `holdsSettledAssistantReply` itself was not
-changed — legacy settlement still delegates to it unmodified.
+**Consumer reads.** `awaitFinishedSelectionReply` still means "a loaded main reply
+appeared." `assertReplySuggestionLongPress` now takes the owning host's current
+repository holder (#2436). `ReplySuggestionReads` selects conversation/session and
+offer together inside `firstOnLive`, then follows that holder for exactly one
+verbatim delivered echo and a newer session-scoped clear. Capturing one repository
+can strand the offer wait after reconnect while the UI follows its replacement.
+See [replacement regression and counted evidence](../../e2e-interactive-stream.md#reply-suggestion-live-connection-observation-2436).
 
 **Lesson for later migrations.** When moving a stream-suite consumer off raw
 `observeMessages` or a raw `AuthoritativeThreadSnapshot` read, reach for `ThreadEvidence`
@@ -311,6 +310,17 @@ a child beneath it, as in `FaultEvidenceTest.test_destination_symlinks_are_rejec
 Check permission fixtures under both `077` and `022`; retain nonzero executed
 counts for focused checks and complete scripts discovery.
 
+Scenario report enumeration does not establish launch order (#2383).
+`AgentScenarioReportsTest.test_two_independent_outcomes_keep_the_first_failure`
+exercises sorted and reverse-sorted `Path.rglob` results. Assert the exact multiset
+of method names before building a map, which alone hides duplicates. Check each
+outcome by identity and launch order separately; the retained failure must survive,
+and restart must have no failure, error or skip. Sorting cannot prove completeness.
+For stream and background-Agent reports (#2455, #2481), retain each execution's XML before filename reuse and
+restore collected evidence even on interruption. [Selected-device ownership and
+counted regression evidence](development-verification-report-ownership.md)
+explain why pre-launch cleanup replaces mtime filtering.
+
 `scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
 own output before it lands on `main`. That stage writes `docs/knowledge/features/`
 *after* the verifier gate and after merge, so no Gradle task — including
@@ -497,6 +507,88 @@ replays the reviewed and fresh recordings and compares their request contracts.
 Real FCM delivery, encrypted transport and timing obligations keep their live checks.
 See [recorded client tests](../../recorded-tests.md#complete-native-suite) for commands,
 recording review rules and the limits of replay evidence.
+
+### Scenario cleanup before activity teardown
+
+Permission isolation and operator bypass remove their host during scenario cleanup,
+before the activity fence. Rendered witness text and peer turn end do not prove
+final phone catch-up completion. In #2484, host removal reached
+`RelayConnectionRegistry.reconcile` with request 82/checkpoint 33 pending; the
+step-39 close mismatch was primary, and test-end rethrew it.
+
+Keep phone producers alive: close the peer, call
+`RecordedSuiteNative.beforeHostLinkClose(serverId)`, then remove the host.
+`withOperatorBypassCleanup` delegates this order to `withPermissionIsolationCleanup`.
+The replay fence retains `SuiteConnections.beforeClose`'s 30-second bound and waits
+for required requests, delivery and downstream consumption. Capture and ordinary
+execution use a no-op fence. Ownership, payloads and complete tape consumption stay
+strict. Attempt every cleanup action; preserve the scenario throwable or first
+cleanup failure, suppressing later failures without self-suppression. A fence
+failure still removes the host and fails; it cannot repair an earlier dialog failure.
+
+[Permission-isolation evidence](../../recorded-tests.md#counted-macos-cleanup-evidence-2026-10-21)
+retains #2349's original failures and accepted comparisons.
+[Operator-bypass evidence](../../recorded-tests.md#operator-bypass-host-removal-2484)
+retains the controlled 2/2 failures before repair, 2/2 passes afterward, focused
+native 1/1 pass and the target's pass in the configured UI gate (333 executed,
+332 passed, 1 failed, 1 skipped). Verifier PASS accepted the unrelated #2368
+same-tree rerun; focused passes alone do not prove full-gate acceptance. Both
+repairs were verified on macOS; Linux was outside scope.
+
+### Graph-restart replay evidence (#2347)
+
+Explicit graph restart needs a [current-phone readiness fence](../../recorded-tests.md#explicit-graph-restart-readiness-2347)
+before Activity destruction. Final teardown can include replacement generations;
+waiting for those during restart would prevent relaunch. Peer completion alone
+does not certify phone catch-up. In the original macOS sweep at
+`77b5717d6d3a1dba9f1a92a251162e7f9b3770e2` (1815 executed, 1810 passed,
+5 failed, exit 1), retrieval first rejected step 16: generation 0 closed during
+`restartApp` → `rebuildGraph` → registry disposal with its version-20 catch-up
+still required. Later reconnect/cleanup timeouts propagated that mismatch. This
+was a replay lifecycle defect before the retrieval cut, separate from #2219.
+Unchanged-main focused replay passed 1/1; that alone proved no suite independence.
+
+Both unfenced controls retained 26 executed, 23 passed, 3 failed, 0 skipped,
+exit 1, including an actual premature close. Repaired connections passed 26/26,
+strict tape 44/44 and supervisor 38/38, each failed/skipped 0, exit 0. All three
+named `phoneRestart` regressions executed and passed in the later JVM gate.
+
+The accepted verifier run `96e226dbfd57508fb601ca933ec7767f8327b4e2862b994afe3945679120c05a`
+reviewed `7f5367895698866352ef7ea10ca9b26dd48595ed` on macOS arm64/API 33,
+after merge `8a8b2c138` integrated #2349. Retained results are:
+
+| Check | Executed | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Focused native retrieval | 1 | 1 | 0 | 0 | 0 |
+| JVM/build gate | 6378 | 6378 | 0 | 0 | 0 |
+| Configured UI gate | 335 | 334 | 1 | 1 | 1 |
+| Same-tree model rerun | 1 | 1 | 0 | 0 | 0 |
+| Configured scripted-all gate | 21 | 20 | 1 | 1 | 1 |
+| Same-tree session-error rerun | 1 | 1 | 0 | 0 | 0 |
+
+Skipped cases are additional to executed counts. The configured commands were
+`python3 scripts/jvm-test-gate.py --with-build-checks` and
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py` with `ui`
+and `scripted-all`. Focused native replay used `ui --tests` with
+`de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`.
+That exact method passed focused (4.793 seconds) and in the complete UI gate
+(3.979 seconds), once each without failure or skip. Permission and both other
+restart consumers also passed the UI gate. The UI model failure is tracked by
+[#2368](https://github.com/pyrycode/pyrycode-mobile/issues/2368); the scripted
+session-error failure by [#2353](https://github.com/pyrycode/pyrycode-mobile/issues/2353).
+Verifier PASS accepted the dispatcher's same-tree reruns while retaining both
+original failures. UI rename capture and scripted durable-gap remained skipped,
+never counted as passed or used for retrieval acceptance.
+
+Raw baseline XML, phone diagnostics and original sweep logs were retained under
+`$AGENTS_REPO_PATH/logs/evidence/2347/builder-20261021-restart/`; integrated
+focused evidence under `rework-20261021-permission-integration-7f5367895/`
+beside it. The accepted run's downloadable bundle holds
+`handoff/verifier-2347.md`, counted XML in `logs/verifier-gate__2347_5.log` and
+`_6.log`, and the two timestamped rerun logs. These identify retention locations
+at review time; the counts above survive pruning. Complete configured acceptance
+is resolved by this newer verdict; a later main sweep remains dispatcher-owned.
+Linux was outside scope. See [the preserved attachment assertions](attachment-retrieval.md#interrupted-retrieval-restart-replay-2347).
 
 ### Preference ownership across ordinary tests and replay
 

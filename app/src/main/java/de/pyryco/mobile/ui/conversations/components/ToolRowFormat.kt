@@ -67,8 +67,8 @@ internal fun toolHeadline(
     input: String,
 ): ToolHeadline {
     if (toolName == BASH_TOOL_NAME) {
-        val shellField = firstNonEmpty(inputFields, BASH_SUBJECT_FIELDS)
-        if (shellField != null) {
+        val shellField = toolSubjectField(toolName, inputFields::get)
+        if (shellField != null && shellField.first in BASH_SUBJECT_FIELDS) {
             val (key, value) = shellField
             return if (key == BASH_DESCRIPTION_FIELD) ToolHeadline.Described(value) else ToolHeadline.Simple(value, "")
         }
@@ -89,10 +89,7 @@ internal fun toolRowSubject(
     input: String,
 ): String {
     if (inputFields.isEmpty()) return ""
-    val picked =
-        (if (toolName == BASH_TOOL_NAME) firstNonEmpty(inputFields, BASH_SUBJECT_FIELDS) else null)
-            ?: firstNonEmpty(inputFields, TOOL_SUBJECT_FIELDS)
-            ?: return input
+    val picked = toolSubjectField(toolName, inputFields::get) ?: return input
     val (key, value) = picked
     return if (key in TOOL_PATH_FIELDS) shortenToolPath(value) else value
 }
@@ -107,10 +104,15 @@ internal fun shortenToolPath(path: String): String {
     return ".../" + segments.takeLast(KEPT_PATH_SEGMENTS).joinToString("/")
 }
 
-private fun firstNonEmpty(
-    inputFields: Map<String, String>,
-    fields: List<String>,
-): Pair<String, String>? =
-    fields.firstNotNullOfOrNull { key ->
-        inputFields[key]?.takeIf { it.isNotEmpty() }?.let { value -> key to value }
-    }
+/** Probe only headline fields, so deferred callers need not adapt an entire input object. */
+internal fun toolSubjectField(
+    toolName: String,
+    field: (String) -> String?,
+): Pair<String, String>? {
+    fun firstNonEmpty(fields: List<String>) =
+        fields.firstNotNullOfOrNull { key ->
+            field(key)?.takeIf { it.isNotEmpty() }?.let { value -> key to value }
+        }
+    return (if (toolName == BASH_TOOL_NAME) firstNonEmpty(BASH_SUBJECT_FIELDS) else null)
+        ?: firstNonEmpty(TOOL_SUBJECT_FIELDS)
+}

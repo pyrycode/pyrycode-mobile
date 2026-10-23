@@ -3,7 +3,9 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -14,11 +16,84 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import java.security.MessageDigest
+
+/** Later reply rendering can displace a finished marker after its first reveal. */
+internal fun ComposeTestRule.assertFinishedAgentMarker(
+    agentId: String,
+    markerMatcher: SemanticsMatcher,
+    finishedLabel: String,
+    readinessTimeoutMillis: Long = 10_000,
+    resolveAgentId: (Long) -> String? = { agentId },
+    evidence: (String) -> Unit = {},
+) {
+    val deadline = System.nanoTime() + readinessTimeoutMillis * 1_000_000
+    var lastReadiness: String? = null
+
+    fun remainingMillis(): Long {
+        val remaining = (deadline - System.nanoTime()) / 1_000_000
+        if (remaining <= 0) throw ComposeTimeoutException("finished Agent readiness exceeded its original deadline")
+        return remaining
+    }
+
+    fun currentMarkerKey(): String {
+        var readyKey: String? = null
+        waitUntil(remainingMillis()) {
+            val key = resolveAgentId(remainingMillis())?.let { "agent-start:$it" }
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            val index =
+                key?.let {
+                    lists
+                        .singleOrNull()
+                        ?.config
+                        ?.getOrNull(SemanticsProperties.IndexForKey)
+                        ?.invoke(it)
+                } ?: -1
+            val sample = "event=finished_agent_readiness lists=${lists.size} key_present=${index >= 0}"
+            if (sample != lastReadiness) {
+                evidence(sample)
+                lastReadiness = sample
+            }
+            if (index >= 0) readyKey = key
+            index >= 0
+        }
+        return requireNotNull(readyKey)
+    }
+
+    fun revealCurrentMarker(): Int {
+        var revealedIndex = -1
+        waitUntil(remainingMillis()) {
+            val key = currentMarkerKey()
+            val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+            assertTrue("finished marker needs one message list", lists.size <= 1)
+            lists.singleOrNull()?.let { node ->
+                // Validate and dispatch together: a generation may change after readiness.
+                runOnIdle {
+                    if (node.layoutInfo.isAttached) {
+                        val config = node.config
+                        val index = config.getOrNull(SemanticsProperties.IndexForKey)?.invoke(key) ?: -1
+                        if (index >= 0) {
+                            val scroll = requireNotNull(config.getOrNull(SemanticsActions.ScrollToIndex)?.action)
+                            assertTrue("the owned marker scroll must be accepted", scroll(index))
+                            revealedIndex = index
+                        }
+                    }
+                }
+            }
+            revealedIndex >= 0
+        }
+        return revealedIndex
+    }
+    val target = questionAnswerTargetWithCurrentKey(markerMatcher, ::currentMarkerKey, ::revealCurrentMarker, evidence)
+    currentMarkerKey()
+    target.assert(hasText(finishedLabel)).assertIsDisplayed()
+}
 
 /** A single pointer tap per transition; list membership distinguishes collapse from lazy disposal. */
 internal fun ComposeTestRule.verifyAgentRunNavigation(
@@ -30,6 +105,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     expandLabel: String,
     collapseLabel: String,
     markerMatcher: SemanticsMatcher = hasText(goLabel) and hasClickAction(),
+    ownedChildKey: String? = null,
     evidence: (String) -> Unit = {},
 ) {
     require(childIds.isNotEmpty()) { "Agent proof needs loaded owned children" }
@@ -110,6 +186,23 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
         }
     }
 
+    // Repository evidence can precede a reset/catch-up frame on the screen. Wait for the
+    // exact family in the merged list; an absent list or a different Agent is not ready.
+    var lastReadiness: String? = null
+    waitUntil(10_000) {
+        val lists = onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes()
+        assertTrue("Agent proof needs one message list", lists.size <= 1)
+        val index = lists.singleOrNull()?.config?.getOrNull(SemanticsProperties.IndexForKey)
+        val keys = listOf("msg:$agentId", "agent-start:$agentId", "msg:$runId")
+        val indexes = keys.map { index?.invoke(it) ?: -1 }
+        val ready = indexes.all { it >= 0 }
+        val sample = "event=agent_run_readiness ready=$ready lists=${lists.size} key_indexes=$indexes"
+        if (sample != lastReadiness) {
+            evidence(sample)
+            lastReadiness = sample
+        }
+        ready
+    }
     assertClosed("before-navigation")
     questionAnswerTap(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
     waitUntil(10_000) { onAllNodes(root).fetchSemanticsNodes().size == 1 }
@@ -118,7 +211,14 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     tapAndAwait(closed, opened, "open", expandedAfter = true)
     assertTrue("opened run must contain every loaded child key", childIndexes().all { it >= 0 })
     // Positive owned visibility first: an off-screen paragraph is not evidence of collapse.
-    list.performScrollToNode(ownedChild)
+    if (ownedChildKey == null) {
+        list.performScrollToNode(ownedChild)
+    } else {
+        assertTrue("reveal key belongs to this Agent", ownedChildKey in childIds)
+        val index = list.fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:$ownedChildKey")
+        assertTrue("the exact owned child remains in the opened run", index >= 0)
+        list.performScrollToIndex(index)
+    }
     // Claude may emit several paragraphs or split text around tools. Visibility, not a
     // single prescribed paragraph, is the navigation contract.
     val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom

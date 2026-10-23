@@ -77,7 +77,7 @@ already the host targeting — one repository instance per host — so neither v
 **`renameWorkspace(path, label)` is a daemon verb; `archiveWorkspace(path)` is not.** The wire has
 `rename_workspace {path, label}`, answered by a correlated `workspace_updated` — the **same** push
 [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split) already applied unconditionally
-in [`onInbound`](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out)
+in [`onInbound`](remote-conversation-repository-reads-and-thread-store.md)
 for unsolicited relabels. #721 shipped the apply with nothing to complete; this ticket adds the sender and
 the waiter together. The daemon has no `archive_workspace`: `archiveWorkspace` is a client-side fan-out of
 the existing per-conversation `archive` (since #914 `ConversationCommands.archive`, still built on the

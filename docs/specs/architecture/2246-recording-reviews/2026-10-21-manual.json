@@ -1,0 +1,331 @@
+{
+  "implementationOs": "linux",
+  "source": {
+    "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+    "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+    "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+    "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+    "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+    "claudeVersion": "2.1.280 (Claude Code)",
+    "androidApi": "33"
+  },
+  "privateEvidenceRoot": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2246/manual-20261021",
+  "completeBatch": {
+    "executed": 7,
+    "passed": 6,
+    "failed": 1,
+    "skipped": 0
+  },
+  "focusedSessionBoundary": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "selectedSuccessfulLive": 7,
+  "selectedSuccessfulFreshReplays": 7,
+  "scripted": {
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "strictComparisons": {
+    "matched": 3,
+    "changed": 4
+  },
+  "review": {
+    "path": "docs/specs/architecture/2246-recording-reviews/2026-10-21-manual.md",
+    "sha256": "f8d410e92a26d3164b2882c150dd304bf881c6be683591455355e084e26b2cd4"
+  },
+  "cases": [
+    {
+      "method": "interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect",
+      "baselineSha256": "beda5b07c7d1628fe48a3319b9f09bfd2ec25536dd66533f7cf9c84fb3d16b55",
+      "candidateSha256": "8b4b9a80ca7cb88a9e3cad6ee3327b44062ba6f3259884ec20bd7f02183e4170",
+      "strictContractMatched": false,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 40.035,
+        "nativeSeconds": 35.78,
+        "fixtureSha256": "8b4b9a80ca7cb88a9e3cad6ee3327b44062ba6f3259884ec20bd7f02183e4170",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:17:58Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 15.989,
+        "nativeSeconds": 15.015,
+        "fixtureSha256": "8b4b9a80ca7cb88a9e3cad6ee3327b44062ba6f3259884ec20bd7f02183e4170",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 3,
+      "phoneCatchUps": 21,
+      "phoneQueryTerminals": 17,
+      "phoneReadCommands": 0,
+      "phoneLiveUpdates": 43,
+      "permissionAnswers": 2
+    },
+    {
+      "method": "interactiveTurn_backgroundAgent_followsBottomUntilFinished",
+      "baselineSha256": "bd25b9e193443063a3a323d906e083eb2cb2b80ba016f778b17efb4072031e05",
+      "candidateSha256": "61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa",
+      "strictContractMatched": false,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 32.61,
+        "nativeSeconds": 29.461,
+        "fixtureSha256": "61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:19:22Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 14.704,
+        "nativeSeconds": 13.807,
+        "fixtureSha256": "61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 1,
+      "phoneCatchUps": 15,
+      "phoneQueryTerminals": 12,
+      "phoneReadCommands": 0,
+      "phoneLiveUpdates": 48,
+      "permissionAnswers": 3
+    },
+    {
+      "method": "interactiveTurn_backgroundAgent_replyStaysUnderAgent",
+      "baselineSha256": "e413073531a342aff71978fc05256df5f8c6ed5bc1285c67fa7806a25db912dd",
+      "candidateSha256": "40b136aa8f28f08091e179f8e7ba3ae2be644d357554db0f87e862691d9be786",
+      "strictContractMatched": false,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 30.111,
+        "nativeSeconds": 27.133,
+        "fixtureSha256": "40b136aa8f28f08091e179f8e7ba3ae2be644d357554db0f87e862691d9be786",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:20:09Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 9.171,
+        "nativeSeconds": 8.241,
+        "fixtureSha256": "40b136aa8f28f08091e179f8e7ba3ae2be644d357554db0f87e862691d9be786",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 1,
+      "phoneCatchUps": 9,
+      "phoneQueryTerminals": 7,
+      "phoneReadCommands": 0,
+      "phoneLiveUpdates": 38,
+      "permissionAnswers": 2
+    },
+    {
+      "method": "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
+      "baselineSha256": "2090d44f1c67421cf1dcb3f6033cef46a3fb8f0306685a3b0a3c139cd5c008a5",
+      "candidateSha256": "5e362b6447c39ed545fd4994566823dd01524b72cf92ba706f7c9ab30d36c5c1",
+      "strictContractMatched": false,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 17.176,
+        "nativeSeconds": 12.632,
+        "fixtureSha256": "5e362b6447c39ed545fd4994566823dd01524b72cf92ba706f7c9ab30d36c5c1",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:24:15Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 13.094,
+        "nativeSeconds": 12.116,
+        "fixtureSha256": "5e362b6447c39ed545fd4994566823dd01524b72cf92ba706f7c9ab30d36c5c1",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 1,
+      "phoneCatchUps": 6,
+      "phoneQueryTerminals": 6,
+      "phoneReadCommands": 2,
+      "phoneLiveUpdates": 13,
+      "permissionAnswers": 0
+    },
+    {
+      "method": "interactiveTurn_attentionDot_followsARealTurn",
+      "baselineSha256": "0a41564bcadb2460dc1c2bd2432e80cc9429cfc265cd5cf23bc63c5b20638d38",
+      "candidateSha256": "f122ac569c75202b93e9db51a691b51a7f8ae961b85c57d0a6862b6efae904df",
+      "strictContractMatched": true,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 20.493,
+        "nativeSeconds": 17.408,
+        "fixtureSha256": "f122ac569c75202b93e9db51a691b51a7f8ae961b85c57d0a6862b6efae904df",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:18:37Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 9.94,
+        "nativeSeconds": 9.046,
+        "fixtureSha256": "f122ac569c75202b93e9db51a691b51a7f8ae961b85c57d0a6862b6efae904df",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 2,
+      "phoneCatchUps": 6,
+      "phoneQueryTerminals": 6,
+      "phoneReadCommands": 1,
+      "phoneLiveUpdates": 11,
+      "permissionAnswers": 1
+    },
+    {
+      "method": "interactiveTurn_permissionPrompts_heldPerConversation",
+      "baselineSha256": "8a210181b68a1f238a203c7f2cd23c1fcdbdb19cb9b5af965972b1773d99ae77",
+      "candidateSha256": "3384d85ef369df9c9e2618998552dd27477577c0611d85c29471acf4030f94d7",
+      "strictContractMatched": true,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 18.614,
+        "nativeSeconds": 15.629,
+        "fixtureSha256": "3384d85ef369df9c9e2618998552dd27477577c0611d85c29471acf4030f94d7",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:20:50Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 8.559,
+        "nativeSeconds": 7.681,
+        "fixtureSha256": "3384d85ef369df9c9e2618998552dd27477577c0611d85c29471acf4030f94d7",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 2,
+      "phoneCatchUps": 11,
+      "phoneQueryTerminals": 11,
+      "phoneReadCommands": 0,
+      "phoneLiveUpdates": 13,
+      "permissionAnswers": 2
+    },
+    {
+      "method": "interactiveTurn_questionAnswer_reachesTheAskingConversation",
+      "baselineSha256": "a7ea720fc573561db779a0b885aa18b6b217752171c88a5cc530132aff7272dc",
+      "candidateSha256": "a5c31e2bb3d2b515d8113f52e67a0a5e0d63820cbe1be27f3a53c4a16d5c1ef1",
+      "strictContractMatched": true,
+      "capture": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 19.707,
+        "nativeSeconds": 16.759,
+        "fixtureSha256": "a5c31e2bb3d2b515d8113f52e67a0a5e0d63820cbe1be27f3a53c4a16d5c1ef1",
+        "source": {
+          "mobileRevision": "cb8fd9926d5c7675d84c4f2d3aa8c786850bcef3",
+          "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+          "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+          "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+          "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177",
+          "claudeVersion": "2.1.280 (Claude Code)",
+          "capturedAt": "2026-10-21T11:21:20Z",
+          "presentation": "current-production",
+          "androidApi": "33"
+        }
+      },
+      "replay": {
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 7.715,
+        "nativeSeconds": 6.796,
+        "fixtureSha256": "a5c31e2bb3d2b515d8113f52e67a0a5e0d63820cbe1be27f3a53c4a16d5c1ef1",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "cf5af111d2207925fae5b3095dfca6c33905dc1d8bae85fef741111ed69f4177"
+      },
+      "phoneOpens": 2,
+      "phoneCatchUps": 4,
+      "phoneQueryTerminals": 4,
+      "phoneReadCommands": 1,
+      "phoneLiveUpdates": 13,
+      "permissionAnswers": 0
+    }
+  ]
+}

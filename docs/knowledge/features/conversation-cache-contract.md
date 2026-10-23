@@ -8,17 +8,11 @@ Split from [Conversation cache](conversation-cache.md); this topic retains the s
 interface ConversationCache {
     suspend fun readConversations(serverId: String): List<Conversation>
     suspend fun writeConversations(serverId: String, conversations: List<Conversation>): Result<Unit>
-    suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
-    suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
-        Result.success(Unit)
     suspend fun readAuthoritativeThread(serverId: String, conversationId: String): SavedAuthoritativeThread? = null
     suspend fun writeAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
         Result.success(Unit)
     suspend fun resetAuthoritativeThread(serverId: String, conversationId: String, saved: SavedAuthoritativeThread): Result<Unit> =
         writeAuthoritativeThread(serverId, conversationId, saved)
-    suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? = null
-    suspend fun writeHistoryPosition(serverId: String, conversationId: String, position: HistoryPosition?): Result<Unit> =
-        Result.success(Unit)
     suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> = emptyMap()
     suspend fun writeReadPositions(serverId: String, positions: Map<String, ReadPosition>): Result<Unit> =
         Result.success(Unit)
@@ -33,23 +27,29 @@ data class ReadPosition(val completedTurnId: String, val readTurnId: String?) {
 
 const val MAX_CACHED_THREAD_ROWS = 100_000
 
-fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem>
-fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem>
-
 class ConversationCacheException(message: String) : Exception(message)
 ```
 
-**File-to-Room import (#2161).** The active `MigratingConversationCache` attempts import for each
-exact host/conversation and family before its full reads, replacements, owned mutations or internal
-page wrappers use Room. Owner ids come from cache operations; hashed filenames cannot recover
-owners, so unknown-owner sources stay untouched. Legacy and authoritative version-1 codecs
-remain separate: legacy rows never become authoritative facts or certify their checkpoint.
-Held row order, fields, unsigned evidence through `ULong.MAX_VALUE`, fragment bindings and
-marker anchors survive valid legacy import. Authoritative import keeps raw facts, epoch,
-revisions, applied progress (including progress beyond the checkpoint), coverage and continuation.
+**File-to-Room import (#2161, authoritative-only since #2385).** The active
+`MigratingConversationCache` attempts authoritative import for each exact host/conversation
+before its full reads, replacements, owned mutations or internal page wrappers use Room.
+Owner ids come from cache operations; hashed filenames cannot recover owners.
+Opening, reading and importing leave legacy files untouched, including unknown-owner hashes.
+They supply no content and cannot certify authoritative facts. Schema 12 has no legacy content
+or evidence tables. Explicit host/conversation removal retains scoped obsolete-file cleanup and
+durable fences. See the [#2385 import evidence](conversation-cache-testing.md#authoritative-import-and-inert-legacy-files-2385)
+and [#2386 schema/reopen evidence](conversation-cache-testing.md#legacy-discard-upgrades-and-reopen-proof-2386).
+The remaining row/history APIs, models, owned mutations, paging/coverage wrappers and codecs
+were removed in #2387; there is no successful-empty legacy compatibility surface. The owner
+authorised complete retirement, superseding the daemon-built threads ADR's compatibility
+interval. Only metadata, supported read state and authoritative content remain supported storage contracts; provisional
+sends keep their independent in-memory identity and acceptance lifetime.
+Authoritative import keeps raw facts, identities, order, epoch, revisions, applied progress
+(including progress beyond the checkpoint), coverage and continuation.
 Local page exhaustion adds no certification and never supplies a daemon cursor.
 
-The durable ledger uses these static outcomes:
+Authoritative import uses these static outcomes in the retained shared ledger; historical
+legacy records and both families' retirement records remain intact:
 
 | Outcome | Meaning |
 | --- | --- |
@@ -69,14 +69,9 @@ fail with the causeless static code `import_unavailable`, preserving recoverable
 Cancellation before commit rolls back content and marker together; repeated imports and restart
 respect committed markers. Cancellation and unclassified programming errors propagate.
 
-Invalid optional legacy history does not invalidate readable rows. If the file reader's retained
-history projection is subsequently rejected by Room validation, import retries with rows and no
-history, logs static `outcome=history_rejected` and records `imported`. Only a rows-only retry
-also rejected as `invalid_data` settles as `invalid`. Rejected claims certify nothing.
-
 A successful deferred import must not let a writer built from an earlier empty restore replace
-it. The cache remembers families read or refused while unavailable. If imported content later
-arrives, writes of that family fail with `import_unobserved` for the rest of this cache instance;
+it. The cache remembers authoritative reads or refusals while unavailable. If imported content later
+arrives, authoritative writes fail with `import_unobserved` for the rest of this cache instance;
 a write that itself imports content is refused too. Later reads cannot prove that every active
 writer observed the import and do not lift this refusal. Cancelled import callers also count as
 unobserved: Room can commit before cancellation suppresses result delivery, so retry checks the
@@ -84,19 +79,8 @@ committed `imported` marker. Restart permits fresh restores of the imported cont
 as absent, invalid, unsupported or superseded imports no content and adds no such refusal.
 Diagnostics use static family/outcome/operation codes without owners, paths, cursors or content.
 
-**The thread-row family (#797).** `readThread`/`writeThread` follow the same graceful-read,
-reporting-mutation shape as the conversation family, over `List<ThreadItem>` (`data/repository/`,
-not the cache package) instead of `List<Conversation>`. Both carry a **default body on the
-interface** — `emptyList()` / `Result.success(Unit)`, the precedent
-`ConversationRepository.refreshSessionSettings` already sets — so a double that does not exercise
-threads (`InertConversationCache`, and the fakes in `HostConversationSourceTest` and
-`RelayConnectionFactoryTest`) needed no edit for this ticket. `writeThread` is a **whole-thread
-replace**, like `writeConversations` is a whole-host replace, and it always stores
-`cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
-unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
-
 **The authoritative thread family (#2149).** `readAuthoritativeThread`/`writeAuthoritativeThread`
-are additive, default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
+are default-bodied methods over `SavedAuthoritativeThread(epoch, items, appliedVersion,
 checkpoint, coverage, incarnation, retirements)`. The full-write API atomically replaces facts and metadata, binding raw
 item objects and their epoch to the certified checkpoint and optional continuous history coverage. `SavedThreadCoverage`
 holds `lowerOrder`, `upperOrder`, `continuation` and `olderExists`; parent or active facts outside
@@ -106,135 +90,29 @@ multi-batch reply: saving newer complete items does not certify the unfinished r
 The store retains one item per identity at its newest accepted revision in daemon order.
 Raw objects preserve identity, revision, order, parents, explicit-null clears and inert unknown
 fields/kinds. Full active facts are retained as saved facts; connection capabilities, runtime
-generation, query assembly and transient live progress are excluded. Unlike the legacy row
-family, this family does not apply settled-row or unknown-kind exclusions. Its 100000-item cap
-keeps the ordered tail; any trimming sets `checkpoint` to zero and `coverage` to null while
+generation, query assembly and transient live progress are excluded. Raw facts, including
+unknown kinds, remain without presentation-row filtering. Its 100000-item cap keeps the ordered tail; any trimming sets `checkpoint` to zero and `coverage` to null while
 retaining applied progress. Omitted facts must never remain certified.
 
 The [separate envelope](conversation-cache-layout.md#layout) validates version and exact host/
 conversation ownership. Invalid full items, duplicate identities, numeric/revision bounds or
 coverage invalidate the whole record. Reads return null without repairing disk; failed writes
 preserve the last successful document. Records redact `toString`, and diagnostics contain only
-static operation/failure codes. Legacy rows remain readable through `readThread` and cannot be
-converted into authoritative items or certify this checkpoint. Both thread families are removed
-with the conversation or host. The sole save/restore consumer is the
+static operation/failure codes. Obsolete rows have no decoder or conversion route into authoritative
+items. Conversation/host removal clears supported facts and scoped obsolete source files.
+The sole save/restore consumer is the
 [supplied caching seam](caching-conversation-repository.md#what-is-written-and-when);
-production route activation remains with #2245 and bounded reading with #2252.
+production negotiated binding is supplied by #2245 and bounded opening by #2333 below.
 Ordinary Room saves use the owned mutation contract below (#2255/#2256); full-file compatibility and
 import continue to use replacement while preserving committed retirement fences.
 Authoritative Room storage (#2163) is bound through the migration-aware cache (#2161).
 
-**The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
-coverage = null)` lives inside the thread document beside its rows, under the same host and
-conversation namespace. `coverage` stores received durable spans, known gaps, unknown legacy
-coverage, page-edge/per-gap/newest cursors and content-free row identity/order/retention metadata.
-High-water is derived from the highest retained span; live/ring ids and legacy row identities
-never certify durable ids. No raw excluded envelopes are persisted. Removal of the thread or host
-also removes this metadata. Cursors and entry content never reach logs or exception prose.
-
-Span endpoints, gap anchors/edges, row/delta order and producing-entry sets, page-edge cursors and
-walk anchors retain exact unsigned ids through `ULong.MAX_VALUE`. `unsignedHighWater` derives from
-`unsignedSpans`. Stored field names remain unchanged (`spans`, `gaps`, `rowOrder`, `rowEntries`,
-`cursors`, `walks`, `unknown`), so positive signed numeric documents still load without a format
-rewrite; older metadata that omitted empty spans defaults to an empty list. Signed construction
-and lower-range projections remain compatible, while upper-range evidence keeps the signed UI
-view conservatively unknown through sticky `unsignedIncomplete` and suppresses saved `atStart`.
-This does not discard authoritative unsigned claims or make `unsignedUnknown` true.
-
-Optional history metadata is decoded separately from rows. Invalid numeric or structural metadata
-discards the saved position with a content-free diagnostic; retained rows remain readable. A row's
-order id must belong to its producing-entry set, and all claimed ids must be covered. Claims are
-then checked against retained content, so metadata cannot certify removed rows.
-
-The [caching wrapper](caching-conversation-repository.md#the-saved-history-position-1354) restores
-old nonempty documents without coverage as unknown, even with saved `atStart`; their rows stay
-readable. After the newest page, unknown coverage tracks the verified span's older edge;
-its marker is subject to displayed-row eligibility.
-Matching legacy rows or verified overlap proves deduplication, never completeness: unknown
-coverage without an older durable anchor closes only on `at_start`, including an empty terminal
-page. An empty uncovered cache ignores old backwards metadata unless `unsignedIncomplete` is set;
-that flag and its usable cursor survive even when no rows remain.
-Known holes require continuous received coverage joining their older anchor. See
-[resuming history](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
-for lazy demand and marker/cursor behavior.
-
-Visible marker eligibility is documented in the parent
-[cache contract](conversation-cache.md#the-contract); saved unresolved coverage remains authoritative.
-
-### Indexed legacy operations and pages (#2162)
-
-`LegacyRoomStorage` supplies full `readThread`/`writeThread`, `readHistoryPosition`/
-`writeHistoryPosition`, `removeConversation` and `removeHost` operations independently of the
-application binding. Whole-thread replacement still applies `cacheableThreadRows`, validates
-uniqueness and retains content-bound history only for committed rows. Changed/removed proofs
-invalidate their producing claims. A 100000-row trim drops a position without coverage; with
-coverage it resets cursor/`atStart` and retains conservative evidence. History replacement binds
-and validates claims against the stored rows; a null position clears metadata without deleting
-rows, and clearing a never-written owner is a no-op. Each storage mutation commits its rows and
-applicable evidence in one Room transaction; repository coverage saves commit owned rows before a separate
-owned evidence transaction. Expected failures preserve the last committed representation.
-The [indexed layout](conversation-cache-layout.md#indexed-legacy-room-layout-2162) also describes
-atomic scoped removal and backup exclusion of the database and its sidecars.
-
-`newestPage(serverId, conversationId, size)` and `beforePage(serverId, conversationId,
-Continuation, size)` return a distinct nullable `LegacyThreadPage`, never a shortened full-cache
-read. A positive size selects at most that many payloads in held ordinal order, plus at most
-one ordinal-only continuation probe; its payload is never decoded. Newest selects the tail and
-before selects earlier ordinals. Repeated pages traverse an unchanged snapshot exactly once
-even with equal or misleading timestamps. The result carries its exact owner. Its opaque local
-`Continuation` belongs only to the legacy family and binds exact case-sensitive host,
-conversation and committed generation. Wrong-owner or stale tokens return null. Replacement
-and owned mutation invalidate old tokens; local continuation is never a daemon cursor.
-
-`LegacyPageEvidence` exposes typed unsigned spans, gaps, selected row/delta claims and proofs,
-fragment bindings and relevant cursor/walk evidence. It is a projection, not full
-`HistoryCoverage`: omitted history is neither loaded nor certified. Saved high-water/unknown-edge
-and global unknown/incomplete flags retain their committed meanings even when selected rows fit
-the signed range. `savedCursor` and `savedAtStart` are saved metadata, not deductions from local
-page exhaustion. Local exhaustion cannot close gaps, change server completeness or rewrite
-opaque cursors.
-
-Evidence selection uses selected ordinals/producing claims, intersecting spans/gaps and needed
-adjacent spans, nearest edge/gap cursors and unknown-walk evidence. Cursor selection must use
-the selected claim window, not an intersecting continuous span's full endpoints: older anchors
-inside that span would otherwise grow page reads/decoding. Closed intervals sharing the selected
-boundary both intersect it. The interval, gap-walk and gap-cursor queries therefore include the
-strict predecessor (`low < first`) alongside intervals starting at `first`, filtered by
-`high >= first` and `low <= last`. This preserves both gaps and their retry/cursor evidence
-without loading unrelated older history.
-
-Parseability alone is insufficient. Selected evidence payloads must match their SQL indexes
-and row ordinals; projection validation checks ordered spans, gap structure, covered producing
-claims, exact row/delta proofs and fragment bounds/hashes. It does so without requiring omitted
-gaps or certifying omitted rows. Invalid optional evidence withholds the entire projection,
-saved cursor and saved completeness while preserving readable rows. Reads never repair storage.
-Full metadata reads remain available without row payload decoding; content binding is established
-on committed writes, and page reads additionally check selected content.
-
-Expected SQLite, IO, security and invalid-data failures follow the graceful-read/reporting-mutation
-contract: empty rows or null metadata/pages on read, and causeless `ConversationCacheException`
-failures inside mutation `Result`s. Cancellation and unclassified programming errors propagate.
-Diagnostics contain static operation/failure codes; page, evidence, continuation and schema
-result strings redact content, cursors and owner ids.
-
-The application uses this backend through the import-aware cache (#2161), alongside
-authoritative Room storage (#2163). #2068 owns bounded reader activation; #2253 supplies owned
-legacy writes below. Legacy rows/evidence never become authoritative items or certify an
-authoritative checkpoint. Existing file-cache operations,
-metadata lists, read positions, settings and attachment-byte storage remain available.
-
-### Owned incremental legacy mutations (#2253)
-
-See [owned legacy mutations and received evidence](conversation-cache-legacy-mutations.md) for
-identity ownership, placement, coverage invalidation/recovery and counted Linux evidence.
-
 ### Indexed authoritative Room storage and pages (#2163)
 
-`AuthoritativeRoomStorage` is an independently usable backend over the same database as
-`LegacyRoomStorage`, exposing full `readAuthoritativeThread`/`writeAuthoritativeThread`
-equivalent to `ConversationCache`'s, plus owned upserts/removals, `newestPage`/`beforePage` and scoped removal.
+`AuthoritativeRoomStorage` is the Room content backend, exposing full
+`readAuthoritativeThread`/`writeAuthoritativeThread` equivalent to `ConversationCache`'s, plus owned upserts/removals, `newestPage`/`beforePage` and scoped removal.
 It is used by the application through the migration-aware cache (#2161); #2255 supplies ordinary
-owned writes and #2252 owns bounded reader activation. Ownership is the same exact, case-sensitive
+owned writes and #2333 supplies bounded production opening. Ownership is the same exact, case-sensitive
 host-plus-conversation scoping as
 every other family in this cache, with the authoritative family additionally scoped by epoch —
 identical ids under another host, another conversation or another epoch are different rows,
@@ -263,9 +141,8 @@ report them: a page can never advance, shrink or otherwise disagree with the ful
 certification. For a positive page size, the query selects at most that many item rows in held
 daemon order with ordinal tie-breaking (selecting the newest window for `newestPage` and
 earlier windows for `beforePage`, each returned chronologically) plus one
-scalar-only continuation probe that never selects or decodes the probed row's payload — the
-same bounded-read shape `LegacyRoomStorage`'s pages use. Growing history outside the requested
-window never grows what a page reads or decodes; only the selected items' rows and the single
+scalar-only continuation probe that never selects or decodes the probed row's payload. Growing
+history outside the requested window never grows what a page reads or decodes; only the selected items' rows and the single
 probed rank are touched, instrumented by the storage's internal `ReadCounts`. Decoded page
 items are revalidated against their indexed identity/order and unique held ordinals as a full
 read would, so a page can never surface a row that disagrees with its own index.
@@ -277,27 +154,143 @@ plus the local rank to resume before. Signed storage ordinals are tie keys, not 
 A token from a wrong owner, a stale epoch or a superseded generation
 returns null rather than a wrong or partial page. Replacement and owned mutation invalidate
 every prior token, including within a reused epoch; restart from `newestPage` after rejection.
-It cannot be
-passed to `LegacyRoomStorage`'s paging, and a continuation running out (`continuation == null`)
-says only that this backend's local storage is exhausted; it is never a server cursor and never
-asserts server-side completeness. Reaching the end of local pages does not change applied
+A continuation running out (`continuation == null`) says only that this backend's local storage
+is exhausted; it is never a server cursor and never asserts server-side completeness. Reaching the end of local pages does not change applied
 progress, checkpoint or coverage.
 
-Scoped removal (`removeConversation`/`removeHost`) deletes both the legacy and authoritative
-families, including authoritative retirement fences, for the requested owner in one Room transaction — see
-[Layout § atomic scoped removal](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
-— so a conversation or host disappears from both families together or not at all. A family-local
-write (an authoritative replacement, or `LegacyRoomStorage.writeThread`/history write) touches
-only its own tables: writing authoritative facts leaves legacy rows and evidence for the same
-owner unchanged, and vice versa. Result, token, header and page string representations redact
-owner, epoch and content; only static operation/failure codes reach diagnostics.
+Scoped removal (`removeConversation`/`removeHost`) deletes authoritative facts, headers and
+item-retirement fences for the exact owner in one Room transaction. The migration-aware cache
+also commits durable import retirement and cleans scoped source files; see
+[removal and admission](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost).
+Result, token, header and page string representations redact owner, epoch and content;
+only static operation/failure codes reach diagnostics.
 
-`ConversationCacheDatabase` gained the authoritative tables at schema version 2 through
-Room's additive
-`AutoMigration(from = 1, to = 2)` — see
-[Layout § the additive version 1 → 2 migration](conversation-cache-layout.md#indexed-legacy-room-layout-2162)
-— adding the authoritative tables without touching existing legacy content. Version 3
-adds the import ledger described above.
+The production opener retains every shipped migration step without destructive recreation.
+`OwnedRowsMigration` remains the named 3 → 4 auto-migration spec, but has no content callback:
+parsing or backfilling rows discarded at schema 12 would keep a retired decoder in the upgrade
+path. Exported historical schemas stay unchanged. Supported authoritative defaults and display,
+placement and witness backfills remain; see [layout](conversation-cache-layout.md#layout).
+Malformed legacy bytes on the 3 → 4 path must not block that chain.
+
+#### Retirement and preservation evidence (#2387)
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2450#issuecomment-6333551509)
+accepts `eda298fca8e0584107dbbb1ec3993ffd13b45eb6` on Linux. The
+[focused evidence index](../../../app/src/test/resources/verification/storage-api-retirement-2387/results.json)
+records source `ddce853b46e9e7b7679d2e366a5a4af528abed6a`, exact selections and hashes:
+**114 JVM/shared executed/passed, 0 failed/errors/skipped**. Inspected XML confirms
+`LegacyDiscardMigrationTest` **3/3**, including all shipped schemas, fresh creation and
+production upgrade/reopen; `MigratingConversationCacheTest` **13/13**, including
+`ownershipInvariant_legacyFilesStayInertAcrossReopens`. The separately focused native
+`LegacyDiscardMigrationDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen`
+executed/passed **1, 0 failed/errors/skipped**. Its phone log retains nine `exact=true`
+observations: schemas 2, 11 and fresh creation, each opened and reopened twice.
+Historical discarded bytes are literal test data; these probes need no retired production writer.
+
+The accepted verifier records these complete configured invocations, separate from focused runs:
+
+| Command | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| `python3 scripts/jvm-test-gate.py --with-build-checks` | 5259 | 5259 | 0 | 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` | 328 | 326 | 2 | 1 |
+| Exact UI failure rerun | 2 | 2 | 0 | 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` | 24 | 24 | 0 | 0 |
+
+The native preservation method executed/passed once in the original configured UI run,
+with no failure/skip and all nine exact observations confirmed by the verifier's raw XML/log
+inspection. Both original UI failures remain failed evidence, tracked on #2373 (background
+agent follow-bottom) and #2368 (per-conversation model change); their exact rerun passed under
+the dispatcher's accepted flaky-test policy. The rename capture was skipped. The full JVM
+run passed the all-schema, fresh-creation and production-upgrade methods. No macOS or
+current-provider live acceptance is claimed for this Linux ticket.
+
+Focused XML and raw preservation captures were at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2387/builder-20261022-ddce853b4/`.
+Accepted verifier bundle `1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`
+retains the verdict and gate logs; configured XML/counts above rely on the verifier's recorded
+inspection, not a documentation-stage rerun. Documentation inspected focused XML and phone
+output and ran no acceptance tests. The [integrated acceptance](conversation-cache-testing.md#integrated-storage-retirement-acceptance-2364)
+records exact-source reuse and the parent cache/UI-skip limits. #2447 retains
+saved-first-draw fixture restoration; earlier accepted/failed evidence remains historical.
+
+### Bounded authoritative display windows (#2333)
+
+`AuthoritativeWindowCache` is an optional import-aware opening/lifetime capability implemented
+by `MigratingConversationCache`. `newestAuthoritativeWindow` returns `AuthoritativeThreadWindow`
+with exact owner, committed partial facts/metadata and selected row contributions. It does not
+reuse `AuthoritativeThreadPage`: a null continuation would incorrectly imply local exhaustion
+while older saved facts remain omitted. Raw-fact pages and full reads keep their contracts.
+The production repository requests 200 displayed contributions; fewer saved rows return all.
+
+Room selects content and launch candidates independently in renderer placement order, each
+limited to the row budget, then takes their combined newest contributions. Hidden/state-only
+facts do not consume the budget; a fact's separated launch/content rows count independently.
+Active facts and unordered shown queued/lost user feedback are indexed extras. Identity lookups
+recursively close required parents and historical agent anchor/held-tie witnesses. These complete
+facts are renderer inputs, not permission to draw their unselected rows or certify a range.
+Only selected/current-overlap retirement evidence enters memory, rather than every historical
+fence. SQL result counts include discarded candidates and duplicate extra results even when
+payload decoding reuses an identity. Plain 18000-row opening returns/decodes 200 items in five
+queries with one header evidence result/decode, zero ordinal results and no full read.
+
+Selected payloads undergo full-item and exact owner/epoch/index identity/order validation,
+including display/extra flags, parent, agent/background classification, active/ended order and
+nullable renderer child order. Explicit zero sorts before positive child orders; absent order
+sorts last, independently of the raw-fact paging key. Invalid selection restores nothing and
+never repairs disk. Supplemental resolution validates winning roots **and descendants**, using
+indexed contribution candidates over old/new ancestor paths when a witness is hidden, moved,
+reparented or retired. Task-link/id validity is part of that structural boundary. Only resulting
+witnesses/parents cross the payload boundary; unrelated sibling payloads remain unloaded.
+Compound owner/epoch/order/placement-key seeks and positive `key > ''` ranges are required:
+`key != ''` can scan an entire empty category despite a small result count. Query-plan assertions
+therefore complement result/query/decode counters.
+
+Initial and later unavailable supplemental reads withhold unchecked captures from delivery and
+writer baselines. Observation-owned bounded retries retain the last validated view; stale owner,
+incarnation, generation or cache lifetime rejects application. Hydration may retain the committed
+certificate but cannot advance it over unapplied/unsaved facts, manufacture continuous coverage,
+or replace a daemon cursor with local position. Owned saves retain omitted facts. Authoritative
+reader paging uses the bounded continuation below; full-file compatibility APIs remain separate.
+See [repository validation](caching-conversation-repository.md#bounded-authoritative-opening-2333).
+
+#### Authoritative reader continuation (#2334)
+
+One reader movement/retry selects up to 200 older display contributions plus required extras,
+independently of held newest/catch-up. Committed owned placement changes extend storage-owned
+reader bounds using old/new metadata already visited by the writer. This retains access to
+moved older components regardless of boundary survival or distance. Retry belongs to its reader/generation; reset or replacement clears it. Local exhaustion cannot certify
+coverage, set daemon exhaustion or overwrite daemon continuation. Owned saves retain unloaded
+facts. The [reader paging contract, native mapping and evidence](authoritative-reader-paging.md) covers bounded
+metadata recovery, fragmented ranges, retirement and fresh reopen.
+
+#### Placement metadata and deep-parent availability
+
+Additive migrations 5→6 through 10→11 derive display/extra flags, placement keys, nullable child
+order, anchor/tie identities and per-node contribution summaries without changing raw payloads
+or certification. Import and accepted writes maintain the same metadata atomically. Version 11
+rebuilds old keys non-destructively; earlier upgrade steps also use the bounded representation.
+Existing no-backup database/sidecar custody remains unchanged.
+
+`SavedPlacementIndex` uses fixed-width preorder ranks over a shared iterative agent forest,
+retaining family phase/order/held-tie prefixes. Non-agent links are collapsed once, ancestor
+classification is memoized, and sibling order matches nullable renderer order and held ordinal.
+No descendant stores its complete ancestry: iterative traversal alone would still leave
+quadratic allocation/storage if paths were copied. Keys are at most 62 characters; retained
+forest metadata and aggregate key output grow linearly in admitted facts. Structural writes
+load metadata for affected former/winning parent components and coherently rerank siblings,
+leaving unrelated payloads untouched. This maintenance can visit an affected component;
+opening payload bounds do not imply constant-time structural writes or migration.
+
+Both contribution construction and winning-path reduction use iterative postorder and visited
+sets, with one reduction per node and children grouped once. Back edges to unfinished ancestors
+retain the existing empty-contribution cycle semantics. There is no parent-depth rejection or
+one JVM stack frame per admitted fact. Deep chains/cycles and 18000 nested foreground agents
+are covered across import, upgrade, fresh reopen and structural reparenting. Current full-gate
+measurements retain 18000 ancestry visits, 18000 rank visits, 1098000 total key characters and
+maximum 61-character display keys. Database sizes for import/upgrade/reopen/structural write are
+17940480/17752064/17752064/18239488 bytes, with exact witnesses, raw payloads, certificates and
+other-host content preserved. [Current counted evidence](thread-screen-testing-saved-first-draw.md#bounded-database-and-retained-file-acceptance-2333)
+distinguishes these correctness/availability probes from native first-draw timing.
 
 ### Owned incremental authoritative mutations (#2255)
 
@@ -391,7 +384,7 @@ instead returns a validated newer held fact after rollback; the writer withdraws
 uncommitted fence and restores that fact and its tie position. Committed fences cannot be withdrawn.
 Recovery peers last until commit or definitive rejection; the durable fence lasts until reset.
 Admission and durable failures use static, causeless/redacted errors and content-free diagnostics.
-See [writer concurrency](caching-conversation-repository.md#state-and-concurrency) for cancellation,
+See [writer concurrency](caching-conversation-repository-concurrency.md#state-and-concurrency) for cancellation,
 pending-removal ordering and post-commit cleanup.
 
 Removal changes the committed page generation. Old local tokens explicitly reject; resume from
@@ -541,35 +534,6 @@ facts; an older daemon omitting them resumes local bookkeeping. See
 [Attention state](dependency-injection-host-conversation-source.md#attention-state-877)
 for support lifetime, generation ordering and bounds (`MAX_READ_POSITIONS`,
 `MAX_TURN_ID_CHARS`).
-
-Two top-level functions in `ConversationCache.kt` define what a thread may hold, used by both the
-cache (enforced on write) and [`CachingConversationRepository`](caching-conversation-repository.md)
-(compared against on every emission), so the two can never disagree about what "settled" means:
-
-- **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
-  whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage`,
-  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
-  and [`ModelRefusal`](model-refusal-row.md) rows and the row count untouched. This is what a thread may
-  keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
-  repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
-  long thread on screen the moment it goes offline.
-- **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with only `UnrecognizedMessage` rows
-  (unbounded, model-adjacent JSON; its KDoc forbids persisting it) additionally dropped, and the
-  result bounded to the newest `MAX_CACHED_THREAD_ROWS` (100000) via `takeLast` — the thread is in
-  arrival order, so "newest" is the tail. This is what may reach disk.
-
-  **Every other settled row kind is kept, including [`Banner`](banner-notice-row.md),
-  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) and
-  [`ModelRefusal`](model-refusal-row.md) (#1353).** Those three used to be dropped here and restored
-  by history replay (#873, #874, #875) on every open. Once history loads only on the user's request
-  (an owner decision outside this ticket), replay stopped running on a routine reopen, so a cached
-  thread that still excluded them lost those rows the moment the live page didn't re-deliver them.
-  Desktop's saved timeline already kept every settled row kind except the live-only attachment
-  offer, so this closes the gap rather than inventing a new rule — see
-  [`DurableThreadItem`/`isDurable`](https://github.com/pyrycode/pyrycode/blob/main/src/shared/chatHistory.ts)
-  in the sibling desktop checkout. `UnrecognizedMessage` stays out on purpose: its KDoc forbids
-  persisting raw model-adjacent JSON. This cache uses plaintext app-private storage; desktop
-  uses an encrypted secure store.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for

@@ -168,7 +168,7 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
 - **Identity is `occurredAt`** (`ThreadItem.CompactionBoundary`'s field name for the protocol's `(type,
   ts)` join key), read by `ThreadRow.listKey()` as `"compaction:$occurredAt"` and by
   `HistoryPageReducer.holdsCompactionBoundary`, the one shared predicate every writer dedups on — the same
-  three-reader shape [`Banner`](banner-notice-row.md#the-thread-row-type) documents, so a boundary
+  three-reader shape [`Banner`](banner-notice-row.md) documents, so a boundary
   received live and again in a history page never crashes the `LazyColumn` on a duplicate key. Since
   #1358 a divider's `ts` is not fixed for its whole life: a divider drawn from the `compacting` falling
   edge takes that edge's `ts` first, and if a `compaction_boundary` later replaces it **in place**, the

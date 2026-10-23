@@ -1,0 +1,10 @@
+Command: python3 scripts/gradle-gate.py testDebugUnitTest --tests 'de.pyryco.mobile.data.cache.MigratingConversationCacheTest'
+Full unfiltered output, including compiler warnings and admission, is retained at revision 4854376725a204030779deffd8865a2eeb976b3f in this same path.
+Complete test-phase output follows:
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+BUILD SUCCESSFUL in 2m 39s
+33 actionable tasks: 8 executed, 25 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html

@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.JsonElement
 
 /**
  * Phase 1 data-layer contract. The fake (Phase 1) and Ktor-backed remote
@@ -36,15 +35,6 @@ interface ConversationRepository {
     ): Result<Unit> = Result.failure(IllegalStateException("authoritative queue unavailable"))
 
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
-
-    fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
-
-    /**
-     * How many rows each conversation's thread holds on this repository (#1361), keyed by conversation id.
-     * A row appended raises its count; growth of an existing row does not. Defaulted empty for a repository
-     * that has no live thread store.
-     */
-    fun observeThreadRowCounts(): Flow<Map<String, Int>> = emptyFlow()
 
     /**
      * Emits the most-recent [Message] (by [Message.timestamp]) for the
@@ -75,18 +65,6 @@ interface ConversationRepository {
     fun observeSessionError(conversationId: String): Flow<String?> = flowOf(null)
 
     /**
-     * Emits [conversationId]'s ordered queued-message backlog (FIFO) — the messages waiting while
-     * claude is busy (#460). Each `queue_state` snapshot the daemon broadcasts replaces the backlog in
-     * full; the flow re-emits the new ordered list. Empty until the first snapshot lands. Cold flow;
-     * re-emits on every change. The thread layer observes this to render the backlog (#461).
-     *
-     * Default `flowOf(emptyList())` — implementations without an interactive wire (the fake, inline
-     * test doubles) inherit "never queued" and need no override, the same cascade-avoidance as
-     * [observeStall] / [delete] / [requestScreenSnapshot].
-     */
-    fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
-
-    /**
      * Emits whether [conversationId]'s remote claude is currently stuck retrying an API error, and at
      * which attempt (#593). [ApiRetryStatus.NotRetrying] until the wire says otherwise; a rising edge
      * carries the parsed `attempt N/M` counter ([ApiRetryStatus.Attempt]) or
@@ -97,7 +75,7 @@ interface ConversationRepository {
      *
      * Default `flowOf(NotRetrying)` — implementations without an interactive wire (the fake, inline
      * test doubles) inherit "never retrying" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [delete].
+     * [observeStall] / [delete].
      */
     fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = flowOf(ApiRetryStatus.NotRetrying)
 
@@ -111,13 +89,13 @@ interface ConversationRepository {
      *
      * Default `flowOf(false)` — implementations without an interactive wire (the fake, inline test
      * doubles) inherit "never compacting" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [observeApiRetry].
+     * [observeStall] / [observeApiRetry].
      */
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
-     * Emits [conversationId]'s current turn phase (#1313): the latest `turn_state`, back to
-     * [LiveSessionEvent.TurnState.Phase.Idle] on `turn_end`. Held per conversation for the connection, so a
+     * Emits [conversationId]'s current accepted producing-session turn phase. The producer explicitly
+     * supplies [LiveSessionEvent.TurnState.Phase.Idle]. Held per conversation for the connection, so a
      * collector that subscribes mid-turn reads the running phase at once, and a new connection starts every
      * conversation idle. Cold flow; re-emits on every change.
      *
@@ -308,7 +286,7 @@ interface ConversationRepository {
      *
      * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test
      * doubles) inherit "nothing reported" and need no override, the same cascade-avoidance as
-     * [observeStall] / [observeQueue] / [observeApiRetry] / [observeCompacting].
+     * [observeStall] / [observeApiRetry] / [observeCompacting].
      */
     fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = flowOf(null)
 
@@ -350,7 +328,7 @@ interface ConversationRepository {
      *
      * Default `true` — implementations that support every mutation (the fake, inline test doubles)
      * inherit "supported" and need no override, the same cascade-avoidance as [observeStall] /
-     * [observeQueue] / [delete]. [RemoteConversationRepository] overrides it to `false` alongside its
+     * [delete]. [RemoteConversationRepository] overrides it to `false` alongside its
      * throwing mutation methods (relay has no v2 wire message for these mutations yet).
      */
     val mutationsSupported: Boolean get() = true
@@ -433,14 +411,6 @@ interface ConversationRepository {
         conversationId: String,
         upTo: ULong,
     ): Result<ULong> = Result.failure(UnsupportedOperationException("Daemon read marks are unavailable"))
-
-    /** Queue already-qualified sight; process-owned facades may retain it across disconnection. */
-    suspend fun acknowledgeReadCheckpoint(
-        conversationId: String,
-        checkpoint: ULong,
-    ) {
-        markConversationRead(conversationId, checkpoint)
-    }
 
     /** Retain exact sight qualification and its connection; it cannot become a legacy retry. */
     suspend fun acknowledgeAuthoritativeReadCheckpoint(
@@ -654,97 +624,20 @@ interface ConversationRepository {
     ): Unit = error("sendQueuedNow is not implemented for this ConversationRepository")
 
     /**
-     * Drops a not-yet-drained message from [conversationId]'s queued backlog by sending a
-     * `dequeue_message` frame carrying the conversation id and the message's [queuedMessageId] (#466,
-     * ADR 025). [queuedMessageId] is the [QueuedMessage.id] the caller received from [observeQueue],
-     * passed back **verbatim**; it is the daemon's per-conversation `queued_msg_id` — a wire `uint64`,
-     * so a [Long] (not a `String`; the pyrycode#720 trap), the same width [observeQueue] decodes.
+     * Sends the retained `dequeue_message` control for [conversationId] and its supplied
+     * [queuedMessageId]. The daemon queue identifier is passed verbatim as a [Long].
      *
-     * **Fire-and-forget: the daemon never replies (#859).** An implementation returns once the frame is
-     * sent. The daemon owns the backlog, so the queued row is removed only by a subsequent `queue_state`
-     * on [observeQueue] (#460) and never optimistically, and that snapshot is also the drop's only
-     * confirmation. A request the daemon cannot apply (unknown, already delivered or in-flight) is
-     * silent too.
+     * Returns once the control frame is sent. The negotiated authoritative route owns the queue
+     * target, content retirement and pending acceptance. This method does not reconstruct queue
+     * state or infer settlement from raw queue snapshots.
      *
-     * **The sender's own echo leaves with the item (#781).** The daemon never authored the thread echo —
-     * the sender posted it locally after its `send_message` ack, because interactive mode streams no
-     * user-message event back — so leaving it behind after a drop shows a message claude was never
-     * given. When a `queue_state` for [conversationId] arrives without the dropped [queuedMessageId], an
-     * implementation removes the one thread row it minted for that item, correlating on
-     * [QueuedMessage.messageId] and **only** against ids it minted itself; an item carrying `""`, or one
-     * another device queued, correlates with nothing and its drop touches no thread row. Text never
-     * matches. Removal is keyed on the id this device asked to drop, never on the backlog shrinking, so
-     * an item that drains normally keeps its echo. The one ambiguity — the head item draining just
-     * before the dequeue lands, so the daemon ignores the dequeue and the next snapshot looks exactly
-     * like a drop — resolves as a drop.
-     *
-     * Throws [IllegalStateException] when the session is not connected; the drop was never sent, so the
-     * backlog and the echo stay unchanged and there is nothing to roll back.
-     *
-     * Default throws — implementations without an interactive wire (the fake, inline test doubles)
-     * inherit it, so no test double needs to override it (the same cascade-avoidance as [delete] /
-     * [createWorkspaceFolder] / [requestScreenSnapshot]).
+     * Throws [IllegalStateException] when the session cannot send. Implementations without this
+     * control inherit the throwing default.
      */
     suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = error("dropQueuedMessage is not implemented for this ConversationRepository")
-
-    /**
-     * Fetches one page of [conversationId]'s stored history — the scroll-back read (#623). A client
-     * that opens an existing conversation sees only what arrived after it connected; this walks
-     * **backwards** through the daemon's on-disk log, newest-first, one page per call.
-     *
-     * **Not a reconnect backfill.** The daemon's replay ring is an in-memory catch-up across a dropped
-     * connection and is empty after a daemon restart; this log is on disk and survives one. A client
-     * uses both, and never joins their ids — see [HistoryEntry.id].
-     *
-     * @param cursor The [HistoryPage.cursor] the previous page handed back, echoed **verbatim** —
-     *   opaque, never parsed or rebuilt. Empty (the default) means "start at the newest", which is the
-     *   normal opening value of a walk and not a missing one.
-     * @param limit How many entries the caller wants. `0` (the default) asks the daemon to choose and
-     *   **never** means zero entries; a large ask is clamped rather than refused; and a page may come
-     *   back shorter than asked so the daemon's own frame fits its size cap. Read
-     *   [HistoryPage.entries]`.size`, never assume the ask was honoured — and never read a short page
-     *   as the start of the log ([HistoryPage.atStart] is the only signal for that). A negative value
-     *   is rejected by the daemon.
-     *
-     * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
-     * server's `conversation.not_found` as that type, the fake throws it directly), and
-     * [de.pyryco.mobile.data.network.RelayErrorException] for any server error — the `history.*` codes
-     * are distinguishable by its `code`, and `history.unavailable` is the only **retryable** member.
-     * Throws [IllegalStateException] when the session is not connected, and the decode exception for a
-     * malformed page. Every failure is scoped to **this ask alone**: no projection is touched and no
-     * other conversation's state changes.
-     *
-     * Default throws — implementations without a history log (inline test doubles) inherit it, the
-     * same cascade-avoidance as [delete] / [requestScreenSnapshot] / [dropQueuedMessage].
-     */
-    suspend fun requestHistory(
-        conversationId: String,
-        cursor: String = "",
-        limit: Int = 0,
-    ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
-
-    /**
-     * The history position saved for [conversationId] (#1354), or `null` when none is: never received,
-     * cleared, or unreadable. Read once when a thread opens, to resume its walk where the saved rows end.
-     *
-     * Default `null` — a repository with no cache always starts from the newest page.
-     */
-    suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = null
-
-    /**
-     * Save [position] for [conversationId] beside its cached rows (#1354), or clear it with `null`. Called
-     * when an ask settles; a failed ask never calls it. Never throws for a storage failure: losing a
-     * position costs only a re-fetched page.
-     *
-     * Default does nothing.
-     */
-    suspend fun writeHistoryPosition(
-        conversationId: String,
-        position: HistoryPosition?,
-    ) {}
 
     /**
      * Read this repository's host instructions and daemon-supplied reset text without a conversation.
@@ -1202,26 +1095,12 @@ enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable, CodexMethod, CodexItem }
 
 /**
- * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type
- * of [ConversationRepository.observeQueue], co-located with the contract it serves (like [ThreadItem]).
+ * Serialized legacy queue value retained for dormant storage and mixed fixtures.
+ * Runtime queue rows and actions use supplied authoritative items and [AuthoritativeQueueTarget].
  *
- * [id] is the daemon's per-conversation `queued_msg_id` counter (a wire `uint64`, so [Long]); it is a
- * monotonic ordinal, not a secret. [timestamp] is enqueue time.
- *
- * @param messageId The `message_id` the *sending client* minted for this message, relayed verbatim by
- *   the daemon (pyrycode#2092, #781). It lets a client recognise a queued item as one of its own sends
- *   — in interactive mode the daemon streams no user-message event back, so a client's optimistic echo
- *   is its only record of its own message, and without a shared key dropping the queued item leaves
- *   that echo reading as a message claude received.
- *
- *   **Compared for equality only. Never render it, never key a list on it, never log it.** It is
- *   client-chosen and unique **nowhere**: two items may legally carry the same value, so keying a
- *   `LazyColumn` on it crashes the thread on duplicate keys (the hazard
- *   [ThreadItem.UnrecognizedMessage.id] documents for its own id). It addresses nothing on the wire —
- *   [ConversationRepository.dropQueuedMessage] still resolves `conversation_id` + [id].
- *
- *   `""` is a legal value meaning "this item correlates with nothing", and it is the default so a
- *   caller that has no correlation to express says so by omission.
+ * [id] is the daemon's per-conversation queue ordinal. [timestamp] records enqueue time.
+ * [messageId] is client-chosen correlation data. Compare it for equality only. Never render it,
+ * log it or use it alone as a list key. Empty means that no client correlation was retained.
  */
 data class QueuedMessage(
     val id: Long,
@@ -1229,88 +1108,6 @@ data class QueuedMessage(
     val timestamp: Instant,
     val messageId: String = "",
 )
-
-/**
- * One backward step of a history walk (#623) — the return of [ConversationRepository.requestHistory].
- * The element type is co-located with the contract it serves, like [ThreadItem] / [QueuedMessage].
- *
- * @param entries This page's entries in the wire's **newest-first** order, preserved verbatim; the
- *   client never re-sorts. An empty list is a normal page, not an error and not a termination signal.
- * @param cursor The position to ask with next, opaque — store it and hand it back unexamined. Empty
- *   whenever [atStart] is true, so the two are never both meaningful. Not a secret and not a
- *   capability: it is unsigned by design and carries only the conversation id the caller already
- *   knows. Authorization is pairing, enforced at the Noise handshake.
- * @param atStart The start of the log was reached while filling this page — **the only termination
- *   signal there is**. A walk stops on this and never on an empty [entries] list: a page that fills
- *   exactly at the log's first entry reports `false` with a usable [cursor], and the call after it
- *   returns no entries with `true`. A **short** page says nothing about the end of the log either —
- *   the daemon narrows a page to fit its frame size cap without touching this flag.
- */
-data class HistoryPage(
-    val entries: List<HistoryEntry>,
-    val cursor: String,
-    val atStart: Boolean,
-)
-
-/**
- * The independent backwards walk's position, saved beside cached rows, plus received durable entry
- * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
- * Only received pages establish coverage; live rows never do.
- *
- * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
- * key — so [toString] leaves it out.
- */
-data class HistoryPosition(
-    val cursor: String,
-    val atStart: Boolean,
-    val coverage: HistoryCoverage? = null,
-) {
-    override fun toString(): String = "HistoryPosition(atStart=$atStart)"
-}
-
-/**
- * One stored frame in a conversation's history log (#623) — a wire type, its payload, a timestamp and
- * a durable id, which is what makes a loaded page renderable by re-reducing it **oldest-first**
- * through the same timeline reducer the live stream already runs.
- *
- * **[type] and [payload] are replayed content and are exactly as untrusted as the live lane's** —
- * operator-authored for a stored `send_message`, `claude`-authored for a stored assistant frame — so
- * a consumer applies the same sanitisation it applies live: render as inert text, never as markup, a
- * URL, a filename, a cache key or a log line. This is the [ThreadItem.UnrecognizedMessage] posture,
- * and it holds for **every** entry, not only the unrecognized ones. Nothing in the data layer logs
- * either field.
- *
- * @param unsignedId The **durable, host/conversation-scoped** positive unsigned log id: monotonic within one conversation and stable
- *   across daemon restarts. **Never join it to a replay `event_id`** ([de.pyryco.mobile.data.network.Envelope.eventId]),
- *   which is the in-memory ring's per-process id. They are different sequences that both look like
- *   small integers, and some live frames carry no `event_id` at all.
- * @param type The wire type the stored frame carried. **Nothing re-validates it**, so a consumer must
- *   tolerate a type it does not recognise rather than treating one as a protocol violation — the same
- *   forward-compatibility rule the wire applies to unknown fields.
- * @param payload The stored frame's body, verbatim and still undecoded — a [JsonElement] rather than
- *   a `String` so a consumer feeds it straight back into the same `MobileJson.decodeFromJsonElement`
- *   arms the live lane uses, with no second parse and no second failure surface.
- * @param timestamp When the entry was appended. Together with [type] it is the join key against the
- *   live lane: an entry in a page and its twin on the live stream carry the same pair, which is how a
- *   client meets the two with no gap and no duplicate.
- */
-data class HistoryEntry(
-    val type: String,
-    val payload: JsonElement,
-    val timestamp: Instant,
-    val unsignedId: ULong,
-) {
-    init {
-        require(unsignedId > 0u) { "Invalid durable history id" }
-    }
-
-    /** Source-compatible construction for existing positive signed fixtures. */
-    constructor(id: Long, type: String, payload: JsonElement, timestamp: Instant) :
-        this(type, payload, timestamp, id.also { require(it > 0) { "Invalid durable history id" } }.toULong())
-
-    /** Exact signed compatibility identity, or no claim when the durable id exceeds the signed range. */
-    val id: Long? get() = unsignedId.takeIf { it <= Long.MAX_VALUE.toULong() }?.toLong()
-}
 
 /**
  * The run configuration of one session (#590) — the return of [ConversationRepository.observeSessionSettings].
