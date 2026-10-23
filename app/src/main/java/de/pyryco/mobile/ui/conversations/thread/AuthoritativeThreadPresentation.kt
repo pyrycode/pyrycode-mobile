@@ -47,8 +47,19 @@ class AuthoritativeThreadPresentation internal constructor(
     private val parents: Map<String, String?>,
     private val expandable: Set<String>,
     private val resolveContents: ((String) -> ThreadRow.Delivered?)?,
+    internal val sourceConnection: Any? = null,
 ) {
     internal val defersContents = resolveContents != null
+    private val bodyItems =
+        sourceSnapshot.items
+            .filter { it.kind in setOf("tool_call", "agent") }
+            .groupBy { it.id }
+            .values
+            .associate { versions -> versions.maxBy { it.rev }.let { "msg:$scope:${it.id}" to it } }
+
+    internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
+
+    internal fun missingBody(key: String): Boolean = bodyItem(key)?.let { !sourceSnapshot.hasToolBody(it) } == true
 
     /** Fold summaries first. An omitted ancestor cannot expose a separately placed descendant. */
     internal fun demandRows(
@@ -96,7 +107,9 @@ class AuthoritativeThreadPresentation internal constructor(
     internal fun suppliesReadSight(
         row: ThreadRow.Delivered,
         expandedTools: Set<String>,
-    ): Boolean = resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools
+    ): Boolean =
+        !missingBody(row.listKey(0)) &&
+            (resolveContents == null || !row.isToolRow() || (row.item as ThreadItem.MessageItem).message.id in expandedTools)
 
     /** Summaries are never proof of rendered contents. Resolve only the carried, exact current revision. */
     internal fun matchesReadContents(
@@ -105,6 +118,7 @@ class AuthoritativeThreadPresentation internal constructor(
         revision: Long?,
     ): Boolean {
         if (key == null || revision == null || shownRowRevisions[key] != revision) return false
+        if (missingBody(key)) return false
         return if (resolveContents != null) {
             resolveContents.invoke(key)?.item == item
         } else {
@@ -192,7 +206,8 @@ internal fun projectDeferredAuthoritativeThread(
     snapshot: AuthoritativeThreadSnapshot,
     progress: AuthoritativeLiveProgress = AuthoritativeLiveProgress(),
     onFullConversion: ((Long) -> Unit)? = null,
-): AuthoritativeThreadPresentation = projectThread(host, conversation, snapshot, progress, true, onFullConversion)
+    sourceConnection: Any? = null,
+): AuthoritativeThreadPresentation = projectThread(host, conversation, snapshot, progress, true, onFullConversion, sourceConnection)
 
 private fun projectThread(
     host: String,
@@ -201,6 +216,7 @@ private fun projectThread(
     progress: AuthoritativeLiveProgress,
     deferred: Boolean,
     onFullConversion: ((Long) -> Unit)?,
+    sourceConnection: Any? = null,
 ): AuthoritativeThreadPresentation {
     val scope = listOf(host, conversation, snapshot.epoch.orEmpty(), snapshot.generation.toString()).joinToString("") { "${it.length}:$it" }
 
@@ -256,7 +272,20 @@ private fun projectThread(
     fun adapt(item: ThreadItemDto): ThreadRow.Delivered {
         onFullConversion?.invoke(item.id)
         val block = if (item.id in agents) identity(item.id) else owners[item.id]?.let(::identity)
-        return item.displayRow(
+        val body = snapshot.bodyContents[item.id to item.rev]
+        val rendered =
+            if (body == null ||
+                item.hasToolBody
+            ) {
+                item
+            } else {
+                ThreadItemDto.decodeReplacement(
+                    JsonObject(
+                        item.raw + ("content" to JsonObject((item.content as? JsonObject).orEmpty() + body)),
+                    ),
+                )
+            }
+        return rendered.displayRow(
             identity(item.id),
             block,
             item.parent?.let(::identity).orEmpty(),
@@ -266,6 +295,7 @@ private fun projectThread(
             } else {
                 null
             },
+            bodyRead = body != null && !item.hasToolBody,
         )
     }
 
@@ -454,6 +484,7 @@ private fun projectThread(
         parents,
         expandable,
         resolver,
+        sourceConnection,
     )
 }
 
@@ -591,6 +622,7 @@ private fun ThreadItemDto.displayRow(
     parentId: String,
     refusalIdentity: CanonicalRefusalIdentity,
     elapsedSeconds: Int?,
+    bodyRead: Boolean = false,
 ): ThreadRow.Delivered {
     val fields = content as? JsonObject
     val timestamp =
@@ -662,8 +694,17 @@ private fun ThreadItemDto.displayRow(
                             "",
                             ToolCall(
                                 name.displayText(),
-                                description(),
-                                if (kind == "agent" && !active) terminalText() else result?.text("result_summary").orEmpty().displayText(),
+                                ((if (bodyRead) fields.text("input") else null) ?: description()).displayText(),
+                                (
+                                    (if (bodyRead) fields.text("output") else null)
+                                        ?: if (kind == "agent" &&
+                                            !active
+                                        ) {
+                                            terminalText()
+                                        } else {
+                                            result?.text("result_summary").orEmpty()
+                                        }
+                                ).displayText(),
                                 toolStatus,
                                 input,
                                 parentId,

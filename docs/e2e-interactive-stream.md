@@ -3879,6 +3879,93 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+### Missing tool body evidence (#2388)
+
+This is the body-reader contribution to #2376's original documentation handoff,
+accepted by [PR #2480's verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2480#issuecomment-6354664128).
+Linux candidate: Mobile `13d265b8e46dc4bdf1de605c5b77371129fad8be`;
+the subsequent main merge is
+`7b725f27cf42886e571d84dd1b041fe105005cf7`. macOS is outside this ticket's scope.
+
+| Retained run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Builder focused, final repair | 74 | 74 | 0 | 0 |
+| Builder scripted `tool` | 1 | 1 | 0 | 0 |
+| Dispatcher JVM/build gate | 5351 | 5351 | 0 | 0 |
+| Dispatcher UI, original | 333 | 332 | 1 | 1 |
+| Dispatcher UI, exact failed-method rerun | 1 | 1 | 0 | 0 |
+| Dispatcher scripted-all | 24 | 24 | 0 | 0 |
+
+Failures above include errors; the passing runs had none. The UI gate reports
+executed separately from skipped. Its recorded model-change failure,
+`RecordedMobileSuiteTest.interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
+passed the exact-method rerun and remains tracked in #2368. The accepted dispatcher
+disposition counts the gate green; the original failure is still a failure.
+`RenameDialogCaptureTest.renameAtFigmaViewport` was skipped, never passed.
+The accepted verdict supersedes the PR body's earlier incomplete-gates statement.
+
+The final focused XML contains `ToolBodyQueriesTest` (16),
+`AuthoritativeThreadQueriesTest` (23), `InitialAttentionQueryTest` (11),
+`MissingToolBodyScreenTest` (3), `NegotiatedThreadViewModelTest` (6),
+`AuthoritativeReadSightTest` (12) and `DeferredAuthoritativeScreenTest` (3),
+all passed without skips. In particular,
+`mountedProductionConsumerLoadsRetriesAndReusesRetainedBodyWithoutFalseSight`,
+`stoppedDestinationReleasesDemandBeforeLoadingPresentationArrives` and
+`collapsedQueuedBodyWithdrawsDemandBeforeLoadingPresentationArrives` passed
+through the mounted production consumer. The lane's
+`staleSnapshotWithdrawsQueuedDemandWithoutAdmittingAdditionsOrRetry`,
+`fetchedBodyExpansionPreservesLiveOptionalNullClears` and
+`attentionRetryPreservesQueuedBodyEvenWhenRepairWasAlreadyMarked` also passed.
+The full JVM gate independently includes these methods; its decoder, body-lane
+and mounted screen classes passed 5, 16 and 3 tests respectively. These full-gate
+executions are not additional focused invocations.
+
+The existing rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_toolStepRunsThenCompletes`
+executed/passed once in the focused scripted `tool` run, with finished native
+phases and harness exit 0, and also passed within scripted-all. Raw and normalized
+focused XML describe the same execution and must not be counted twice. The
+scripted producer was Core `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`,
+binary SHA-256 `d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`;
+Relay `9939bc1ff8afec5021c09862e6f14dadba33ad42`, unmodified binary SHA-256
+`27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10`.
+This preserves existing complete-delivery tool behavior; it is not a genuine
+paired compact expansion capture.
+
+At documentation time the raw focused XML, phone log, native phase records,
+source identities and harness diagnostics were under
+`$AGENTS_REPO_PATH/logs/evidence/2388/builder-rework2-13d265b8e/`:
+`rework2-green/`, `rework2-red/`, `scripted-tool/`, `native-gate/` and `harness/`.
+Green JVM reports identify the candidate working tree before commit and its HEAD
+base; the later dispatcher gate confirms the committed candidate. The accepted
+verifier bundle is run
+`a21b52256eda3b10905c6c662c2073b17c464c10514b5d8d1e5e09bea77f4b25`,
+digest `2745f0921cb0c93fe9e3c2e786531d2a1f1631d46be6b1250de0d1e6cff8933f`,
+with the verdict and gate-report captures. Raw paths are retention locations at
+the time, not promises of permanent availability.
+
+Preserved test-first evidence against Mobile
+`22bbfc6272ebad0a6cb8a4c43266598365fdb861` is **2 executed, 0 passed,
+2 failed, 0 skipped**: mounted queued-collapse and lane withdrawal both failed.
+The earlier `builder-rework-20261022-22bbfc627/` reports retain **146 executed,
+146 passed, 0 failed/skipped**, including kind-free fragment/unsigned decoder
+and tool-row probes; its red baseline against
+`d37187df190fbb8a810aa2f52deb9b31923d9cc7` remains **22 executed, 17 passed,
+5 failed, 0 skipped**. The original `builder-20261022-d37187df1/` proof retains
+132 focused passes. These earlier passes do not erase their failed probes or
+substitute for the final candidate's checks. The architecture plan also preserves
+the earlier source-fact, cancellation-capture and routing-fixture failures.
+
+Behavior and ownership are documented in the [thread screen](knowledge/features/thread-screen.md)
+and [body-query contract](knowledge/features/remote-conversation-repository.md#missing-tool-body-queries-2388);
+[cache custody](knowledge/features/conversation-cache.md#the-contract) distinguishes
+in-memory fetched details from persisted complete facts. Compact-v1 remains
+unadvertised here. #2393 still owns genuine paired compact capture and recorded
+replay before #2376 integrated acceptance; selection, child paging, budgets and
+subtree invalidation remain with their allocated children. All historical failures
+and recorded approval/privacy holds remain binding. Deterministic evidence does
+not satisfy the pending paired-capture requirement.
+
 ### Authoritative runtime removal (#2367)
 
 The accepted verifier reviewed Mobile `440c460adf60e9f9a12266b6539d857d6670b873`,

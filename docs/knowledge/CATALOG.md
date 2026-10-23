@@ -263,3 +263,5 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Thread screen — Agent navigation evidence](features/thread-screen-agent-navigation-evidence.md) — proof-entry readiness and finished-marker generation/geometry controls, split from subagent tool-row nesting for #2373; counted Linux source/recording acceptance.
 - [Development verification — Agent reveal evidence](features/development-verification-agent-reveal-evidence.md) — Agent geometry, lazy disposal, readiness and atomic current-key scroll; split from Compose evidence for #2373.
 - [Final integrated reader paging acceptance (#2334)](features/authoritative-reader-paging-final-acceptance.md) — consolidated scoped review, exact-source full acceptance and reviewed integration.
+
+- [Thread screen — wiring](features/thread-screen-wiring.md): Koin and destination binding, host ownership and composer topic pointer; split from the thread overview for #2388.

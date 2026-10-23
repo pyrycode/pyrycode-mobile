@@ -362,6 +362,7 @@ class RemoteConversationRepository internal constructor(
                     refreshUnavailableAuthoritativeReadFacts(conversation, generation)
                 }
             },
+            expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
         )
 
     /** The exact host this connection's thread route serves, or empty on the legacy test entry (#2175). */
@@ -429,6 +430,14 @@ class RemoteConversationRepository internal constructor(
     internal fun openAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.open(conversationId)
 
     internal fun acquireAuthoritativeThread(conversationId: String): java.io.Closeable? = authoritativeQueries.acquire(conversationId)
+
+    internal fun demandToolBodies(
+        conversationId: String,
+        consumer: Any,
+        snapshot: AuthoritativeThreadSnapshot,
+        ids: Set<Long>,
+        retry: Long? = null,
+    ): java.io.Closeable? = authoritativeQueries.bodies(conversationId, consumer, snapshot, ids, retry)
 
     internal fun requestOlderAuthoritativeThread(conversationId: String): Boolean = authoritativeQueries.older(conversationId)
 
@@ -896,7 +905,7 @@ class RemoteConversationRepository internal constructor(
 
     private fun onInbound(envelope: Envelope) {
         if (authoritativeLiveEnabled() &&
-            envelope.type in setOf("thread_items", "thread_reset", TYPE_ERROR) &&
+            envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
         ) {
             return
