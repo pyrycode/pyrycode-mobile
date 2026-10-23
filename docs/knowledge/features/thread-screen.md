@@ -20,6 +20,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection status placement`, `Thinking-indicator placement (post-#407)`, `Thread top overlay placement (post-#1002)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396, retired from the screen in #883)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
 - [Thread screen — testing](thread-screen-testing.md) — `Testing`
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
+- [Thread screen — expanded details](thread-screen-expanded-details.md) — body/child demand, freshness, Retry, retention and lifecycle.
 - [Thread screen — wiring](thread-screen-wiring.md) — `Wiring`, `Koin binding`, `Destination block`, and the composer topic pointer; split for #2388.
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
@@ -130,77 +131,12 @@ and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
 Closed tool bodies and descendants behind omitted ancestors keep summaries until demanded. Retention, coverage and wire delivery stay independent; summaries never prove sight. See [deferred presentation probes](thread-screen-testing.md#deferred-authoritative-presentation-2375).
 
-**Missing tool bodies on expansion (#2388).** Only visible, individually expanded
-Tool use rows demand missing details, including an agent-launch body where the
-existing tool presentation needs it. Closed rows, hidden descendants and opening a
-grouped run alone issue no body reads. Complete content for the exact held identity
-and revision renders immediately, including unchanged reopen and offline reuse.
-Fetched bodies remain in the host snapshot's in-memory ID/revision map; existing
-complete-fact disk persistence is unchanged. A process restart cannot restore that
-fetched-body map. Hosts without expansion support retain complete delivery.
-
-The expanded row uses its existing body/code surface for Loading, loaded contents,
-a generic failure with explicit Retry, or offline missing-details text. An
-explicitly empty input/output object becomes loaded only after validated data and
-its separate matching success marker. Refusal, missing/partial data, send failure,
-timeout and cancellation cannot become empty success. Failure is sticky across
-recomposition; Retry applies only to the current still-demanded body.
-
-The bound screen consumer follows the current presentation and producing connection
-through the ViewModel and negotiated repository. Equal active/queued targets
-coalesce. Collapse, scrolling out of visibility and destination/lifecycle retirement
-withdraw demand. A current binding must withdraw even while frame pacing holds an
-older presentation: the lane intersects stale targets with that consumer's already
-admitted keys. Stale snapshots cannot add targets or authorize Retry. Checking
-snapshot freshness before withdrawals would let a collapsed queued body start when
-another body completes. Other consumers keep their own demand; abandoned reads
-still drain before lane reuse.
-
-Loading and body completion grant neither history coverage nor read sight. The
-existing viewport, exact rendered revision and certified-checkpoint requirements
-still apply after contents render. See [connection-owned body queries](remote-conversation-repository.md#missing-tool-body-queries-2388)
-and [focused evidence for the parent compact handoff](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
-
-**Retained expansion capacity (#2390).** Bodies and child pages share inclusive
-16,777,216-byte/1000-summary limits per host across conversations, open and closed.
-Costs count serialized UTF-8 body objects, original raw summaries and cursors once
-per entry. Loaded expanded demand and descendant ancestry stay protected across
-consumers. Closed entries use cross-kind LRU; retained reopen refreshes use without
-refetch, while recomposition does not. Atomic capacity rejection keeps prior
-children/cursor and shows sticky inline Retry. Closing demand can free capacity
-for explicit Retry; evicted reopen reads again. See [retention rules](remote-conversation-repository.md#retained-expansion-budget-2390).
-
-**Direct agent children (#2389).** A visible, individually expanded agent demands
-its first missing page of direct-child summaries through the same owned lane.
-Nested agents demand only their own children when individually expanded. Opening
-a group exposes loaded member summaries with bodies closed; recomposition and
-hidden descendants initiate neither speculative child pages nor closed-body reads.
-Body demand remains independent. Unchanged retained pages reopen without a read,
-including offline, within the current in-memory snapshot.
-
-Loading, loaded children, authoritative empty, explicit Retry and offline missing
-data appear inside the expanded parent. Load more follows that parent's displayed
-descendants, uses the existing inline history-control styling and requests one
-certified continuation per tap; it is separate from thread-history paging. A short
-page does not mean complete. Only validated separate success with `more: false`
-certifies the enumeration, including marker-only empty success. Failures remain
-sticky across recomposition. Cursor rejection offers Retry from the first page for
-the current owner, retaining old rows until a validated replacement succeeds.
-
-Child demand uses independent consumer targets and the current presentation,
-connection and resumed destination binding. Collapse and retirement withdraw even
-before the Loading presentation reaches a display frame; held presentations may
-withdraw prior targets but cannot add demand or authorize Retry/Load more. Other
-consumers retain their demand; abandoned requests drain before lane reuse.
-
-Certified order-zero children stay under their parent, never in the root
-queued/lost tail. A full fact without order cannot borrow placement from an older
-summary. Summary `shown: false` participates in cursor accounting but renders no
-row. Its inert headline stays independent of tool input and survives body loading.
-Summary conversion supplies no read sight or history coverage. Final parent
-revisions govern descendant reachability in either page arrival order; stale
-parent pages cannot expose or demand descendants. See the [page admission rules](remote-conversation-repository.md#direct-child-pages-2389)
-and [counted evidence](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+**Expanded tool bodies and agent children.** Visible expanded rows use bounded,
+connection-owned demand. Same-owner stale contents remain beside Loading, Retry
+or offline state until validated replacement; unchanged valid details reopen
+without refetch. See [expanded details](thread-screen-expanded-details.md) for
+invalidation, first-page restart, retention and lifecycle behavior, and
+[counted #2391 evidence for #2393](../../e2e-interactive-stream.md#expanded-detail-validity-evidence-2391).
 
 **Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only while the destination is resumed and
