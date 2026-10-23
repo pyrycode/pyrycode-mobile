@@ -146,7 +146,8 @@ internal class ThreadQueryDecoder(
         val reply = decodeThreadQueryReply(envelope.type, raw) as? ThreadQueryReply.Children ?: return reject("malformed")
         if (reply.checkpoint.epoch != expected.epoch ||
             reply.itemId != expected.itemId ||
-            reply.rev != expected.expectedRev
+            reply.rev != expected.expectedRev ||
+            reply.rev > reply.checkpoint.version
         ) {
             return reject("attribution")
         }

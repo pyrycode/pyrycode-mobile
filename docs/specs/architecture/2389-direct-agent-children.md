@@ -75,7 +75,7 @@ Pending documentation stage: `docs/knowledge/features/thread-screen.md` and `doc
 
 **Verdict:** PASS
 
-- Trust boundaries: MUST FIX addressed in design: `ThreadQueryDecoder` validates summary-only content, exact parent/capture/routing and matching separate completion before the store admits any page. Headline/error text is bounded inert text; unknown JSON never supplies actions or descendant inventory.
+- Trust boundaries: MUST FIX addressed in design: `ThreadQueryDecoder` validates summary-only content, exact parent/capture/routing and matching separate completion before the store admits any page. The re-review found that capture equality alone missed future revisions: `decodeThreadSummary` must bound each positive child revision by the unsigned consumed version, and `decodeChildren` must enforce the same bound on the parent for both data and marker-only replies, before staging or completion. Headline/error text is bounded inert text; unknown JSON never supplies actions or descendant inventory.
 - Tokens: preserve unsigned tokens without signed/floating conversion; no credentials created, stored or logged.
 - Files/storage: in-memory expansion maps only; existing full-fact app-private persistence remains unchanged, without migration or new file paths.
 - Android attack surface: no new exported component, intent, provider or WebView; Compose text and existing tool controls only.
@@ -89,6 +89,12 @@ Pending documentation stage: `docs/knowledge/features/thread-screen.md` and `doc
 **Date:** 2026-10-23
 
 ## Revisions
+
+- 2026-10-23 (verifier rework): Preserve the highest retained full revision and the first equal-revision fact when initializing `expansionItems`; recovered duplicates must not erase the projection's previous revision selection. `DeferredAuthoritativePresentationTest.revisionInvariantExpansionOverlayKeepsHighestFullFactAndFirstEqualRevision` and the unchanged `QueueRecoveryAgentEvidenceTest.newerRevisionsSurviveRecoveryForEveryScenario` and `ThreadEvidenceTest.userEchoCountRequiresExactlyOneDeliveredUser` prove it. No in-flight feature branch overlaps the four repair production files. Remeasurement is 1,804 inserted/deleted source, test and plan lines; the existing grandchild/verification-floor disposition and `needs-human:sizing` remain applicable.
+
+- 2026-10-23 (verifier rework): A retained full fact without order stays held without borrowing placement from an older child summary. Certified order-zero child rows require their own explicit order and stay out of the root queued/lost tail, so ancestor collapse governs their sole scoped identity. `AgentChildrenQueriesTest.placementInvariantCertifiedPageCannotInventOrderForRetainedFullFact` and `visibilityInvariantQueuedAndLostChildSummariesNeverEnterRootWaitingTail` drive certified pages through the production lane and deferred consumer.
+
+- 2026-10-23 (verifier rework/security amendment): Reject child or parent revisions beyond the captured consumed version using unsigned comparison; a valid separate marker cannot rescue rejected data, and marker-only empty success must also pass the parent bound. `AgentChildrenDecoderTest.captureInvariantFutureChildCannotStageOrComplete` and `captureInvariantFutureParentRejectsDataAndMarkerOnlySuccess` cover rejection, equality and unsigned maximum tokens; `AgentChildrenQueriesTest.captureInvariantFutureChildCannotPoisonRetainedFullRevision` proves that a revision-900 summary at capture 80 cannot replace a retained revision-70 full fact or advance coverage. The earlier security review missed this trust-boundary gap; its trust-boundary finding above is amended. Rechecked all security categories: no new storage, capability, crypto, Android surface, scope or diagnostic changes; risk remains elevated and the revised design verdict is PASS. The repair adds no independent behavior or exported types; retain the existing split-depth/verification-floor sizing disposition and all assertions.
 
 - 2026-10-23: a summary headline is independent of rendered tool input. Forward it through the existing `ToolCallExpansion` local to the header, preserving it after a body arrives without fabricating input fields or body contents. Required `shown: false` remains a valid summary fact; projection withholds that row while enumeration and cursor accounting retain it.
 

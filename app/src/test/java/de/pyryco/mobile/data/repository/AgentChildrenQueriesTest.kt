@@ -4,6 +4,9 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.listKey
+import de.pyryco.mobile.ui.conversations.thread.projectDeferredAuthoritativeThread
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -327,5 +330,73 @@ class AgentChildrenQueriesTest {
                     assertNotNull(f.page())
                 }
             }
+        }
+
+    @Test fun placementInvariantCertifiedPageCannotInventOrderForRetainedFullFact() =
+        runTest {
+            val f = fixture()
+            val saved =
+                ThreadItemDto.decode(
+                    json(
+                        """{"id":50,"rev":70,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"saved","content":{"name":"Agent","input":{"description":"complete"}}}""",
+                    ),
+                )
+            f.store.applyBatch("h", "c", "e", 70, listOf(saved), 0)
+            f.demand()
+            val frame = f.reply(version = 80)
+            f.lane.accept(frame.copy(payload = json(frame.payload.toString().replace("\"rev\":7", "\"rev\":70"))))
+            f.lane.accept(f.reply(true, version = 80))
+            assertNotNull(f.page())
+            assertSame(saved, f.snapshot().expansionItems.first { it.id == 50L })
+            val converted = mutableListOf<Long>()
+            val p = projectDeferredAuthoritativeThread("h", "c", f.snapshot(), onFullConversion = { converted += it })
+            val rows = p.demandRows(p.rows, setOf("${p.scope}:17", "${p.scope}:50"))
+            assertEquals(listOf("msg:${p.scope}:17"), rows.map { it.listKey(0) })
+            assertTrue(converted.isEmpty())
+        }
+
+    @Test fun visibilityInvariantQueuedAndLostChildSummariesNeverEnterRootWaitingTail() =
+        runTest {
+            for (status in listOf("queued", "lost")) {
+                val f = fixture()
+                f.demand()
+                val frame = f.reply()
+                val child =
+                    frame.payload
+                        .toString()
+                        .replace("\"kind\":\"agent\"", "\"kind\":\"user_message\"")
+                        .replace("\"status\":\"done\"", "\"status\":\"$status\"")
+                f.lane.accept(frame.copy(payload = json(child)))
+                f.lane.accept(f.reply(true))
+                assertNotNull(f.page())
+                val p = projectDeferredAuthoritativeThread("h", "c", f.snapshot())
+                val expanded = p.demandRows(p.rows, setOf("${p.scope}:17"))
+                assertEquals(listOf("msg:${p.scope}:17", "msg:${p.scope}:50"), expanded.map { it.listKey(0) })
+                assertTrue(expanded.none { it is ThreadRow.Queued })
+                assertEquals(expanded.size, expanded.map { it.listKey(0) }.toSet().size)
+                assertEquals(listOf("msg:${p.scope}:17"), p.demandRows(p.rows, emptySet()).map { it.listKey(0) })
+            }
+        }
+
+    @Test fun captureInvariantFutureChildCannotPoisonRetainedFullRevision() =
+        runTest {
+            val f = fixture()
+            val saved =
+                ThreadItemDto.decode(
+                    json(
+                        """{"id":50,"rev":70,"order":6,"parent":17,"kind":"agent","status":"done","shown":true,"active":false,"summary":"saved","content":{"name":"Agent","input":{"description":"complete"}}}""",
+                    ),
+                )
+            f.store.applyBatch("h", "c", "e", 70, listOf(saved), 0)
+            val before = f.snapshot()
+            f.demand()
+            val frame = f.reply(version = 80)
+            f.lane.accept(frame.copy(payload = json(frame.payload.toString().replace("\"rev\":7", "\"rev\":900"))))
+            f.lane.accept(f.reply(true, version = 80))
+            assertNull(f.page())
+            assertEquals(BodyLoad.Retry, f.snapshot().childLoads[17L to 23L])
+            assertSame(saved, f.snapshot().expansionItems.first { it.id == 50L })
+            assertEquals(before.checkpoint, f.snapshot().checkpoint)
+            assertEquals(before.coverage, f.snapshot().coverage)
         }
 }

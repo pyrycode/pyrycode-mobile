@@ -132,6 +132,38 @@ class AgentChildrenDecoderTest {
         rejected(d, raw(summary().replace("Inspect files", "x".repeat(70000))))
     }
 
+    @Test fun captureInvariantFutureChildCannotStageOrComplete() {
+        val d = decoder()
+        rejected(d, raw(summary().replace("\"rev\":7", "\"rev\":900")))
+        rejected(d, raw("", true, ",\"more\":false"))
+        val boundary = decoder()
+        accepted(boundary, raw(summary().replace("\"rev\":7", "\"rev\":41")))
+        accepted(boundary, raw("", true, ",\"more\":false"))
+    }
+
+    @Test fun captureInvariantFutureParentRejectsDataAndMarkerOnlySuccess() {
+        for (revision in listOf(900uL, ULong.MAX_VALUE)) {
+            for (final in listOf(false, true)) {
+                val d = ThreadQueryDecoder("h", "connection", 37, ThreadQueryRequest.Children("c", "e", 17uL, revision))
+                val reply = if (final) raw("", true, ",\"more\":false") else raw()
+                rejected(d, objectOf(reply.toString().replace("\"rev\":23", "\"rev\":$revision")))
+            }
+        }
+        val d = decoder()
+        accepted(d, raw())
+        rejected(d, objectOf(raw("", true, ",\"more\":false").toString().replace("\"version\":41", "\"version\":6")))
+        val unsigned = ThreadQueryDecoder("h", "connection", 37, ThreadQueryRequest.Children("c", "e", 17uL, ULong.MAX_VALUE))
+        accepted(
+            unsigned,
+            objectOf(
+                raw("", true, ",\"more\":false")
+                    .toString()
+                    .replace("\"rev\":23", "\"rev\":${ULong.MAX_VALUE}")
+                    .replace("\"version\":41", "\"version\":${ULong.MAX_VALUE}"),
+            ),
+        )
+    }
+
     @Test fun capacityInvariantDataAndMarkerShareOneEscapedEnvelopeBudget() {
         accepted(decoder(), raw(summary().replace("\"shown\":true", "\"shown\":false")))
         val d = decoder()

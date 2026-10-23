@@ -178,7 +178,7 @@ internal sealed class ThreadQueryReply(
         val final = raw.threadBoolean("final")
         val children =
             (raw["children"] as? JsonArray ?: throw IllegalArgumentException("invalid children")).also { require(it.size <= 256) }.map {
-                decodeThreadSummary(it as? JsonObject ?: throw IllegalArgumentException("invalid summary"))
+                decodeThreadSummary(it as? JsonObject ?: throw IllegalArgumentException("invalid summary"), checkpoint.version)
             }
         val more = if (final) raw.threadBoolean("more") else null
         val cursor = raw["cursor"] as? JsonObject
@@ -286,9 +286,13 @@ internal fun JsonObject.threadUnsigned(key: String): ULong {
 internal fun threadUnsignedJson(value: ULong) = MobileJson.parseToJsonElement(value.toString())
 
 /** Summary metadata stays inert and separate from full facts; no body or inventory is admitted. */
-private fun decodeThreadSummary(raw: JsonObject): ThreadItemDto {
+private fun decodeThreadSummary(
+    raw: JsonObject,
+    consumedVersion: ULong,
+): ThreadItemDto {
     require(setOf("content", "children", "items", "descendants").none { it in raw })
     require(raw.threadInteger("id") > 0 && raw.threadInteger("rev") > 0)
+    require(raw.threadInteger("rev").toULong() <= consumedVersion)
     raw.threadInteger("order")
     raw.threadInteger("parent")
     raw.threadBoolean("shown")

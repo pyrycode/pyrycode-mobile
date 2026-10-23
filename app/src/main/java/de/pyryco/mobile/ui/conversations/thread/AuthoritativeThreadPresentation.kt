@@ -267,7 +267,7 @@ private fun projectThread(
             .values
             .flatMap { it.items }
             .mapTo(HashSet()) { it.id }
-    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.id in paged }.sortedBy { it.order }
+    val ordered = held.values.filter { (it.order ?: 0) > 0 || it.order == 0L && it.id in paged }.sortedBy { it.order }
     val agents = held.values.filter { it.kind == "agent" }.associateBy { it.id }
     // Parent chains are facts, not raw-event nesting. Hidden/unordered ancestors remain in this map.
     val owners = mutableMapOf<Long, Long?>()
@@ -275,9 +275,9 @@ private fun projectThread(
     val identities = held.keys.associateWith(::identity)
     val parents = held.values.associate { identities.getValue(it.id) to identities[it.parent] }
     val expandable =
-        held.values
+        ordered
             .filter {
-                it.shown && ((it.order ?: 0) > 0 || it.id in paged) && it.kind in setOf("agent", "tool_call") && it.toolName() != null
+                it.shown && it.kind in setOf("agent", "tool_call") && it.toolName() != null
             }.mapTo(HashSet()) { identities.getValue(it.id) }
     // Inclusive nearest-agent/depth summaries let shared parent chains be walked once.
     val lineage = mutableMapOf<Long, Pair<Long?, Int>>()
@@ -434,8 +434,13 @@ private fun projectThread(
                 .flatMap { backgroundContents.getValue(it.id) }
     val waiting =
         held.values
-            .filter { it.shown && it.kind == "user_message" && (it.order ?: 0) <= 0 && it.status in setOf("queued", "lost") }
-            .sortedBy { it.id }
+            .filter {
+                it.shown &&
+                    it.kind == "user_message" &&
+                    (it.parent == null || it.parent == 0L) &&
+                    (it.order ?: 0) <= 0 &&
+                    it.status in setOf("queued", "lost")
+            }.sortedBy { it.id }
             .map { item ->
                 val fields = item.content as? JsonObject
                 ThreadRow.Queued(

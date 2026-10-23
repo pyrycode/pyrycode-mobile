@@ -39,8 +39,11 @@ internal data class AuthoritativeThreadSnapshot(
 ) {
     /** Expansion summaries never enter saved full facts or history coverage. */
     val expansionItems: List<ThreadItemDto> =
-        buildMap {
-            items.forEach { put(it.id, it) }
+        buildMap<Long, ThreadItemDto> {
+            items.forEach { item ->
+                val held = get(item.id)
+                if (held == null || item.rev > held.rev) put(item.id, item)
+            }
             val remaining = childPages.toMutableMap()
             do {
                 var progressed = false
