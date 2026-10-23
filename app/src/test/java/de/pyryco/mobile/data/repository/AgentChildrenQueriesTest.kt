@@ -183,6 +183,123 @@ class AgentChildrenQueriesTest {
             assertFalse(f.snapshot().repairNeeded)
         }
 
+    @Test fun ancestorPageObservationClearsNestedRetryForChangedOrMissingFreshness() =
+        runTest {
+            for (freshness in listOf("41", null)) {
+                val f = fixture()
+                val nested = Any()
+
+                fun page(
+                    version: Int,
+                    subtree: String?,
+                    more: Boolean,
+                ) {
+                    val request = f.sent.last()
+                    val owner = (request.payload as JsonObject).getValue("item_id")
+                    val rev = (request.payload as JsonObject).getValue("expected_rev")
+                    val base = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":$version,\"item_id\":$owner,\"rev\":$rev"
+                    val child = """{"id":50,"rev":50,"order":0,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,"headline":"Nested","detail_omitted":true${subtree?.let {
+                        ",\"subtree_version\":$it"
+                    }.orEmpty()}}"""
+                    f.lane.accept(
+                        Envelope(
+                            90,
+                            "thread_children",
+                            "now",
+                            json("""{$base,"children":[$child],"final":false}"""),
+                            inReplyTo = request.id,
+                        ),
+                    )
+                    val cursor = if (more) """, "cursor":{$base,"order":0,"id":50}""" else ""
+                    f.lane.accept(
+                        Envelope(
+                            91,
+                            "thread_children",
+                            "now",
+                            json("""{$base,"children":[],"final":true,"more":$more$cursor}"""),
+                            inReplyTo = request.id,
+                        ),
+                    )
+                }
+
+                f.demand()
+                page(61, "40", true)
+                f.lane.children("c", nested, f.snapshot(), setOf(50))
+                f.error()
+                assertEquals(BodyLoad.Retry, f.snapshot().childLoads[50L to 50L])
+                f.demand(more = 17)
+                f.error()
+                f.demand(retry = 17)
+                page(62, freshness, false)
+                assertTrue(f.snapshot().detailValidity.serial(50) > 0)
+                repeat(3) { f.lane.children("c", nested, f.snapshot(), setOf(50)) }
+                assertEquals("freshness=$freshness must refresh the still-open nested agent", 5, f.sent.size)
+                assertEquals(BodyLoad.Loading, f.snapshot().childLoads[50L to 50L])
+            }
+        }
+
+    @Test fun completeDeliveryDescendantsRemainUsableWithoutExpansionAfterAncestorChanges() =
+        runTest {
+            for (freshness in listOf("40", "41", null)) {
+                val f = Fixture().also { it.support = false }
+                val remoteSent = mutableListOf<Envelope>()
+                val repo =
+                    RemoteConversationRepository(
+                        object : SessionPump {
+                            override val inbound = kotlinx.coroutines.flow.MutableSharedFlow<Envelope>()
+
+                            override fun send(envelope: Envelope): Boolean {
+                                remoteSent += envelope
+                                return true
+                            }
+                        },
+                        backgroundScope,
+                        negotiatedCapabilities = { setOf("thread", "interactive") },
+                        authoritativeHostId = "h",
+                        authoritativeThreads = f.store,
+                    )
+
+                fun fullParent(
+                    rev: Long,
+                    subtree: String?,
+                ) = ThreadItemDto.decode(
+                    JsonObject(
+                        (parent(rev).raw - "detail_omitted") +
+                            subtree?.let { mapOf("subtree_version" to kotlinx.serialization.json.JsonPrimitive(it.toLong())) }.orEmpty(),
+                    ),
+                )
+                val child =
+                    ThreadItemDto.decode(
+                        json(
+                            """{"id":50,"rev":50,"order":6,"parent":17,"kind":"tool_call","status":"done","shown":true,"active":false,"summary":"Read","content":{"name":"Read","output":"complete body"}}""",
+                        ),
+                    )
+                assertEquals(
+                    AuthoritativeThreadOutcome.Applied,
+                    f.store.establishComplete("h", "c", "e", 60, listOf(fullParent(23, "40"), child), 0),
+                )
+                assertEquals(
+                    AuthoritativeThreadOutcome.Applied,
+                    f.store.applyBatch("h", "c", "e", 61, listOf(fullParent(25, freshness)), 0),
+                )
+                val before = f.snapshot()
+                f.lane.bodies("c", f, before, setOf(50))
+                repo.demandToolBodies("c", f, before, setOf(50))
+                assertTrue(f.sent.isEmpty())
+                assertTrue(remoteSent.isEmpty())
+                assertTrue("complete delivery must retain usable exact source contents", before.hasToolBody(child))
+                val p = projectDeferredAuthoritativeThread("h", "c", before)
+                val expanded = setOf("${p.scope}:17", "${p.scope}:50")
+                val row =
+                    p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single {
+                        it.listKey(0) ==
+                            "msg:${p.scope}:50"
+                    }
+                assertTrue(p.suppliesReadSight(row, expanded))
+                assertSame(before, f.snapshot())
+            }
+        }
+
     @Test fun freshnessInvariantEqualRevisionAncestorObservationRefreshesOnlyDemandedPages() =
         runTest {
             for (freshness in listOf("0", "42", null)) {

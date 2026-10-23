@@ -60,6 +60,9 @@ Reuse synchronized store admission and query-lane methods. No new coroutine, dis
 | Data then invalidation then terminal, late old capture | `AgentChildrenQueriesTest.captureInvariantInvalidationBetweenDataAndMarkerDrainsBeforeReplacement` |
 | Older full batch versus current full replacement | `AgentChildrenQueriesTest.captureInvariantOlderFullBatchCannotClearNewerAncestorInvalidation`; `freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant` |
 | Revision invalidation before the next consumer frame | `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` |
+| Parent page replacement changes or omits nested freshness after Retry | `AgentChildrenQueriesTest.ancestorPageObservationClearsNestedRetryForChangedOrMissingFreshness` |
+| Held demand update after body/page invalidation and later withdrawal | `ExpansionDetailBudgetTest.staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation`; `heldPageDemandKeepsInvalidatedEnumerationProtectedUntilWithdrawal` |
+| Complete delivery without expansion after ancestor changes | `AgentChildrenQueriesTest.completeDeliveryDescendantsRemainUsableWithoutExpansionAfterAncestorChanges` |
 
 ## Error handling
 
@@ -81,6 +84,9 @@ None. Unknown freshness invalidates once per accepted source observation, never 
 - 2026-10-23: Lifecycle review identified a second asynchronous publication boundary: an old lane's final retirement could clear a replacement lane's sticky Retry under colliding IDs. Bind load-state writes to their query owner in `detailLoad`, retain serial/generation checks and prune owner bookkeeping with snapshot publication. The controlled replacement probe also collides request IDs. The mounted connection switch explicitly reopens after the existing destination-local expansion reset.
 - 2026-10-23: `staleOpenBodyRemainsChargedAndProtectedBeforeTheNextPresentation` reproduced eviction between a source revision change and the next consumer frame. Existing admitted demand now protects retained invalidated data by identity through that interval; this protection grants no read, Retry or publication authority. Collapse still releases the entry and permits capacity Retry.
 - 2026-10-23: `freshnessInvariantCurrentFullProseCanReplaceInvalidatedDescendant` reproduced a retained invalidation surviving a current full prose fact. Non-tool full facts now clear only their own body invalidation when their revision wins and capture reaches the invalidation floor; an older full batch remains stale. They grant no child completion or history coverage.
+- 2026-10-23 (verifier finding 1): Parent first-page replacement must clear only its own load from the observed snapshot. Copying the pre-observation child loads restores an invalidated nested Retry and suppresses current demand. The changed/missing-freshness regression keeps the fifth nested request as its causal assertion.
+- 2026-10-23 (verifier finding 2): `syncRetention` forwards all remaining admitted consumer targets to the store's lifetime/identity protection checks. Request serial, revision and cursor checks still govern reads, Retry and publication, but cannot revoke protection during a held-frame withdrawal update. Body and page pressure probes cover retention at the inclusive byte limit, refusal of stale additions, and release on withdrawal.
+- 2026-10-23 (verifier finding 3): Complete source bodies reached through complete source ancestry remain usable at their exact revision after a full ancestor observation. Body invalidation propagates through omitted/summary ancestry and fetched details; child enumeration and request serials still invalidate for every affected identity. Existing invalidation floors remain in force, so an old full batch cannot clear a compact invalidation. The production repository with only `thread`/`interactive` grants must render the complete descendant without an expansion request or synthetic Loading state.
 
 ## Documentation handoff
 
@@ -99,6 +105,7 @@ Pending for the documentation stage and #2393's relocated handoff: supply invali
 - [Errors and telemetry] Only static invalidated/loaded/failure codes; no payload, cursor, identifier, plaintext, secret or stack trace logging.
 - [Concurrency] MUST FIX addressed in design: source observations and detail admission use the store lock; query keys fence staged data and terminal markers, retaining remote-slot drain before reuse. No new jobs or locks.
 - [Concurrency follow-up] `detailLoad` binds Loading/Retry/withdrawal writes to the producing lane, so a late old-connection retirement cannot clear a replacement Retry. Stale protection in `protectedDetails` retains only previously admitted demand in the same generation/incarnation; it grants no query or read authority.
+- [Rework boundaries] Parent page admission preserves descendant load invalidation; held admitted keys retain only store-validated lifetime protection. Complete-source ancestry preserves exact full bodies without bypassing prior compact invalidation floors or granting child/history completion. No capability is inferred from retained content.
 - [Threat model] Delayed/reordered relay frames cannot cross request and source captures. Hostile daemon summaries retain existing size, identity and inert rendering checks. Rooted-device token theft and UI screenshot/accessibility exposure are unchanged existing platform concerns, outside this memory-only repair; genuine capture/privacy acceptance stays with #2393.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)

@@ -563,7 +563,7 @@ internal class AuthoritativeThreadStore {
                         childPages =
                             retained.childPages.filterKeys { it.first != parent.id } +
                                 (key to AgentChildPage(rows, marker.cursor, marker.checkpoint.version)),
-                        childLoads = retained.childLoads - key,
+                        childLoads = observed.childLoads - key,
                         detailValidity = observed.detailValidity.copy(children = observed.detailValidity.children - parent.id),
                     )
                 },

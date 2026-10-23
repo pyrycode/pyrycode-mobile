@@ -247,7 +247,8 @@ internal class AuthoritativeThreadQueries(
     }
 
     private fun syncRetention() {
-        val keys = (bodyConsumers.values + childConsumers.values).flatten().filter(::bodyCurrent)
+        // Admitted stale targets retain protection until withdrawal; the store checks lifetime and identity.
+        val keys = (bodyConsumers.values + childConsumers.values).flatten()
         store.protectDetails(this, keys.mapTo(mutableSetOf()) { ExpansionDetailKey(host, it.request, it.generation, it.incarnation) })
     }
 

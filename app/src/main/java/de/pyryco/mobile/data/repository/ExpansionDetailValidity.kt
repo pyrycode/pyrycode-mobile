@@ -32,6 +32,7 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
     val known = expansionItems.associateBy { it.id }
     val observations = detailValidity.observations.toMutableMap()
     val changed = mutableSetOf<Long>()
+    val incompleteChanges = mutableSetOf<Long>()
     val completeBodies = mutableSetOf<Long>()
     for (item in incoming) {
         if (item.id in retirements) continue
@@ -52,7 +53,10 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
             }
         if (previous != null && (item.rev < previous.revision || version <= previous.version)) continue
         observations[item.id] = ExpansionDetailValidity.Observation(item.rev, freshness, version)
-        if (previous != null && (previous.revision != item.rev || freshness == null || previous.freshness != freshness)) changed += item.id
+        if (previous != null && (previous.revision != item.rev || freshness == null || previous.freshness != freshness)) {
+            changed += item.id
+            if (!item.hasToolBody) incompleteChanges += item.id
+        }
         if (item.hasToolBody && version >= (detailValidity.floors[item.id] ?: 0)) completeBodies += item.id
     }
     val descendants = expansionItems.groupBy { it.parent }
@@ -63,12 +67,21 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
         if (!affected.add(id)) continue
         descendants[id].orEmpty().forEach { pending.addLast(it.id) }
     }
+    // Complete delivery revises each full fact independently. Only omitted ancestry makes a
+    // retained full descendant depend on expansion freshness; fetched bodies always depend on it.
+    val affectedBodies = mutableSetOf<Long>()
+    pending.addAll(affected.filter { known[it]?.hasToolBody != true || it in incompleteChanges })
+    while (pending.isNotEmpty()) {
+        val id = pending.removeFirst()
+        if (!affectedBodies.add(id)) continue
+        descendants[id].orEmpty().forEach { pending.addLast(it.id) }
+    }
     val validity =
         detailValidity.copy(
             observations = observations,
             serials = detailValidity.serials + affected.associateWith { detailValidity.serial(it) + 1 },
             floors = detailValidity.floors + affected.associateWith { maxOf(version, detailValidity.floors[it] ?: 0) },
-            bodies = (detailValidity.bodies + affected) - completeBodies,
+            bodies = (detailValidity.bodies + affectedBodies) - completeBodies,
             children = detailValidity.children + affected,
         )
     if (affected.isNotEmpty()) RelayLog.i { "event=thread_detail code=invalidated" }
