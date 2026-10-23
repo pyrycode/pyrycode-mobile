@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.design.PerTicketDeviceTest
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -170,6 +171,7 @@ class ThreadPermissionCaptureTest {
         capture("permission-compact-320x700.png", 320, 700, 1.5f)
     }
 
+    @PerTicketDeviceTest
     @Test
     fun inlineRequestProtectsCaptureRejectsObscuredTouchesAndRestoresWindowPolicy() {
         show()
