@@ -3467,6 +3467,15 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 
 ### Scripted ping durable-gap proof (#1842)
 
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+also retains #2462's current-connection final-reply read proof across controlled
+replacement and #2467's separate list-only post proof: unread after an admitted
+post, then Idle after peer confirmation without reopening the phone thread.
+Unavailable shown metadata remains unknown. Bounded diagnostics separate source
+row presence, current read/shown facts, competing attention and rendered semantics;
+the unread wait remains 90000 ms. The [Linux paired results and retained failures](recorded-tests.md#unavailable-summary-recording-integration-2467)
+include the durable-gap method because it restarts the shared daemon.
+
 The ping method also proves the foreground correlated read and list-only peer attention
 clear. Its content-free diagnostics record live proof qualification before history
 classification, then the displayable target and selected route (#2198). Receipt
@@ -7731,6 +7740,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **#2467:** rung-4 `DeterministicInteractiveStreamE2ETest` ping keeps final-reply
+  confirmation separate from post admission, unread projection and peer-read Idle.
+  The paired ping/durable-gap run passed 2/2 on Linux; historical macOS failure
+  and capture limitations remain [recorded](recorded-tests.md#unavailable-summary-recording-integration-2467).
+  This availability repair adds no rung-3 scenario or pre-ship command change.
 
 - **#2367:** rung-3 `InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
   and rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`

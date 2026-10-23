@@ -187,3 +187,40 @@ Existing legacy repository tests stay enabled. These are deterministic supplied-
 probes; production activation and combined live proof belong to #1988, not this seam.
 See the [query architecture plan](../../specs/architecture/2148-authoritative-thread-queries.md)
 and [item-store plan](../../specs/architecture/2043-authoritative-thread-store.md).
+
+### Recovering unavailable shown metadata (#2467)
+
+An admitted live completion requests a daemon conversation summary independently
+of its thread catch-up. That summary can legitimately omit shown metadata while
+recovery is in progress. Successful content certification does not make the held
+shown/read facts available: without another summary edge, a present list row can
+remain Idle after a new durable post. A first list emission proves neither post
+delivery nor metadata availability.
+
+`RemoteConversationRepository` retains the latest live-summary request identity
+and store generation per conversation on its connection. It registers before
+scheduling the send and removes refused requests. The follow-up waits for the
+original correlated summary to answer. Once its actual response is applied and a
+current completion certificate covers all applied progress, either edge can finish
+the join: response after certification, or certification after response. Only
+existing thread-supported facts with unavailable shown metadata authorize the
+additional summary request. Missing facts and available shown values, including
+explicit zero, preserve the original request contract.
+
+The answered trigger is atomically consumed before requesting that one follow-up.
+The follow-up is not another live trigger, so a repeated certificate, duplicate
+response or still-unavailable reply cannot create a polling loop. Retirement
+clears the connection-local ledger; request dispatch and certification retain
+their current-owner/generation fences. Neither certification nor request admission
+advances shown/read values. Only daemon-supplied metadata can restore availability
+or confirm a read; cached content, local sight and pending writes grant no authority.
+See [host attention](dependency-injection-host-conversation-source.md#attention-state-877).
+
+`NegotiatedThreadActivationTest` drives this through the real host source:
+`unreadPostRefreshesUnavailableSummaryAfterRecoveryOnReplacement` keeps the row
+present and Idle with unavailable shown metadata, then accepts shown/read 13/9 as
+Unread and peer read 13 as Idle without a phone read. The available-summary case,
+both response orders and repeated-certification probes protect request count and
+one-time consumption. Reversed facts and retired-owner replies cannot manufacture
+confirmation. Corrected causal-red evidence and the separate native final-read,
+post/unread and peer-idle proofs are [recorded here](../../recorded-tests.md#unavailable-summary-recording-integration-2467).
