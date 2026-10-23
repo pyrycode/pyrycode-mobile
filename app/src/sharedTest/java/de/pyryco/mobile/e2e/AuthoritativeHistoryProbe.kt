@@ -11,6 +11,38 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /** Actual phone query receipts for the native saved-checkpoint recovery proof. Never issues a request. */
 internal object AuthoritativeHistoryProbe {
+    internal class Observation(
+        internal val revision: Any,
+        val requests: List<ThreadQueryRequest>,
+        val certificates: List<Certificate>,
+        val resets: List<Reset>,
+        val receipts: List<OwnedThreadQueryObservation.Receipt>,
+        val legacyRequests: Int,
+        val owner: ThreadEvidenceOwner?,
+    ) {
+        val current: Boolean = owner != null
+        val exactlyAccounted: Boolean =
+            receipts.size == requests.size &&
+                certificates.size + resets.size == requests.size &&
+                receipts.all { receipt ->
+                    requests.count { it === receipt.request } == 1 &&
+                        when (receipt.disposition) {
+                            "certified" ->
+                                certificates.count {
+                                    it.request === receipt.request && it.snapshot.generation == receipt.generation
+                                } == 1 &&
+                                    resets.none { it.request === receipt.request }
+                            "reset" ->
+                                resets.count { it.request === receipt.request } == 1 &&
+                                    certificates.none { it.request === receipt.request }
+                            else -> false
+                        }
+                }
+        val ready: Boolean = current && certificates.isNotEmpty() && exactlyAccounted
+
+        override fun toString(): String = "HistoryObservation(redacted)"
+    }
+
     internal class Certificate(
         val request: ThreadQueryRequest,
         val reply: ThreadQueryReply.Success,
@@ -34,6 +66,8 @@ internal object AuthoritativeHistoryProbe {
     private val certified = mutableListOf<Certificate>()
     private val resets = mutableListOf<Reset>()
     private var legacy = 0
+    private var active = false
+    private var revision: Any = Any()
 
     @Synchronized fun begin(
         host: String,
@@ -42,20 +76,21 @@ internal object AuthoritativeHistoryProbe {
     ) {
         require(baseline.epoch != null && baseline.checkpoint > 0 && !baseline.repairNeeded && !baseline.resetNeeded)
         end()
-        this.host = host
-        this.conversation = conversation
-        this.baseline = baseline
-    }
-
-    @Synchronized fun end() {
-        host = null
-        conversation = null
-        baseline = null
         witness = null
         accepted.clear()
         certified.clear()
         resets.clear()
         legacy = 0
+        this.host = host
+        this.conversation = conversation
+        this.baseline = baseline
+        active = true
+    }
+
+    @Synchronized fun end() {
+        active = false
+        revision = Any()
+        witness?.end()
     }
 
     @Synchronized fun sending(
@@ -64,7 +99,8 @@ internal object AuthoritativeHistoryProbe {
         envelope: Envelope,
         current: () -> Boolean,
     ) {
-        if (!selected(host, envelope) || envelope.type !in setOf("thread_catch_up", "thread_page")) return
+        if (!active || !selected(host, envelope) || envelope.type !in setOf("thread_catch_up", "thread_page")) return
+        revision = Any()
         if (witness == null) {
             val saved = checkNotNull(baseline)
             val store = AuthoritativeThreadStore()
@@ -91,6 +127,7 @@ internal object AuthoritativeHistoryProbe {
         result: Boolean,
     ) {
         if (this.host != host) return
+        revision = Any()
         if (selected(host, envelope) && result && envelope.type in setOf("request_history", "backfill_since")) legacy++
         witness?.sent(connection, envelope, result)
     }
@@ -100,14 +137,20 @@ internal object AuthoritativeHistoryProbe {
         connection: Any,
         envelope: Envelope,
     ) {
-        if (this.host == host) witness?.received(connection, envelope)
+        if (active && this.host == host) {
+            revision = Any()
+            witness?.received(connection, envelope)
+        }
     }
 
     @Synchronized fun ended(
         host: String,
         connection: Any,
     ) {
-        if (this.host == host) witness?.close(connection)
+        if (this.host == host) {
+            revision = Any()
+            witness?.close(connection)
+        }
     }
 
     @Synchronized fun requests(): List<ThreadQueryRequest> = accepted.toList()
@@ -118,7 +161,21 @@ internal object AuthoritativeHistoryProbe {
 
     @Synchronized fun legacyRequests(): Int = legacy
 
-    @Synchronized fun current(): Boolean = witness?.owner() != null
+    @Synchronized fun current(): Boolean = active && witness?.owner() != null
+
+    @Synchronized fun snapshot(): Observation =
+        Observation(
+            revision,
+            accepted.toList(),
+            certified.toList(),
+            resets.toList(),
+            witness?.receipts().orEmpty(),
+            legacy,
+            witness?.owner().takeIf { active },
+        )
+
+    /** Linearization point after the caller read current repository content without holding this monitor. */
+    @Synchronized fun isCurrent(observation: Observation): Boolean = observation.revision === revision && observation.ready && current()
 
     private fun selected(
         host: String,

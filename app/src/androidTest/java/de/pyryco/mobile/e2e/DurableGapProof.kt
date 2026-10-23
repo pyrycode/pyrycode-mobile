@@ -127,22 +127,20 @@ internal class DurableGapProof(
         )
         try {
             reconnect()
+            var initialRecovery: Pair<AuthoritativeHistoryProbe.Observation, ThreadEvidence>? = null
             rule.waitUntil(30_000) {
-                AuthoritativeHistoryProbe.current() &&
-                    AuthoritativeHistoryProbe.certificates().isNotEmpty() &&
-                    AuthoritativeHistoryProbe.requests().size ==
-                    AuthoritativeHistoryProbe.certificates().size + AuthoritativeHistoryProbe.resets().size &&
-                    authoritativeEvidence()?.admitted == true
+                currentRecovery { it.admitted }?.also { initialRecovery = it } != null
             }
             rule.waitForIdle()
-            val initialRequests = AuthoritativeHistoryProbe.requests()
+            val initial = checkNotNull(initialRecovery).first
+            val initialRequests = initial.requests
             val savedRequest =
                 initialRequests.first() as? ThreadQueryRequest.CatchUp
                     ?: throw AssertionError("saved-checkpoint recovery did not start with catch-up")
             assertEquals("saved source epoch", baseline.epoch, savedRequest.epoch)
             assertEquals("saved source checkpoint", baseline.checkpoint.toULong(), savedRequest.version)
             assertTrue("no page demand before the older gesture", initialRequests.none { it is ThreadQueryRequest.Page })
-            val resets = AuthoritativeHistoryProbe.resets()
+            val resets = initial.resets
             val recoveryEpoch =
                 resets
                     .singleOrNull()
@@ -150,14 +148,21 @@ internal class DurableGapProof(
                     ?.checkpoint
                     ?.epoch ?: baseline.epoch
             if (resets.isEmpty()) {
-                val certificate = AuthoritativeHistoryProbe.certificates().single()
+                val certificate = initial.certificates.first()
                 assertTrue("the exact saved request was certified", certificate.request === savedRequest)
                 val coverage =
                     certificate.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
                         ?: throw AssertionError("saved tail was not certified")
                 assertEquals("complete captured source interval", savedRequest.version, coverage.fromVersion)
                 assertTrue("bounded changed tail", certificate.reply.checkpoint.version - savedRequest.version <= 1024uL)
-                assertEquals("one accepted saved-tail request", 1, initialRequests.size)
+                assertEquals(
+                    "one accepted saved-tail request",
+                    1,
+                    initialRequests.count {
+                        it is ThreadQueryRequest.CatchUp && it.epoch == savedRequest.epoch && it.version == savedRequest.version
+                    },
+                )
+                verifyFollowUps(initial.certificates, recoveryEpoch)
             } else {
                 val reset = resets.single()
                 assertTrue("reset belongs to the exact accepted saved request", reset.request === savedRequest)
@@ -166,7 +171,7 @@ internal class DurableGapProof(
                     reset.reply.checkpoint.epoch
                         .isNotBlank(),
                 )
-                val certificates = AuthoritativeHistoryProbe.certificates()
+                val certificates = initial.certificates
                 val newest = certificates.first()
                 val opening =
                     newest.request as? ThreadQueryRequest.CatchUp
@@ -179,18 +184,7 @@ internal class DurableGapProof(
                         ?: throw AssertionError("reset did not receive a certified newest window")
                 assertTrue("fresh window starts a real older gap", window.olderExists)
                 assertTrue("fresh window is from the observed reset generation", newest.snapshot.generation > 0)
-                for (extra in certificates.drop(1)) {
-                    val request =
-                        extra.request as? ThreadQueryRequest.CatchUp
-                            ?: throw AssertionError("page arrived without a gesture")
-                    val coverage =
-                        extra.reply.coverage as? ThreadQueryReply.Coverage.CatchUp
-                            ?: throw AssertionError("unexpected replacement window")
-                    assertEquals("same source follow-up epoch", recoveryEpoch, request.epoch)
-                    assertEquals("follow-up begins at the freshly certified checkpoint", newest.reply.checkpoint.version, request.version)
-                    assertEquals("follow-up certifies its actual requested interval", request.version, coverage.fromVersion)
-                }
-                assertTrue("at most one actual post-reset follow-up", certificates.size <= 2)
+                verifyFollowUps(certificates, recoveryEpoch)
                 val first = checkNotNull(authoritativeEvidence())
                 val source = first.owner
                 assertTrue("newest post was actually recovered", first.records.any { it.fullText == newestPost })
@@ -252,26 +246,27 @@ internal class DurableGapProof(
                     checkNotNull(authoritativeEvidence()).sourceSnapshot?.coverage?.olderExists,
                 )
             }
+            var finalRecovery: Pair<AuthoritativeHistoryProbe.Observation, ThreadEvidence>? = null
             rule.waitUntil(30_000) {
-                AuthoritativeHistoryProbe.current() &&
-                    authoritativeEvidence()?.let { evidence ->
-                        val texts = evidence.records.map { it.fullText }
-                        evidence.admitted && expected.all { it in texts } && reply.admitted(evidence, serverId) != null
-                    } == true
+                currentRecovery { evidence ->
+                    val texts = evidence.records.map { it.fullText }
+                    evidence.admitted && expected.all { it in texts } && reply.admitted(evidence, serverId) != null
+                }?.also { finalRecovery = it } != null
             }
-            val evidence = checkNotNull(authoritativeEvidence())
+            val (observation, evidence) = checkNotNull(finalRecovery)
             val snapshot = checkNotNull(evidence.sourceSnapshot)
-            val certificates = AuthoritativeHistoryProbe.certificates()
+            val certificates = observation.certificates
             val version = certificates.maxOf { it.reply.checkpoint.version }
             assertEquals("recovered source epoch", recoveryEpoch, snapshot.epoch)
             assertTrue("current source certifies every actual recovery", snapshot.checkpoint.toULong() >= version)
             assertTrue("current source is completely certified", snapshot.checkpoint >= snapshot.completedVersion)
             assertEquals(
                 "every accepted request has an exact terminal receipt",
-                AuthoritativeHistoryProbe.requests().size,
-                certificates.size + AuthoritativeHistoryProbe.resets().size,
+                observation.requests.size,
+                certificates.size + observation.resets.size,
             )
-            assertEquals("no legacy content request", 0, AuthoritativeHistoryProbe.legacyRequests())
+            assertTrue("every receipt belongs to its exact accepted request and generation", observation.exactlyAccounted)
+            assertEquals("no legacy content request", 0, observation.legacyRequests)
             val recovered = checkNotNull(reply.admitted(evidence, serverId))
             assertEquals("complete independently produced reply", reply.text, recovered.records.joinToString("") { it.fullText })
             val terminalMatches =
@@ -400,6 +395,36 @@ internal class DurableGapProof(
         } finally {
             AuthoritativeHistoryProbe.end()
         }
+    }
+
+    private fun verifyFollowUps(
+        certificates: List<AuthoritativeHistoryProbe.Certificate>,
+        recoveryEpoch: String?,
+    ) {
+        val newest = certificates.first()
+        for (extra in certificates.drop(1)) {
+            val request = extra.request as? ThreadQueryRequest.CatchUp ?: throw AssertionError("page arrived without a gesture")
+            val coverage =
+                extra.reply.coverage as? ThreadQueryReply.Coverage.CatchUp ?: throw AssertionError("unexpected replacement window")
+            assertEquals("same source follow-up epoch", recoveryEpoch, request.epoch)
+            assertEquals("follow-up begins at the freshly certified checkpoint", newest.reply.checkpoint.version, request.version)
+            assertEquals("follow-up certifies its actual requested interval", request.version, coverage.fromVersion)
+        }
+        assertTrue("at most one actual post-reset follow-up", certificates.size <= 2)
+    }
+
+    private fun currentRecovery(accept: (ThreadEvidence) -> Boolean): Pair<AuthoritativeHistoryProbe.Observation, ThreadEvidence>? {
+        val observation = AuthoritativeHistoryProbe.snapshot()
+        if (!observation.ready) return null
+        val evidence = authoritativeEvidence() ?: return null
+        val owner = checkNotNull(observation.owner)
+        if (owner.host != evidence.owner.host || owner.conversation != evidence.owner.conversation ||
+            owner.epoch != evidence.owner.epoch || owner.generation != evidence.owner.generation
+        ) {
+            return null
+        }
+        if (!accept(evidence) || !AuthoritativeHistoryProbe.isCurrent(observation)) return null
+        return observation to evidence
     }
 
     private fun authoritativeEvidence(): ThreadEvidence? =

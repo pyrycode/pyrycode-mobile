@@ -74,7 +74,7 @@ must not combine independent mutable probe snapshots across an admission point.
 | Partial, malformed or failed response, then another success | `incompleteWorkCannotBorrowCompletion` |
 | Close/current-owner retirement before or after acceptance | `retirementRetainsAcceptedAccounting` |
 | Reset with reused epoch, then fresh replacement and stale old response | `resetKeepsOldRequestsAndRequiresReplacementCertification` |
-| Wrong connection/epoch/generation | `staleSourceCannotSupplyReceipt` |
+| Wrong connection/epoch/generation | `staleSourceCannotSupplyReceipt`, `staleGenerationCannotRetainEarlierReadiness` |
 | Actual native recovery and unchanged ordinary ping | original `scripted ping` pair |
 
 ## Error handling
@@ -99,8 +99,49 @@ lint, assembly, instrumented compilation, formatting and final pre-verification.
 
 ## Open Questions
 
-- Which exact second-query lifecycle event prevents its passive receipt? Resolve
-  with controlled native tracing before choosing the corresponding repair.
+- Resolved by the controlled native trace below; no production defect found.
+
+## Revisions
+
+### 2026-10-23 — observed admission ordering
+
+The diagnostic composed candidate (plan commit plus retained producer patch and
+passive trace patch) ran original `scripted ping`: 2 executed, 1 passed, 1 failed,
+0 errors/skips. Private evidence is agents
+`logs/evidence/2515/builder-linux-20261023/diagnostic-red/`, with matching harness
+`logs/evidence/2515/harness/fault-85000f3ef1e53f1f2890ddc5b5fdebf0/`.
+
+Recovery query ordinal 1 captured generation 0, epoch equality true, version 2;
+accepted at 17:05:56.361, its batches and terminal certified version 495 at
+17:05:57.375. Query ordinal 2 captured the same current connection/generation,
+requested version 495 and was accepted at 17:05:57.386. The proof had already
+passed its initial readiness poll and then failed `one accepted saved-tail
+request` on the separately read list of two requests. Its `finally` calls `end`,
+discarding the pending observation. The actual follow-up terminal is processed by
+production at 17:05:57.492–57.653, after passive observation has ended. This is
+the same late-query boundary as the retained #2513 final 2-versus-1 failure;
+that older trace cannot retrospectively establish an exact missing wire ID.
+No early send-return delivery was observed in this capture; retain its negative
+control because the transport supports that ordering.
+
+Use a versioned immutable probe snapshot and revalidate that exact revision after
+reading current content. This avoids taking the probe monitor while suspending
+in repository observation. Capture both initial and final evidence this way.
+The saved-tail assertion counts the exact baseline epoch/version request, while
+every subsequent accepted follow-up remains in the receipt ledger and must
+certify its own requested interval. Validate same-source follow-ups just as the
+existing reset branch validates post-reset follow-ups. This preserves the one
+saved-tail-request assertion without misclassifying legitimate later recovery
+queries as another saved-tail request. Existing aggregate final receipt count
+remains, augmented by exact identity matching. No retries or bounds change.
+
+The explicit same-epoch generation probe then executed 10 tests, with the nine
+accounting checks passing and that probe failing: a previously certified witness
+still returned its old owner after the underlying store reset. Fence `owner`
+against the store's actual epoch and generation, and compare the captured probe
+owner with the repository evidence owner during admission. The snapshot token
+also remains invalid after a later request completes; it cannot become current
+again merely because counts happen to match.
 
 ## Security review
 
