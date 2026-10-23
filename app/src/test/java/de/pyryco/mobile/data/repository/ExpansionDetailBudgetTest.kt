@@ -4,6 +4,8 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.ui.conversations.thread.listKey
+import de.pyryco.mobile.ui.conversations.thread.projectDeferredAuthoritativeThread
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -11,7 +13,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -327,20 +328,38 @@ class ExpansionDetailBudgetTest {
 
     @Test fun ancestorProtection() =
         runTest {
-            val f = Fixture()
-            val parent = f.children()
-            f.acceptChildren(listOf(child(1000)))
-            f.body(1000, Any())
-            f.acceptBody(content(128))
-            parent?.close()
-            val retainedPage = requireNotNull(f.snapshot().childPages[90L to 4000L])
-            val bytes = retainedPage.items.sumOf { size(requireNotNull(it.summaryPayload)) } + 128
-            f.fillBytes(16 * 1024 * 1024 - bytes)
-            f.body(65)
-            f.acceptBody(content(128))
-            assertEquals(BodyLoad.Retry, f.snapshot().bodyLoads[65L to 4000L])
-            assertNotNull(f.snapshot().childPages[90L to 4000L])
-            assertTrue(f.snapshot().bodyContents.containsKey(1000L to 4000L))
+            for (revision in listOf(4000L, 4001L)) {
+                val f = Fixture()
+                val parent = f.children()
+                f.acceptChildren(listOf(child(1000)))
+                if (revision > 4000) {
+                    val newer = ThreadItemDto.decode(JsonObject(item(1000, 90).raw + ("rev" to JsonPrimitive(revision))))
+                    assertEquals(AuthoritativeThreadOutcome.Applied, f.store.applyBatch("h", "c", "e", revision, listOf(newer), 0))
+                }
+                f.body(1000, Any())
+                f.acceptBody(content(128))
+                parent?.close()
+                val retainedPage = requireNotNull(f.snapshot().childPages[90L to 4000L])
+
+                fun childVisible(): Boolean {
+                    val presentation = projectDeferredAuthoritativeThread("h", "c", f.snapshot())
+                    return presentation.rows.any {
+                        presentation.bodyItem(it.listKey(0))?.let { child ->
+                            child.id == 1000L && child.rev == revision && child.order == 0L
+                        } ==
+                            true
+                    }
+                }
+                assertTrue(childVisible())
+                val bytes = retainedPage.items.sumOf { size(requireNotNull(it.summaryPayload)) } + 128
+                f.fillBytes(16 * 1024 * 1024 - bytes)
+                f.body(65)
+                f.acceptBody(content(128))
+                assertEquals("ancestor protection with child revision $revision", BodyLoad.Retry, f.snapshot().bodyLoads[65L to 4000L])
+                assertSame(retainedPage, f.snapshot().childPages[90L to 4000L])
+                assertTrue(f.snapshot().bodyContents.containsKey(1000L to revision))
+                assertTrue("the newer order-zero full child still needs the retained page for placement", childVisible())
+            }
         }
 
     @Test fun hostAndResetIsolation() =

@@ -15,6 +15,7 @@ import java.io.Closeable
 internal fun occupyExpansionCapacity(
     store: AuthoritativeThreadStore,
     host: String,
+    bytes: Int = 16 * 1024 * 1024,
 ): Closeable {
     val conversation = "capacity-fixture"
 
@@ -35,9 +36,11 @@ internal fun occupyExpansionCapacity(
             request = it
             true
         }, { 0L }, expansionEnabled = { true })
-    val contents = JsonObject(mapOf("unused" to JsonPrimitive("x".repeat(256 * 1024 - "{\"unused\":\"\"}".length))))
-    assertEquals(256 * 1024, contents.toString().toByteArray(Charsets.UTF_8).size)
+    var remaining = bytes
     items.forEach { item ->
+        val entryBytes = minOf(256 * 1024, remaining)
+        val contents = JsonObject(mapOf("unused" to JsonPrimitive("x".repeat(entryBytes - "{\"unused\":\"\"}".length))))
+        assertEquals(entryBytes, contents.toString().toByteArray(Charsets.UTF_8).size)
         lane.bodies(conversation, item, store.current(host, conversation), setOf(item.id))
         val sent = requireNotNull(request)
         for (final in listOf(false, true)) {
@@ -55,7 +58,9 @@ internal fun occupyExpansionCapacity(
                 ),
             )
         }
+        remaining -= entryBytes
     }
+    assertEquals(0, remaining)
     assertEquals(64, store.current(host, conversation).bodyContents.size)
     return Closeable { lane.abandon() }
 }

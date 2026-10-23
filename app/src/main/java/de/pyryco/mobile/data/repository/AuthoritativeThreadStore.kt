@@ -276,9 +276,9 @@ internal class AuthoritativeThreadStore {
                 while (visited.add(item.id)) {
                     // An open descendant also needs the retained summaries that make its ancestry reachable.
                     val id = item.id
-                    val rev = item.rev
                     snapshot.childPages.forEach { (parent, page) ->
-                        if (items[parent.first]?.rev == parent.second && page.items.any { it.id == id && it.rev == rev }) {
+                        // Projection uses membership by ID even when a newer full child revision wins.
+                        if (items[parent.first]?.rev == parent.second && page.items.any { it.id == id }) {
                             add(key.copy(item = parent, children = true))
                         }
                     }
