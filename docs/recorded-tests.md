@@ -701,6 +701,88 @@ and `_6.log`, plus comparison logs. These are review-time locations, not permane
 build paths. No recording, production contract or current-daemon compatibility
 claim changed. Linux was outside this ticket's verification scope.
 
+#### Operator-bypass host removal (#2484)
+
+`RecordedMobileSuiteTest#interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+can render its exact witness token from a history batch before the phone's final
+catch-up finishes. In the #2462 macOS failure on `2db93ebd8a`, removing its dedicated
+host disposed the phone through `RelayConnectionRegistry.reconcile` while request
+82/checkpoint 33 was still unmatched (`consumed=false,mapped=false`). The first
+stored mismatch at lifecycle step 39 was `phone/host-3/0:close` instead of
+`thread_catch_up`; the later test-end exception rethrew it. Neither peer completion
+nor activity teardown protects a host removed inside the scenario.
+[The causal ticket evidence](https://github.com/pyrycode/pyrycode-mobile/issues/2484#issuecomment-6355086359)
+identifies retained #2462 bundle
+`db5461c8f6c2f795f941b095d278cb092cf3f6c602d586d56879963b8dcda166`,
+SHA-256 `6a6b24f31c0b914c6968c7d6cc0f1f10d35cc296709078899f7aaf85ad89e193`,
+and `logs/verifier-gate__2462_5.stderr.log`. Its failed gate had 333 executed,
+331 passed, 2 failed and 1 skipped; the same-worktree rerun passed 2/2 with no
+failures/skips, including this method. That rerun did not establish a repair.
+
+The scenario now uses `withOperatorBypassCleanup`, delegating to the existing
+peer/fence/host cleanup contract above. The fence runs while phone request producers
+and collectors remain alive. Required request delivery and downstream terminal
+consumption must both finish before removal. Permission-write classification,
+same-session mode readings, the rendered permission prompt, peer approval and exact
+witness-token reply assertions remain intact, as do capture bytes, strict matching
+and the existing deadline.
+
+`OperatorBypassCleanupTest` reuses the genuine capture's final request, correlated
+reply and close tail. Independent deferred gates hold request production after
+scenario return and downstream consumption after reply delivery. Both
+`finalCapturedCatchUpFinishesBeforeHostRemoval` and
+`scenarioFailureStillDrainsAndRemovesHost` must wait through both holds; the latter
+also preserves the original scenario throwable. `PermissionIsolationCleanupTest`
+continues to reject missing work and another host, connection, conversation, epoch
+or checkpoint. Delivery alone cannot authorize removal.
+
+macOS evidence for implementation `244aa1699f508aabc2b3cd0ac4d846d2fd410d2d`:
+
+| Run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Controlled original cleanup | 2 | 0 | 2 | 0 |
+| Controlled repaired cleanup, unchanged regression | 2 | 2 | 0 | 0 |
+| Focused permission cleanup class | 7 | 7 | 0 | 0 |
+| Focused close-consumption class | 3 | 3 | 0 | 0 |
+| Focused native operator-bypass method | 1 | 1 | 0 | 0 |
+| Configured JVM/build gate | 5353 | 5353 | 0 | 0 |
+| Configured UI gate | 333 | 332 | 1 | 1 |
+| Same-tree model-change rerun | 1 | 1 | 0 | 0 |
+| Configured scripted-all gate | 24 | 24 | 0 | 0 |
+
+The controlled runs used `python3 scripts/gradle-gate.py testDebugUnitTest --tests
+de.pyryco.mobile.e2e.OperatorBypassCleanupTest --console=plain` on working snapshots
+based on `fe630c6e3c6e1ba5c469ba1193d9a628847b44d7`. Both old-cleanup cases failed
+with `Host removal raced the final captured catch-up`. The identical pre/post test
+source hash is `78d52fe1e53a5fe436fe5dc37c9407804954c7512590112f47f798aa8fb40f8b`;
+final formatting only moved an import. Native replay used
+`python3 scripts/android-test-gate.py ui --tests` with the exact method named above.
+It passed focused (27.931 seconds) and in the configured UI gate (25.482 seconds),
+without failure or skip. The full JVM gate also passed both new regression methods,
+`missingPhoneWorkFailsAtTheExistingDeadlineAndStillRemovesHost` and
+`aReplayMismatchRemainsFirstThroughCleanup`.
+
+Configured acceptance used `python3 scripts/jvm-test-gate.py --with-build-checks`
+and `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py` with
+`ui` and `scripted-all`. The raw UI gate exited 1; only the unrelated model-change
+method failed. [Verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2487)
+accepted its passing same-worktree rerun under the dispatcher's flake policy,
+tracked on #2368. `RenameDialogCaptureTest#renameAtFigmaViewport` was skipped,
+never passed. Skips are additional to executed counts. This acceptance supersedes
+the PR body's earlier pending-gate note; later main sweeps remain dispatcher-owned.
+
+Raw XML, source snapshots/diffs, revision metadata and manifests were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2484/` in `controlled-before/`, `controlled-after/`,
+`permission-cleanup/`, `close-consumption/` and `native-244aa1699/`. The last also
+holds phone logs and phases; its native XML SHA-256 is
+`13a63d7f26ee5e7613a496daefe259b068b071f7396931cb721a78ff6b972597`.
+Accepted verifier bundle
+`64bef236585eb0531e7d614bb508ddd721e933390d16f2b961f8aab4152ac431`
+retains `handoff/verifier-2484.md`, counted gate XML in
+`logs/verifier-gate__2484_5.log` and `_6.log`, and the timestamped model rerun logs.
+These paths describe retention at review time. No fresh live Claude observation
+or visual change was required; Linux was outside this ticket's verification scope.
+
 #### In-flight read evidence (#2345)
 
 A later Linux failure in #2333 has a different first error:
