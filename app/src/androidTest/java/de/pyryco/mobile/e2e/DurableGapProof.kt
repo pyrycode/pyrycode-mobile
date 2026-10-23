@@ -1,7 +1,9 @@
 package de.pyryco.mobile.e2e
 
 import android.util.Log
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -22,10 +24,14 @@ import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.recording.RecordedSuiteNative
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.listKey
 import de.pyryco.mobile.ui.conversations.thread.ownedReplyMatcher
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -250,7 +256,10 @@ internal class DurableGapProof(
             rule.waitUntil(30_000) {
                 currentRecovery { evidence ->
                     val texts = evidence.records.map { it.fullText }
-                    evidence.admitted && expected.all { it in texts } && reply.admitted(evidence, serverId) != null
+                    evidence.admitted &&
+                        expected.all { it in texts } &&
+                        reply.admitted(evidence, serverId) != null &&
+                        rendererHasNewestRecovery(evidence)
                 }?.also { finalRecovery = it } != null
             }
             val (observation, evidence) = checkNotNull(finalRecovery)
@@ -425,6 +434,24 @@ internal class DurableGapProof(
                 "checkpoint=${evidence.sourceSnapshot?.checkpoint} completed=${evidence.sourceSnapshot?.completedVersion}",
         )
         return observation to evidence
+    }
+
+    /** A repository emission precedes collection/layout; interrogate the actual lazy item provider without scrolling. */
+    private fun rendererHasNewestRecovery(evidence: ThreadEvidence): Boolean {
+        val newest = evidence.records.singleOrNull { it.fullText == newestPost } ?: return false
+        val snapshot = evidence.sourceSnapshot ?: return false
+        val row =
+            projectAuthoritativeThread(serverId, conversationId, snapshot).rows.filterIsInstance<ThreadRow.Delivered>().singleOrNull {
+                (it.item as? ThreadItem.MessageItem)?.message?.id == newest.message.id
+            } ?: return false
+        val indexForKey =
+            rule
+                .onAllNodes(hasScrollToNodeAction())
+                .fetchSemanticsNodes()
+                .singleOrNull()
+                ?.config
+                ?.getOrNull(SemanticsActions.IndexForKey) ?: return false
+        return indexForKey(row.listKey(0)) >= 0
     }
 
     private fun authoritativeEvidence(): ThreadEvidence? =

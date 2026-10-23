@@ -163,6 +163,24 @@ receipt identity. Keep both original assertions after admission. This adds no
 retry, timeout or production behavior; it completes the coherence boundary that
 the final proof already asserts.
 
+### 2026-10-23 — production snapshot precedes renderer collection
+
+The next composed pair at `4a99f8ef5597315922196a7009edc4a45e823d5f` executed 2,
+passed 1 and failed 1 (0 errors/skips). It passed exact receipts, current source
+certification, retained cache facts and chronological recovered content, then the
+unchanged newest-row search found a LazyColumn still containing one cached row.
+Both admissions at 17:40:18.821 and 17:40:18.866 saw certified checkpoint 495;
+production's complete event followed at 17:40:18.910. Raw evidence is retained in
+`render-red/`. No persistent production rendering defect is established.
+
+Keep the existing final 30000 ms admission wait open until the real LazyColumn's
+`IndexForKey` resolves the newest recovered row's production `listKey`. Compute
+that key through `projectAuthoritativeThread`, not a guessed key or visible-text
+count; this works even when the row is offscreen and does not scroll or demand a
+page. Revalidate the same observation revision after the UI sample. Keep every
+original scroll, text, chronology and inert-demand assertion afterwards. This
+adds no acceptance loop or deadline and touches no production rendering code.
+
 ## Security review
 
 **Verdict:** PASS
