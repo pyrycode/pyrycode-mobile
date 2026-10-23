@@ -159,6 +159,8 @@ class RemoteConversationRepository internal constructor(
         (pump as? ManagedSessionPump)?.close()
         scope.cancel()
     },
+    /** Supplied compact page exercise only; production activation belongs to #2433. */
+    private val suppliedCompactRootPages: Boolean = false,
 ) : ConversationRepository {
     internal val authoritativeRoute: AuthoritativeThreadRoute =
         AuthoritativeThreadRoute(
@@ -353,7 +355,8 @@ class RemoteConversationRepository internal constructor(
             },
             expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
             compactEnabled = {
-                authoritativeLiveEnabled() && setOf("thread_expansion", "thread_compact").all { it in negotiatedCapabilities() }
+                suppliedCompactRootPages && authoritativeLiveEnabled() &&
+                    setOf("thread_expansion", "thread_compact").all { it in negotiatedCapabilities() }
             },
         )
 

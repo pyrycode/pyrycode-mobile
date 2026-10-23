@@ -34,6 +34,20 @@ class CompactRootPagesTest {
         assertTrue(logs.none { "Root " in it || "retained" in it || "Held full" in it })
     }
 
+    @Test fun activationInvariantProductionDefaultRemainsCompleteEvenWithAnUnexpectedCompactGrant() = runTest {
+        val sent = mutableListOf<de.pyryco.mobile.data.network.Envelope>()
+        val repo = RemoteConversationRepository(
+            object : SessionPump {
+                override val inbound = kotlinx.coroutines.flow.MutableSharedFlow<de.pyryco.mobile.data.network.Envelope>()
+                override fun send(envelope: de.pyryco.mobile.data.network.Envelope): Boolean { sent += envelope; return true }
+            }, backgroundScope,
+            negotiatedCapabilities = { setOf("thread", "interactive", "thread_expansion", "thread_compact") },
+            authoritativeHostId = "h",
+        )
+        assertTrue(repo.openAuthoritativeThread("c"))
+        assertNull((sent.single().payload as kotlinx.serialization.json.JsonObject)["projection"])
+    }
+
     @Test fun connectionInvariantReplacementCannotPageOrUnionAnotherConnectionsRootCertificate() =
         runTest {
             val store = AuthoritativeThreadStore()

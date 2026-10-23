@@ -38,6 +38,7 @@ internal class CompactRootFixture(
             },
             authoritativeHostId = host,
             authoritativeThreads = store,
+            suppliedCompactRootPages = true,
         )
     val roots get() = sent.filter { it.type in setOf("thread_catch_up", "thread_page") }
     val details get() = sent.filter { it.type in setOf("thread_read_tool_body", "thread_read_children") }
