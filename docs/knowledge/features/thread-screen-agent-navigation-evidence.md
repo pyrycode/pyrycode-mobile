@@ -143,3 +143,67 @@ failures remain failed; the verifier accepted these unrelated dispositions.
 Verifier bundle: `e5eba22d4c5739ad10d084895ccb7b724dee3e17332f0e4485b00c54ec786b7e`;
 its gate logs retain counted XML. No new real-Claude capture was needed, and macOS
 was outside this Linux ticket's verification scope.
+
+### Post-keyed-reveal reset recurrence (#2373)
+
+The later #2387 failure at `eda298fca8e0584107dbbb1ec3993ffd13b45eb6` reached a
+second, unguarded matcher scroll after the finished marker's atomic keyed reveal.
+Its first assertion was the absent merged scroll container in `questionAnswerLocation` /
+`performScrollToNode`, before the navigation proof. The original method failed once and
+passed once in its same-tree two-method rerun. The published bundle
+`1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`
+retains the failed stack and counted summaries; it has no phone timeline for this
+occurrence and no retained suppressed replay-close failure. A later unmerged match
+does not establish simultaneous tree visibility or the historical reset interleaving.
+The [cause report](https://github.com/pyrycode/pyrycode-mobile/issues/2373#issuecomment-6333715979)
+records those limits and the original bundle digest.
+
+The causal control `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` uses baseline
+`2df547ab26c1264ee79d9aca16709702487ec5cf`, containing both earlier repairs, plus the
+retained new test and content-free boundary callback. It empties the real projection
+after successful keyed placement and restores it only on a later identity sample.
+The original operation failed once at the same missing-list matcher scroll. The repair
+omits that redundant scroll only for the current-key bridge, allowing existing
+readiness-aware geometry reads to resolve the current owned marker. The new control
+then passed. The post-reveal wrong-Agent negative requires timeout rejection and cannot
+accept another Agent's displayed finished label. Default helper callers keep their
+matcher scroll. Production code, strict recording bytes, deadlines, geometry budget,
+physical taps, placement, following and settlement assertions are unchanged.
+
+The earlier #2377 guard protects navigation-proof entry, which this failure never
+reached. The #2430 repair protects the earlier atomic keyed dispatch; it cannot keep
+the projection mounted for an additional matcher scroll afterward. These causes and
+their controlled regressions remain distinct. The retained builder source
+`890702783a7611403693f8e7ce1b4a0426b73b29` passed 41 focused JVM checks, five separate
+one-method native runs and two scripted background-Agent methods. Its final plan-only
+head was `544fca1f7721f5ddf2a4092efd738251fb017958`. Those are historical repair
+results. The subsequent verifier found no source defect but stopped after 211 script
+tests, one failed, before the remaining configured gates ran; #2455 owns that separate
+report-retention repair. No configured acceptance is inferred from the five focused passes.
+
+Original red/green reports, source patches, historical failure summaries and the five
+native runs remain under agents `logs/evidence/2373/recurrence-20261022/`. The unchanged
+recording hash is the same `61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa`
+recorded above. A fresh Linux integration check on
+`67146d2defd26d204d15e292c56fb28bdc5ad1ae`, after merging main containing #2455,
+passed 41 affected JVM methods: 28 block, eight prose, four authoritative scenario and
+one short-thread question-scroll method, zero failures/errors/skips. This focused result
+does not by itself establish complete configured acceptance or a fresh independent review.
+
+The same integrated code candidate then passed complete configured Linux acceptance:
+218 script tests, static checks, 5359 JVM methods, assembly, 333 executed device methods
+and all 24 scripted methods, with zero failures/errors. The device report has one additional
+skip, `RenameDialogCaptureTest.renameAtFigmaViewport`; the named recorded Agent method
+executed and passed once in that full UI run, reaching `keyed-ready` and the final
+`closed-confirmed` proof. Both new reset controls passed in the full JVM run. The scripted
+report includes `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` and
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`,
+both executed/passed. These gates use zero real Claude turns. They establish counted
+execution on this candidate, not a fresh independent verifier verdict.
+
+Current raw XML, phone/daemon/relay logs, command lines, source/runtime identities and
+prior failed attempts are under agents `logs/evidence/2373/manual-20261023/`; its
+1536-file `SHA256SUMS` digest is
+`a5678adea178f1a5daf16bef9aa42546934afcad33c0e5500e9b4dafc9fa8c62`.
+The device used the Android 13/API 33 x86_64 Google ATD image revision 1. The retained
+metadata distinguishes the tested code candidate from later documentation-only commits.

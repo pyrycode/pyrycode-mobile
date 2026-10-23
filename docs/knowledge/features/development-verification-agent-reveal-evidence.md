@@ -145,6 +145,24 @@ repository wait and readiness consume one original timeout budget; the three geo
 measurements, default callers' strict removed-key failure, owned finished-label check and
 physical tap count remain unchanged.
 
+Successful atomic keyed placement does not keep the list mounted for a later matcher
+scroll. The subsequent #2387 recurrence failed that second `performScrollToNode` after
+the owned finished marker had already been revealed. The opt-in current-key bridge
+therefore uses its existing keyed placement directly; its three geometry measurements
+continue to resample current identity/readiness and correct position. Only that bridge
+omits the redundant matcher scroll. Default `questionAnswerTarget` and `questionAnswerTap`
+paths keep it and their existing strict removed-key behavior. This adds no tap, sleep,
+scenario retry, geometry attempt, deadline extension or recording change.
+
+`resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` empties the real screen after the
+successful keyed reveal, restores the same owned family only at the next identity sample,
+and positively checks its displayed finished marker and collapsed children.
+`resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` instead supplies a different
+finished Agent and requires timeout rejection even though that other label is displayed.
+These controls cover the gap after atomic dispatch; they do not replace the earlier
+growth, generation, missing-list and wrong-owner probes. See the
+[post-reveal cause and evidence](thread-screen-agent-navigation-evidence.md#post-keyed-reveal-reset-recurrence-2373).
+
 The controlled growth, generation-during-measurement and readiness-to-scroll probes each
 failed once before repair, with zero errors/skips, then passed in the final 27-method
 block class. Preserve the reset and wrong-Agent/running-label negatives. A keyed reveal

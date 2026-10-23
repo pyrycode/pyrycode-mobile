@@ -169,3 +169,55 @@ Five consecutive separate native executions of `RecordedMobileSuiteTest#interact
 ### Documentation handoff
 
 Pending documentation stage: `docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, finished-marker recurrence, and `docs/knowledge/features/development-verification-agent-reveal-evidence.md`, atomic scroll dispatch. Record the post-keyed-reveal reset boundary, its causal evidence, relationship to both earlier repairs and counted Linux acceptance; preserve historical failures and evidence limits.
+
+## Manual continuation — 2026-10-23
+
+The latest ticket continuation supersedes the historical line/file forecasts and repeated
+five-run requirements above. Preserve the existing five native passes and causal red/green
+controls as historical repair evidence; collect meaningful current-candidate regression,
+named native and complete configured acceptance through normal operator/dispatcher admission.
+A manual hold does not require waiting for an automatic worker to collect the same gates.
+No deadline, geometry attempt, ownership assertion, recording or caller default changes.
+
+The retained verifier found no source defect and stopped on the independent scripts failure #2455,
+before the later gates ran. Main now contains its merged repair in PR #2457 at
+`747d782084b655cd01ccf70691ceef749f669b6c`. The retained Agent repair merged main cleanly
+as `67146d2defd26d204d15e292c56fb28bdc5ad1ae`. Its only helper difference remains the
+opt-in omission of the redundant matcher scroll; both new real-screen regressions remain.
+Fresh Linux focused acceptance passed 41/41: 28 block, eight prose, four authoritative
+scenario and one short-thread question-scroll method, zero failures/errors/skips. The
+unchanged genuine recording hash remains `61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa`.
+
+### Current configured acceptance and documentation
+
+On that exact code candidate, the normal gate wrappers completed pre-verify, docs guard,
+218 script tests, static checks, 5359 JVM methods, assembly, 333 executed device methods
+and all 24 scripted methods. All executed tests passed, with zero errors. The device report
+also has one skipped `RenameDialogCaptureTest.renameAtFigmaViewport`. The required
+recorded Agent method executed/passed and reached its final closed proof.
+Both new reset controls executed/passed in the full JVM run. Both scripted background-Agent
+methods executed/passed in the full scripted report. No new live-Claude evidence is claimed.
+
+The first manual script discovery executed 218 tests and failed three: the manual runner
+incorrectly exported the Android-only `PYRY_GATE_EVIDENCE_DIR` into script unit fixtures,
+changing their cleanup routing. Removing only that unrelated setting made the same three
+checks pass, then the corrected full 218-test discovery passed on unchanged source. Original
+failed and causal control logs remain alongside the passing evidence; no product repair or
+assertion relaxation was made for those runner errors. The older #2455 failure remains historical.
+
+Raw evidence: `/work/Projects/pyrycode-mobile-agents/logs/evidence/2373/manual-20261023/`.
+The 1536-file `SHA256SUMS` has SHA-256
+`a5678adea178f1a5daf16bef9aa42546934afcad33c0e5500e9b4dafc9fa8c62`.
+`configured-invocation.json`, `candidate-identity.json`, `jvm-summary.json`, `ui-summary.json`
+and `scripted-summary.json` retain commands, exact source and recording hashes, APK hashes,
+Android 13/API 33 x86_64 Google ATD revision 1 identity and counted/named outcomes.
+Agents source: `2ffd702a09190fc1e6d4e4d8cbe89e0e35bf6cfe`; daemon:
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; relay:
+`9939bc1ff8afec5021c09862e6f14dadba33ad42`.
+
+Both documentation handoff items are now written in the owning topics named above: the
+navigation evidence records the cause, earlier-repair distinction and counted historical/current
+results; development verification records why only the opt-in bridge omits the second scroll
+and how the two controls retain ownership proof. Later documentation-only commits do not
+change the tested source, tests or recordings. Normal independent review remains required
+before documentation-worker completion; this manual acceptance is not a verifier PASS.
