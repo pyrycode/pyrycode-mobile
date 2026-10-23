@@ -63,6 +63,7 @@ internal class RecordedSuiteTape(
     private var matched = 0
     private var failure: String? = null
     private var readReceipts: SuiteReadReceipts? = null
+    private val pendingReadReplies = mutableListOf<Pair<SuiteStep, Set<Long>>>()
     private var polledReads: SuitePolledReads? = null
     private val daemonIds = mutableMapOf<String, Long>()
 
@@ -601,7 +602,8 @@ internal class RecordedSuiteTape(
             return try {
                 val response = readReceipts!!.send(owner, actual)
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
-                SuiteOutcome(listOf(response) + drain(), true)
+                pendingReadReplies += response
+                SuiteOutcome(drain(), true)
             } catch (error: Exception) {
                 val detail = error.message?.takeIf { it.startsWith("Read receipt checkpoint rejected:") }.orEmpty()
                 fail("Recorded read receipt rejected $detail")
@@ -1033,6 +1035,10 @@ internal class RecordedSuiteTape(
 
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
+        val ready = pendingReadReplies.filter { (reply, queries) -> queries.all { reply.owner to it in requests } }
+        pendingReadReplies.removeAll(ready.toSet())
+        // A matched prerequisite can also release termination; acknowledge while its channel is open.
+        result += ready.map { it.first }
         val blockedOwners = mutableSetOf<String>()
         val blockedReplies = mutableSetOf<String>()
         for (index in 0 until commandBoundary()) {
@@ -1179,6 +1185,7 @@ internal class RecordedSuiteTape(
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }
         check(released.size == steps.size) { progress() }
+        check(pendingReadReplies.isEmpty()) { "Recorded read reply prerequisites incomplete" }
         readReceipts?.assertComplete()
         polledReads?.assertComplete()
     }
