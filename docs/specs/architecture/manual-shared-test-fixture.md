@@ -58,3 +58,9 @@ Written before implementing the review repair. Preserve the original failing gat
 3. Retire the current registry holder on explicit wrapper close and inbound completion or cancellation. Use source identity and the same registration lock so a late old close cannot clear its replacement. Keep waiting flows connected to their holder. Add deterministic retention checks without garbage-collector timing.
 4. Run controlled failing regressions, then affected unit and lifecycle checks, format, documentation and pre-verification checks. Run the affected recorded model scenario through the maintained focused gate. Preserve raw results. Full configured acceptance stays with the dispatcher.
 5. Push normal commits to feature/2505 and return the existing PR to independent review through the protected operator. Preserve unrelated ticket states and failed gate evidence. Reconcile the tracking comment for inherited 2476 without presenting it as an accepted stage result.
+
+## Integrated verification checkpoint
+
+At e2f788962, all 22 focused query/acquisition methods passed. The full JVM/build invocation executed 5453 methods with one notification logging-cleanup ConcurrentModificationException. Its single exact same-source comparison passed. The original full run remains red and retained. No causal link to the query repair is established.
+
+The exact recorded model method then failed twice on the same source with a generic cancelled acquisition and pending replay work at step 29. This is not accepted as a pass or assigned to the historical model flake. Before changing further behavior, add distinct cancellation reasons to identify readiness, owner, generation, scope or delegate refusal. Preserve both failures and rerun only after that diagnostic change.

@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadSupport
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -43,7 +44,7 @@ internal class ThreadAcquisitionGate private constructor(
         synchronized(Companion) {
             if (active === this) active = null
         }
-        acquired.cancel()
+        acquired.cancel(CancellationException("Thread acquisition scope closed"))
     }
 
     companion object {
@@ -124,17 +125,25 @@ internal class ThreadAcquisitionGate private constructor(
                                     }
                                 }
                             }
-                        if (receipt == null ||
-                            !receipt.isCurrent() ||
-                            synchronized(Companion) { active !== gate } ||
-                            (support.value as? ThreadSupport.Supported)?.connection !== connection ||
-                            store.current(host, conversationId).generation != gate.generation
-                        ) {
-                            gate.acquired.cancel()
+                        val refusal =
+                            when {
+                                receipt == null -> "query readiness lost"
+                                !receipt.isCurrent() -> "completion changed before acquisition"
+                                synchronized(Companion) { active !== gate } -> "scope replaced"
+                                (support.value as? ThreadSupport.Supported)?.connection !== connection -> "connection retired"
+                                store.current(host, conversationId).generation != gate.generation -> "generation changed"
+                                else -> null
+                            }
+                        if (refusal != null) {
+                            gate.acquired.cancel(CancellationException("Thread acquisition rejected: $refusal"))
                             return null
                         }
                         val lease = delegate.acquire(conversationId, connection)
-                        if (lease == null) gate.acquired.cancel() else gate.acquired.complete(receipt)
+                        if (lease == null) {
+                            gate.acquired.cancel(CancellationException("Thread acquisition delegate refused its lease"))
+                        } else {
+                            gate.acquired.complete(checkNotNull(receipt))
+                        }
                         return lease
                     } catch (failure: Exception) {
                         gate.acquired.completeExceptionally(failure)
