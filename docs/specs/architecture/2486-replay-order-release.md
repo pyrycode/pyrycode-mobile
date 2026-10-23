@@ -8,6 +8,7 @@
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/DaemonFaultControl.kt`: existing fixed `releaseStream` control supports explicit offline release.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/ThreadEvidence.kt`: passive host route and authenticated connection ownership.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidence.kt`: completion, order, segmentation and echo checks remain intact.
+- `app/src/test/java/de/pyryco/mobile/e2e/QueueRecoveryAgentEvidenceTest.kt`: source identity probes alongside ordered replay and echo controls.
 - `docs/knowledge/features/development-verification.md` and `docs/e2e-interactive-stream.md`, replay-order: empty aggregate failures cannot identify the failed predicate; segmented replies are valid.
 
 ## Context
@@ -69,3 +70,9 @@ Write and run the real shell watcher regression before the repair; it must fail 
 - Threat model: dropped/reordered traffic must still fail ordered evidence; no plaintext disclosure to relay. Rooted-disk theft and UI screenshot/keyboard exposure are outside this test-only repair, with existing production storage/UI boundaries unchanged.
 
 **Reviewer:** builder self-review. **Date:** 2026-10-23.
+
+## Revisions
+
+- 2026-10-23: causal investigation identifies the open-turn observation as the historical failed phase by inference. Linux #2483 logs send at 01:36:26.630Z, producer-gap teardown at 01:36:27.682Z, reconnect at 01:36:29.336Z and final close at 01:37:56.827Z. There is no deliberate five-second outage after that automatic reconnect. macOS #2344 shows the same sequence and approximately 90-second send-to-teardown interval. Original instrumentation stacks and phone logs were not retained in those bundles; the exact exception cannot be recovered. The controlled real-watcher regression directly fails because automatic unregister releases the fixture, then passes after explicit release replaces that fence.
+- 2026-10-23: add `ThreadEvidence.isCurrentReplay` and a focused identity probe to enforce the ticket's current-source invariant. Keep completion/order/echo checks separate and unchanged. It rejects retired/null connections, colliding host/conversation identifiers, replaced snapshots/generations and reset state.
+- 2026-10-23: the initial native method executed/passed 1/1, but its harness exited 2 because the builder edited the running shell script before it finished. Preserve this unsuccessful command separately; it is not repaired acceptance evidence. Subsequent validation runs use an unchanged tree throughout each command.

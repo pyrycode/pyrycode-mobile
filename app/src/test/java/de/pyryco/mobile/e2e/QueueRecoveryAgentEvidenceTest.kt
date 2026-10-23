@@ -138,6 +138,23 @@ class QueueRecoveryAgentEvidenceTest {
 
     private val replayItems = replayScenarioItems().toTypedArray()
 
+    @Test fun replayCannotBeCertifiedByARetiredOrDifferentSource() {
+        val snap = snapshot(*replayItems)
+        val held = evidence(snap)
+        assertTrue(held.isCurrentReplay("host", "chat", connection, snap))
+        assertFalse(held.isCurrentReplay("host", "chat", Any(), snap))
+        assertFalse(held.isCurrentReplay("host", "chat", null, snap))
+        assertFalse(held.isCurrentReplay("other", "chat", connection, snap))
+        assertFalse(held.isCurrentReplay("host", "other", connection, snap))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, snap.copy()))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, null))
+        val replaced = snap.copy(generation = snap.generation + 1)
+        assertFalse(held.isCurrentReplay("host", "chat", connection, replaced))
+        assertTrue(evidence(replaced).isCurrentReplay("host", "chat", connection, replaced))
+        val broken = snap.copy(resetNeeded = true)
+        assertFalse(evidence(broken).isCurrentReplay("host", "chat", connection, broken))
+    }
+
     @Test fun replayRecoveryRequiresCompleteOrderedSettledItems() {
         assertTrue(evidence(*replayItems).hasCompletedReplay(ORDERED))
         assertNull(evidence(*replayItems).authoritativeReplayFailure(ORDERED, "hello"))

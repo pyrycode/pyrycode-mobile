@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -83,6 +84,22 @@ internal fun ThreadEvidence.sendNowPlacementFailure(
 }
 
 private fun ThreadEvidence.mainAssistants() = records.filter { it.message.role == Role.Assistant && it.agentId == null }
+
+/** A retained replay cannot certify a replacement connection or document, even with identical item IDs. */
+internal fun ThreadEvidence.isCurrentReplay(
+    host: String,
+    conversation: String,
+    connection: Any?,
+    snapshot: AuthoritativeThreadSnapshot?,
+): Boolean =
+    admitted &&
+        owner.kind == ThreadEvidenceKind.Authoritative &&
+        owner.host == host &&
+        owner.conversation == conversation &&
+        connection != null &&
+        owner.connection === connection &&
+        snapshot != null &&
+        sourceSnapshot === snapshot
 
 /** Legacy keeps the list check; daemon facts need every main assistant item settled, joined in order to [expected]. */
 internal fun ThreadEvidence.hasCompletedReplay(expected: String): Boolean =

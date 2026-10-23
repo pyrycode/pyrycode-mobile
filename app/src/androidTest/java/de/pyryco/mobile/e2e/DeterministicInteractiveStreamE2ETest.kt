@@ -1737,7 +1737,7 @@ class DeterministicInteractiveStreamE2ETest {
      * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, user echo then thinking) holds
      * the turn open on the 1st `send_message.enqueued`; the test then **severs** the link, the host drops
      * drop B (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fenced on the
-     * relay logging the phone-leg disconnect — so the whole sequence accrues in the daemon's in-ring
+     * explicit test control after deliberate close — so the whole sequence accrues in the daemon's in-ring
      * buffer **while the phone is offline** — and the test **restores** the link, on which the buffered
      * sequence (all `event_id` > the advertised `last_event_id`, #416) replays whole into the fresh,
      * empty repo, which folds the deltas in arrival (= production) order.
@@ -1763,52 +1763,84 @@ class DeterministicInteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect() {
-        arriveInSeededThread()
+        fun <T> phase(
+            name: String,
+            action: () -> T,
+        ): T {
+            android.util.Log.i("ReplayOrder", "event=replay_order_phase phase=$name completed=false")
+            return action().also { android.util.Log.i("ReplayOrder", "event=replay_order_phase phase=$name completed=true") }
+        }
+
+        phase("initial_readiness") { arriveInSeededThread() }
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val hostRepository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(serverId)
+        val route = requireNotNull(hostRepository.negotiatedThread)
+        val conversationId =
+            phase("conversation_identity") {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        coordinator.currentRepository
+                            .firstOnLive({ it.observeConversations(ConversationFilter.All) }) { rows ->
+                                rows.any {
+                                    it.name ==
+                                        SEED_CHANNEL_NAME
+                                }
+                            }.single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    }
+                }
+            }
+
+        fun currentSource(evidence: ThreadEvidence): Boolean {
+            val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+            val current = coordinator.currentRepository.value?.takeIf { it === supported }
+            return evidence.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId))
+        }
 
         // Message #1 → drop A → turn_state(thinking), held open. The spinner proves the turn is open and
         // streaming at the moment we sever; nothing renderable has arrived yet (no partial text by design).
         typeAndSend(SEND_PROMPT)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        phase("open_turn") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
         }
-        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
 
         // Sever the phone's relay link (daemon stays up, in-ring buffer intact). While the phone is offline
-        // the host drops the ordered sequence — fenced on the relay logging the phone-leg disconnect, since
-        // a severed phone cannot send a 2nd send_message — so it accrues in the buffer entirely during the
-        // outage. The bounded hold keeps the phone down until the producer has emitted.
-        severLink()
-        runBlocking { delay(OFFLINE_WINDOW_MS) }
+        // explicitly release the ordered sequence. An automatic producer-gap disconnect before the
+        // thinking assertion must not release it. The bounded hold retains the offline production window.
+        phase("sever") { severLink() }
+        phase("offline_release") { DaemonFaultControl().releaseStream() }
+        phase("offline_window") { runBlocking { delay(OFFLINE_WINDOW_MS) } }
 
         // Restore the link. The fresh Noise hello re-advertises last_event_id (#416); the buffered sequence
         // (all event_id > cursor) replays whole into the fresh empty repo, which folds the deltas in
         // arrival (= production) order.
-        restoreLink()
+        phase("restore") { restoreLink() }
 
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
+        phase("rendered_text") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
+            }
         }
         // Prove exact text and the source's own identity too: a duplicated sequence within one row must fail.
         val evidence =
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    val repository =
-                        requireNotNull(
-                            GlobalContext
-                                .get()
-                                .get<RelayRepositoryCoordinator>()
-                                .currentRepository.value,
-                        )
-                    val conversationId =
-                        repository
-                            .observeConversations(ConversationFilter.All)
-                            .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
-                            .single { it.name == SEED_CHANNEL_NAME }
-                            .id
-                    harnessThreadEvidence(repository).observe(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
+            phase("completed_current_source") {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        harnessThreadEvidence(hostRepository).observe(conversationId).first {
+                            currentSource(it) && it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING)
+                        }
+                    }
                 }
             }
-        composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
+        phase("ordered_identity_and_echo") {
+            composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
+            assertTrue("replay evidence still belongs to the current source", currentSource(evidence))
+        }
     }
 
     /**
@@ -2030,7 +2062,7 @@ class DeterministicInteractiveStreamE2ETest {
         // restoreLink() so the ordered sequence is produced entirely while it is offline. NOT a
         // catch-a-transient delay — the buffered events are durable, so erring long is free; erring short
         // only under-exercises "entirely offline" without breaking the order/exactly-once verdict. Must
-        // exceed [relay disconnect-detect + watcher poll 0.5s + fakeclaude append + one producer tail
+        // exceed [explicit release + fakeclaude append + one producer tail
         // cycle]. Primary first-run tuning point — lengthen if the replay arrives as a live mix.
         const val OFFLINE_WINDOW_MS = 5_000L
 
