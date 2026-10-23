@@ -2,9 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -184,7 +182,7 @@ class AgentChildrenScreenTest {
         fun reads() = sent.filter { it.type == "thread_read_children" }
 
         fun toggle(text: String) {
-            compose.onNode(hasClickAction() and hasAnyAncestor(hasTestTag("tool-row")) and hasText(text)).performClick()
+            compose.onNode(hasClickAction() and hasText(text)).performClick()
             compose.waitForIdle()
         }
 
