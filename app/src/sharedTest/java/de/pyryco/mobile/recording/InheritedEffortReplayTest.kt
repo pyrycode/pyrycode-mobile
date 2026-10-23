@@ -160,7 +160,7 @@ class InheritedEffortReplayTest {
 
         fun releaseLaterSettings() = hub.control("checkpoint", "later-settings") { error("Live control started") }
 
-        suspend fun beforeObservation() = Unit
+        suspend fun beforeObservation() = hub.beforeSettingsObservation(owner)
 
         suspend fun finish() {
             transport.close()

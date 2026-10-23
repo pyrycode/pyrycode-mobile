@@ -278,6 +278,16 @@ internal object RecordedSuiteNative {
 
     val replaying get() = current?.document != null
 
+    /** Captured minimal notifications must be consumed before the final independent settings read. */
+    fun beforeSettingsObservation(serverId: String) {
+        val session = current?.takeIf { it.document != null } ?: return
+        val owner = checkNotNull(session.currentOwner("phone", serverId)) { "Settings observation owner missing" }
+        android.util.Log.i("RecordedSuite", "event=settings_observation_fence phase=started")
+        runBlocking { session.hub.beforeSettingsObservation(owner) }
+        check(current === session && session.currentOwner("phone", serverId) == owner) { "Settings observation owner changed" }
+        android.util.Log.i("RecordedSuite", "event=settings_observation_fence phase=consumed")
+    }
+
     fun beforeHostLinkClose(serverId: String) {
         val session = current?.takeIf { it.document != null } ?: return
         val owner = session.currentOwner("phone", serverId) ?: return

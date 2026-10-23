@@ -354,6 +354,29 @@ internal class SuiteConnections private constructor(
         failure.get()?.let { throw IllegalStateException("Recorded suite delivery failed", it) }
     }
 
+    /** Settle released replay traffic before an independent settings read supplies a UI expectation. */
+    suspend fun beforeSettingsObservation(owner: String) {
+        check(tape != null) { "Settings observation requires replay" }
+        val pump = synchronized(this) { checkNotNull(pumps[owner]) { "Settings observation phone missing" } }
+        fun checkOwner() {
+            check(pumps[owner] === pump && !pump.connection.localClose.get() && pump.state.value is PumpState.Open) {
+                "Settings observation phone changed or closed"
+            }
+        }
+        withTimeout(30000) {
+            while (true) {
+                awaitIdle()
+                synchronized(this@SuiteConnections) { checkOwner() }
+                pump.awaitConsumedPrefix()
+                val settled = synchronized(this@SuiteConnections) {
+                    checkOwner()
+                    pending.get() == 0 && pump.consumptionCaughtUp()
+                }
+                if (settled) return@withTimeout
+            }
+        }
+    }
+
     suspend fun awaitReaders() {
         val caller = currentCoroutineContext()[Job]
         readers.filter { it != caller }.forEach { it.join() }
@@ -521,6 +544,8 @@ internal class SuiteConnections private constructor(
             val boundary = queuedFrames.get()
             while (consumedFrames.get() < boundary) delay(10)
         }
+
+        fun consumptionCaughtUp(): Boolean = consumedFrames.get() >= queuedFrames.get()
 
         override fun start() {
             if (started.compareAndSet(false, true)) register(this)
