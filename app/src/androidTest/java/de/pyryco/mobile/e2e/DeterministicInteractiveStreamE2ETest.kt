@@ -1396,6 +1396,7 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
         val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
+        val route = requireNotNull(repository.negotiatedThread)
         val conversationId =
             runBlocking {
                 repository
@@ -1541,7 +1542,7 @@ class DeterministicInteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         evidence.observe(conversationId).onEach { pendingSettlement = it }.first {
-                            it.settledAgentAfterRecovery(launched, family, "after1783") != null
+                            it.settledAgentAfterRecovery(launched, family, "after1783", route.support.value) != null
                         }
                     }
                 }
@@ -1587,7 +1588,7 @@ class DeterministicInteractiveStreamE2ETest {
                 }
                 throw failure
             }
-        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783"))
+        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783", route.support.value))
         val settledHeader = hasTestTag("background-agent:${owned.agentId}")
         val settledChild = hasTestTag("background-agent-child:${owned.agentId}")
         composeTestRule.questionAnswerTap(

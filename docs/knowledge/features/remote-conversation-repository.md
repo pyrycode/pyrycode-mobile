@@ -275,6 +275,52 @@ captured routing/version for terminal draining before lane reuse; timeout closes
 the connection. See [inline controls](thread-screen.md#what-it-does) and
 [counted lane, decoder and mounted-consumer evidence](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
 
+## Retained expansion budget (#2390)
+
+Fetched bodies and accumulated direct-child enumerations share one inclusive
+**16,777,216-byte (16 MiB) and 1000-summary budget per host**, across all host
+conversations. Open, closed and currently unreachable retained entries all count.
+Hosts with colliding conversation/item IDs have independent budgets. Existing
+complete source facts remain outside this budget.
+
+`AuthoritativeThreadStore` measures the UTF-8 JSON serialization of each retained
+body content object, each original validated child-summary object and the current
+continuation cursor object. Escapes, multibyte text and unknown retained fields
+count. Use the original summary payload: the presentation-adapted DTO adds
+`summary` and null `content` fields that were never in the transmitted summary.
+Each entry is charged once regardless of consumer count; replacement subtracts
+its old cost. A body object or a parent's entire accumulated enumeration with its
+cursor is the eviction unit; no prefix is truncated. The captured child version
+and existing decoder/fragment-assembly ceilings remain unchanged.
+
+The query owner contributes the union of current consumer demand, including
+already available bodies. Queries skip their requests without withdrawing their
+protection. Protect ancestor enumerations needed to expose an open descendant by
+child membership ID, even when a newer full child revision wins; exact current
+parent revision and host/epoch/generation/incarnation fences still apply. A
+collapse or retirement releases only that consumer's protection. Protection never
+authorizes a stale presentation, retired connection or reply.
+
+Before admission, select unprotected entries in deterministic least-recently-used
+order across both kinds and all conversations of the host. Successful admission
+and newly protected retained reopen record use; repeated demand, recomposition
+and unrelated publication do not. Commit victims only when the whole candidate
+fits both limits. If protected demand prevents that, reject atomically without
+evicting other entries, replacing prior rows/cursor or certifying incoming detail.
+The existing expanded-row failure stays sticky until explicit current-owner
+Retry through the owned lane. After other demand closes, Retry can reclaim its
+unprotected entries. Retained unchanged details reopen without refetch, including
+offline; an evicted closed entry reopens missing and uses bounded demand again.
+
+Eviction removes only that entry's availability, continuation and transient
+completion/load claim. Other summaries preserve identity/order without duplicates;
+full facts, root/history coverage, recovery checkpoints, join watermarks and read
+marks remain intact, including reconnect. Snapshot/reset reconciliation drops
+retired ledger membership without weakening existing ownership or drain fences.
+The ledger adds no jobs, persistence or migration; diagnostics contain static
+loaded/evicted/capacity codes only. See [cache lifetime](conversation-cache.md#the-contract)
+and [counted focused and configured evidence](../../e2e-interactive-stream.md#retained-expansion-budget-evidence-2390).
+
 ## Daemon conversation read marks
 
 `observeReadMarks` keeps confirmed read and supplied shown metadata separate.
