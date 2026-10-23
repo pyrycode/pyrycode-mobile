@@ -3,7 +3,11 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 
@@ -58,6 +62,74 @@ internal fun ThreadEvidence.settledHeldReply(
     return reply.takeIf { it.isComplete && it.fullText == text && family == listOf(it) && turn == listOf(it) && newer }
 }
 
+/** Scenario boundary for a held reply whose authenticated connection may have been replaced. */
+internal fun ThreadEvidence.settledQueuedReplyAfterRecovery(
+    started: ThreadEvidence,
+    held: ThreadEvidenceRecord,
+    queued: ThreadItemDto,
+    text: String,
+    currentConnection: Any?,
+): ThreadEvidenceRecord? {
+    val before = started.sourceSnapshot ?: return null
+    val snapshot = sourceSnapshot ?: return null
+    val host = started.owner.host?.takeIf { it.isNotBlank() } ?: return null
+    if (!started.admitted ||
+        !isCurrentReplay(host, started.owner.conversation, currentConnection, snapshot) ||
+        before.epoch.isNullOrBlank() ||
+        before.epoch != snapshot.epoch ||
+        before.incarnation != snapshot.incarnation ||
+        // The initial memory document has no incarnation; reset assigns one and advances generation.
+        (before.incarnation.isEmpty() && (before.generation != 0L || snapshot.generation != 0L)) ||
+        snapshot.generation < before.generation
+    ) {
+        return null
+    }
+    val captured = held.fact ?: return null
+    val reply = records.singleOrNull { it.message.role == Role.Assistant && it.fact?.id == captured.id } ?: return null
+    val fact = reply.fact ?: return null
+    val turn = records.filter { it.message.role == Role.Assistant && it.session == captured.session && it.turn == captured.turn }
+    if (captured.kind != "assistant_message" ||
+        fact.kind != captured.kind ||
+        fact.id != captured.id ||
+        captured.session.isNullOrBlank() ||
+        fact.session != captured.session ||
+        captured.turn.isNullOrBlank() ||
+        fact.turn != captured.turn ||
+        fact.agent != captured.agent ||
+        fact.parent != captured.parent ||
+        fact.order != captured.order ||
+        fact.rev <= captured.rev ||
+        !reply.isComplete ||
+        reply.fullText != text ||
+        !reply.fullText.startsWith(held.fullText) ||
+        records.count { it.message.role == Role.Assistant && it.fullText == text } != 1 ||
+        settledReply(owner, captured.session, captured.turn) != listOf(reply) ||
+        turn != listOf(reply)
+    ) {
+        return null
+    }
+    val queueContent = queued.content as? JsonObject ?: return null
+    val message = (queueContent["message_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: return null
+    val device = (queueContent["device_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: return null
+    val retained =
+        snapshot.items.singleOrNull {
+            val content = it.content as? JsonObject
+            it.kind == "user_message" &&
+                content?.get("message_id") == JsonPrimitive(message) &&
+                content["device_id"] == JsonPrimitive(device)
+        } ?: return null
+    val retainedContent = retained.content as? JsonObject ?: return null
+    return reply.takeIf {
+        queued.kind == "user_message" &&
+            queued.status == "queued" &&
+            queued.active &&
+            retained.id == queued.id &&
+            retained.rev >= queued.rev &&
+            retained.status in setOf("queued", "delivered") &&
+            retainedContent["text"] == queueContent["text"]
+    }
+}
+
 /**
  * Null when [prompt]'s single delivered echo follows the completed tool and precedes the settled [marker]
  * reply, by record order and, for daemon facts, by item order. Otherwise a content-free reason.
@@ -83,6 +155,28 @@ internal fun ThreadEvidence.sendNowPlacementFailure(
 }
 
 private fun ThreadEvidence.mainAssistants() = records.filter { it.message.role == Role.Assistant && it.agentId == null }
+
+/** Ownership survives same-document progress, never a replacement connection or document. */
+internal fun ThreadEvidence.isCurrentReplay(
+    host: String,
+    conversation: String,
+    connection: Any?,
+    snapshot: AuthoritativeThreadSnapshot?,
+): Boolean =
+    admitted &&
+        owner.kind == ThreadEvidenceKind.Authoritative &&
+        owner.host == host &&
+        owner.conversation == conversation &&
+        connection != null &&
+        owner.connection === connection &&
+        snapshot != null &&
+        sourceSnapshot != null &&
+        snapshot.epoch != null &&
+        owner.epoch == snapshot.epoch &&
+        owner.generation == snapshot.generation &&
+        sourceSnapshot.incarnation == snapshot.incarnation &&
+        !snapshot.resetNeeded &&
+        !snapshot.repairNeeded
 
 /** Legacy keeps the list check; daemon facts need every main assistant item settled, joined in order to [expected]. */
 internal fun ThreadEvidence.hasCompletedReplay(expected: String): Boolean =
@@ -120,12 +214,15 @@ internal fun ComposeContentTestRule.assertOrderedReplay(
     evidence: ThreadEvidence,
     expected: String,
     prompt: String,
+    refresh: (ThreadEvidence) -> ThreadEvidence? = { it },
 ) {
     when (evidence.owner.kind) {
         ThreadEvidenceKind.Legacy -> assertOrderedReplay(evidence.records.map { ThreadItem.MessageItem(it.message) }, expected, prompt)
         ThreadEvidenceKind.Authoritative -> {
             assertEquals(expected, renderedReplyText(expected))
-            assertNull("authoritative replay", evidence.authoritativeReplayFailure(expected, prompt))
+            // Render synchronization can publish turn-end/catch-up. Validate fresh facts afterwards.
+            val current = refresh(evidence) ?: throw AssertionError("replay evidence must belong to the current source")
+            assertNull("authoritative replay", current.authoritativeReplayFailure(expected, prompt))
         }
     }
 }
