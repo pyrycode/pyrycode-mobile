@@ -198,6 +198,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -3949,7 +3950,8 @@ class InteractiveStreamE2ETest {
             val chatX = prepareChat(nameX, originals)
             val chatY = prepareChat(MODEL_Y_NAME_PREFIX + stamp, originals)
             assertTrue("X starts with a saved model", freshSettings(chatX.id).model in setOf("", INHERITED_MODEL_VALUE))
-            val rows = usableRows(publishedMenu(chatX.id)).filter { it.value != INHERITED_MODEL_VALUE }
+            val initialMenu = publishedMenu(chatX.id)
+            val rows = usableRows(initialMenu).filter { it.value != INHERITED_MODEL_VALUE }
             val rowB = checkNotNull(rows.firstOrNull()) { "the menu publishes no usable model" }
             val effortY = rowB.effortLevels.firstOrNull().orEmpty()
             writeSettings(chatY.id, model = rowB.value, effort = effortY)
@@ -3981,12 +3983,41 @@ class InteractiveStreamE2ETest {
 
             leaveThread()
             openChatRow(nameX)
-            assertEquals("X's model on a fresh settings reply", target.value, freshSettings(chatX.id).model)
+            val reopenedX = freshSettings(chatX.id)
+            assertEquals("X's model on a fresh settings reply", target.value, reopenedX.model)
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
             leaveThread()
             openChatRow(MODEL_Y_NAME_PREFIX + stamp)
-            assertEquals("Y's model on a fresh settings reply", rowB.value, freshSettings(chatY.id).model)
-            awaitFooter(changeModelLabel, rowB.dropdownLabel(ConversationAgent.Claude))
+            var receipt = "receipt=unavailable"
+            var readOwner = "owner=unavailable"
+            val reopenedY =
+                withFreshSettings(chatY.id, onReceipt = { request, reply ->
+                    receipt = "request=$request reply=${reply.id} in_reply_to=${reply.inReplyTo} " +
+                        "conversation=${reply.conversationId} session=${reply.sessionProvenance.raw} cleared=${reply.sessionStateCleared}"
+                }) { repository, reading ->
+                    readOwner = "receipt_repository=${System.identityHashCode(repository)} ${modelReopenOwner(chatY.id)}"
+                    reading
+                }
+            assertEquals("Y's model on a fresh settings reply", rowB.value, reopenedY.model)
+            awaitFooter(changeModelLabel, rowB.dropdownLabel(ConversationAgent.Claude), observe = { observed ->
+                val records =
+                    listOf(
+                        "stage=final-y-reopen $observed",
+                        "expected_y=$rowB initial_menu=$initialMenu",
+                        "x_conversation=${chatX.id} x_model=${reopenedX.model} x_effort=${reopenedX.effort} x_session=${reopenedX.sessionId}",
+                        "y_conversation=${chatY.id} y_model=${reopenedY.model} y_effort=${reopenedY.effort} " +
+                            "y_session=${reopenedY.sessionId} held=${reopenedY.held} $receipt",
+                        "read_owner=$readOwner",
+                        "wait_owner=${modelReopenOwner(chatY.id)}",
+                        RecordedSuiteNative.modelReopenProgress(twoHostArg(ARG_SERVER_ID)),
+                    )
+                records.forEachIndexed { record, value ->
+                    val chunks = JsonPrimitive(value).toString().chunked(800)
+                    chunks.forEachIndexed { index, chunk ->
+                        Log.i("ModelReopen", "record=$record chunk=${index + 1}/${chunks.size} data=$chunk")
+                    }
+                }
+            })
         } finally {
             restoreSettings(originals)
         }
@@ -8526,6 +8557,7 @@ class InteractiveStreamE2ETest {
     private fun <T> withFreshSettings(
         conversationId: String,
         serverId: String = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)),
+        onReceipt: (Long, Envelope) -> Unit = { _, _ -> },
         block: suspend (ConversationRepository, SessionSettings) -> T,
     ): T =
         runBlocking {
@@ -8555,9 +8587,13 @@ class InteractiveStreamE2ETest {
                     }
                 }
                 val reading =
-                    SettingsReadProbe.read(repository, conversationId, isCurrent) {
-                        bundle.coordinator.hostReadings.liveSessionBindings[conversationId]
-                    }
+                    SettingsReadProbe.read(
+                        repository,
+                        conversationId,
+                        isCurrent,
+                        session = { bundle.coordinator.hostReadings.liveSessionBindings[conversationId] },
+                        onReceipt = onReceipt,
+                    )
                 check(isCurrent()) { "settings read owner changed before use" }
                 block(repository, reading)
             }
@@ -8567,6 +8603,27 @@ class InteractiveStreamE2ETest {
     private fun publishedMenu(conversationId: String): ModelMenu {
         val repository = hostRepository()
         return runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeModelMenu(conversationId).filterNotNull().first() } }
+    }
+
+    /** Existing state values only: collecting a menu here would change the replay's requests. */
+    private fun modelReopenOwner(conversationId: String): String {
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val bundle = registry.connectionFor(serverId)
+        val repository = bundle?.coordinator?.currentRepository?.value
+        val transport = bundle?.supervisor?.currentConnection?.value
+        val selectedHost =
+            registry.hostConnections.value
+                .singleOrNull {
+                    registry.connectionFor(
+                        it.serverId,
+                    ) === registry.selected.value
+                }?.serverId
+        return "host=$serverId conversation=$conversationId selected_host=$selectedHost " +
+            "bundle=${bundle?.let(System::identityHashCode)} repository=${repository?.let(System::identityHashCode)} " +
+            "transport=${transport?.let(System::identityHashCode)} relay=${bundle?.supervisor?.relayStatus?.value} " +
+            "session_binding=${bundle?.coordinator?.hostReadings?.liveSessionBindings?.get(conversationId)?.raw} " +
+            "published_menu=${bundle?.coordinator?.hostReadings?.modelMenus?.value?.get(conversationId)}"
     }
 
     /** Usable Claude rows, including default for inherited-effort setup. Ordinary labels must be unique
@@ -8804,12 +8861,20 @@ class InteractiveStreamE2ETest {
         clickLabel: String,
         label: String,
         confirmed: () -> Boolean = { true },
+        observe: (String) -> Unit = {},
         state: (String?) -> Boolean = { true },
     ) {
         val section = runConfigSection(clickLabel)
         openRunConfiguration()
         try {
-            composeTestRule.awaitRunConfiguration(section, label, THREAD_TIMEOUT_MS, confirmed = confirmed, state = state)
+            composeTestRule.awaitRunConfiguration(
+                section,
+                label,
+                THREAD_TIMEOUT_MS,
+                confirmed = confirmed,
+                observe = observe,
+                state = state,
+            )
         } catch (e: ComposeTimeoutException) {
             throw AssertionError(e.message, e)
         } finally {

@@ -1,0 +1,113 @@
+Model reopen diagnostics #2351 — macOS, 2026-10-21
+
+Decision: the historical selection divergence remains unresolved. This change
+retains failure-state evidence; it does not repair model selection. Two isolated
+diagnostic passes cannot erase the original branch/base failures or establish
+order/load independence. Open repair contract: https://github.com/pyrycode/pyrycode-mobile/issues/2356
+Feature root: https://github.com/pyrycode/pyrycode-mobile/issues/2343
+
+Original evidence preserved
+The #2340 branch 9fdaf07bf3e4757693ad297744f4caa5afdd4db6 failed its final Y
+wait after the exact fresh saved-model assertion succeeded. Its configured gate
+executed 335, passed 331, failed 4 and skipped 1. The grouped base comparison at
+1a845e57d9483e42d2b9a71c7196135e49c506eb executed 3, passed 0, failed 3,
+skipped 0. These grouped counts include other methods, not three model attempts.
+The original actual selected row/menu was missing. Five subsequent model passes
+at 77b5717d6d3a1dba9f1a92a251162e7f9b3770e2 were baseline evidence, not a fix.
+The later #2351 issue comment also retains #2347's branch/main recurrence.
+
+The original confirmation_matches=false was a composite result: the helper
+short-circuits confirmed() when the expected selection does not match. It is not
+independent evidence of a saved-settings failure. The controlled mismatch proves
+that distinction while retaining the actual alternative radio and note.
+
+Fresh source and commands
+Main base: 3be8ab9163640f10da40c2de0a61682028e49d4c. Its production code,
+original model scenario and shared replay surface equal the earlier 77b5717d6
+baseline. No merged repair of this model cause has been established.
+Run each JVM class separately with:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests CLASS --console=plain
+Native selection for both executed attempts:
+python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation
+Platform: macOS-26.6.2-arm64; managed Android 13 pixel2Api33Atd, one shard.
+Offline recording replay launched neither a daemon nor Claude.
+
+Counts (executed / passed / failed / skipped; process exit)
+- Initial controlled mismatch at b80cf9426389513d1691b3be74effbc2f129719f:
+  RunConfigurationWaitTest.modelMismatchRetainsActualSelectionAndNoteAfterSheetCleanup
+  1 / 0 / 1 / 0; exit 1. Expected: original timeout omitted actual model evidence.
+- Intermediate wait class on b80cf9426 plus retained sources.patch:
+  9 / 8 / 1 / 0; exit 1. It exposed loss of the untagged Model selection note.
+- At 3f665477ecc1f2aa3348ad79c2f1e350f8d22727:
+  RunConfigurationWaitTest: 9 / 9 / 0 / 0; exit 0.
+  SettingsReadProbeTest: 22 / 22 / 0 / 0; exit 0.
+  RecordedSuiteTapeTest: 44 / 44 / 0 / 0; exit 0.
+- Initial native build at 3f665477ecc1f2aa3348ad79c2f1e350f8d22727:
+  0 / 0 / 0 / 0; exit 1. Missing test-only JsonPrimitive import; no device test
+  started, so there is no test XML/logcat and this supplies no acceptance result.
+- Native ui-9a_ki8rq at b4793975ef2508ed5dbad8ddfb3570ad0113dbe5:
+  1 / 1 / 0 / 0; exit 0, zero errors. Current session binding's object string
+  was redacted; this motivated the final diagnostic field correction.
+- Native ui-kj7bz40q at 1ced60f8fa641a02ae6999578bb27b24c5337294:
+  1 / 1 / 0 / 0; exit 0, zero errors. All seven diagnostic records reconstructed
+  from complete numbered chunks; actual current-session identifiers retained.
+An initial multi-class JVM selection was refused by scope policy before testing
+(zero executed); the three classes above then ran separately. No wider suite ran.
+
+Measured final Y state (controlled fixture values, not current-provider claims)
+Both native executions showed expected Sonnet selected, Fable/Opus/Haiku
+unselected, pending=false, note_matches=true, confirmation_matches=true and
+confirmation_evaluated=true. The tagged note was absent. The current Y menu
+agreed with the expected initial menu: sonnet resolved to claude-sonnet-5.
+X retained saved claude-fable-5-1; Y retained saved sonnet with effort low.
+These saved settings are not an assertion of a running/applied Y model.
+Y request 47 correlated to reply 132 with in_reply_to=47, matching conversation
+and session, held=false and cleared=false. In the final run both read/wait
+session bindings matched that receipt. Host selection, bundle, repository and
+transport identities stayed the same and the relay was Connected.
+At the pre-cleanup observation tape owner was phone/host-0/0, matched=32,
+remaining=10, no pending query and first-failure=null. Remaining work included
+settings restoration and test-end controls; successful method completion retained
+the normal strict full-consumption check. No new read, collection or checkpoint
+was introduced for these diagnostics. The original assertions/deadlines remain.
+
+Measured conditions and remaining check
+First native device command: 00:11:03.991–00:11:39.808 UTC; host load averages
+at start [6.7651, 5.9204, 5.3774], finish [5.6660, 5.7383, 5.3315].
+Final native device command: 00:15:00.866–00:15:40.980 UTC; start
+[7.7207, 6.1699, 5.5444], finish [6.7402, 6.1147, 5.5522].
+Both were isolated selected-method checks, not the original preceding sequence.
+Remaining hypothesis: an order/load-dependent scenario expectation, UI projection
+or replay scheduling divergence. The next proposed check is the existing recovery
+assessment's four-method sequence with these diagnostics before cleanup, comparing
+actual radios/current menu with the correlated receipt, owner changes and sticky
+first failure. None of those three causal categories can yet be assigned.
+Assessment 0b7e8767ce130aae021a51b0cfb5436c944b276ea01efd55d7b77fd07331a355
+remains an acknowledgement with zero executed, not execution authorisation.
+It was consulted rather than duplicated. Wider investigations require the shared
+assessment route; complete configured UI coverage remains dispatcher-owned.
+
+Evidence survival
+Private durable root: $AGENTS_REPO_PATH/logs/evidence/2351/builder-20261021-macos/
+Subdirectories: inherited, red, untagged-note-red, wait-green, settings-green,
+tape-green, native-compile-red, native-focused and native-final. They retain raw
+XML, per-method logcat where execution occurred, source/count metadata, source
+patch for the intermediate red, phase/load records and verified SHA256SUMS.
+Native records are also reconstructed in model-reopen.json. native-final includes
+input-hashes.json for the APKs and unchanged recording/index, plus a separate
+diagnostic-check.json; analysis checks are not invented UI test cases.
+Recording SHA-256: e0266388cd83ee404c4147751b1168c44521e433ea1c87c863681f6e26b9a6e3
+Suite index SHA-256: 764698c8ae4df26693dfa6d1c2a63293d9f7b910041a4eb26cce4a1e24d87f52
+
+Pending repair acceptance belongs to #2356
+Preserve exact X/Y saved-model isolation across reopen, current-menu selection
+and confirmation, strict complete request/payload matching and restoration.
+Expose the diagnosed cause with a controlled regression. The named recorded
+method must execute/pass on the repaired revision in focused macOS replay and the
+configured dispatcher UI gate before repair verifier PASS, retaining revisions,
+raw artifacts, exits and counts. Zero execution/skips are not passes. A request
+contract change or recording replacement requires genuine native capture,
+committed/fresh replay, strict comparison and explicit difference review under
+docs/recorded-tests.md; reviewed differences are not successful strict comparison.
+No pending repair or repaired-revision pass is claimed by diagnostic #2351.
+Linux is outside this ticket's verification scope.
