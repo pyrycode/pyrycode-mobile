@@ -1,0 +1,43 @@
+test_registration_token_across_chunks_after_delayed_startup (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup) ... {"action": "start", "status": 503, "payload": {"action": "start", "http_status": 503, "running": true, "pid": 729368, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}, "time": 740590.602442045, "child_bytes": 4096}
+{"action": "start", "status": 503, "payload": {"action": "start", "http_status": 503, "running": true, "pid": 729368, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}, "time": 740590.863848123, "child_bytes": 4113}
+FAIL
+
+======================================================================
+FAIL: test_registration_token_across_chunks_after_delayed_startup (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 216, in controller
+    yield request, path
+  File "/tmp/builder-2500/proof_probe.py", line 30, in capture
+    yield observed, path
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 417, in assert_chunked_registration
+    self.assertEqual(200, status, complete)
+AssertionError: 200 != 503 : {'action': 'start', 'http_status': 503, 'running': True, 'pid': 729368, 'generation': 1, 'ready': False, 'phase': 'registration_timeout', 'log_offset': 0, 'elapsed_ms': 250}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 383, in test_registration_token_across_chunks_after_delayed_startup
+    self.assert_chunked_registration(startup_delay=0.75)
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 397, in assert_chunked_registration
+    with self.controller(script) as (request, path):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/tmp/builder-2500/proof_probe.py", line 20, in capture
+    with original(self, script, **kwargs) as (request, path):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2500/scripts/test_e2e_daemon_fault.py", line 219, in controller
+    self.fail(f"{failure}\nchild_bytes={len(child_output)}, "
+AssertionError: 200 != 503 : {'action': 'start', 'http_status': 503, 'running': True, 'pid': 729368, 'generation': 1, 'ready': False, 'phase': 'registration_timeout', 'log_offset': 0, 'elapsed_ms': 250}
+child_bytes=4113, complete_token=True
+{"event": "daemon_fault_transition", "time": 1792738080.610987, "action": "spawn", "http_status": 0, "running": true, "pid": 729368, "generation": 1, "ready": false, "phase": "spawned", "log_offset": 0, "elapsed_ms": 0}
+{"event": "daemon_fault_transition", "time": 1792738081.679058, "action": "start", "http_status": 503, "running": true, "pid": 729368, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}
+{"event": "daemon_fault_transition", "time": 1792738081.9405084, "action": "start", "http_status": 503, "running": true, "pid": 729368, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}
+
+
+----------------------------------------------------------------------
+Ran 1 test in 1.410s
+
+FAILED (failures=1)
+{"executed": 1, "passed": 0, "failed": 1, "errors": 0, "skipped": 0}

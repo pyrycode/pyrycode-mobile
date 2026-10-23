@@ -1,0 +1,137 @@
+{
+  "ticket": 2500,
+  "os": "Linux",
+  "base_revision": "45b86ff05dd71c8904a006c8b8c8a7c6489616c7",
+  "plan_revision": "ec18638cba8c06baaccf124b91099530fc224b38",
+  "repair_revision": "96763389302e9581312689b2ec615b83566193ae",
+  "source_sha256": {
+    "scripts/test_e2e_daemon_fault.py": "3a3f4ffc7fcdb082472b765f49444e64436b0c191903a4ae008bd39660d245d1",
+    "scripts/e2e-daemon-fault.py": "f494346654a64c93e5c2910efdefef22090a1041a1cfc7c378e4036376da00a5"
+  },
+  "regression_red_test_sha256": "e27656ca1da22f5ca98e99de33fae2aae4097be9cc316977289aaee8754aaa59",
+  "no_tail_controller_sha256": "f10c307d103e4995f85d3c516089870081dbaeb8ae949b1b140d51ab5bc1d692",
+  "historical": {
+    "runId": "029ebb9efcb37b5357941798675118624034d794fc3c76b24c5d8e3e1bfcda1e",
+    "digest": "7154056c9225c6da415e8e6d401b4a5030b074b7165dc96ec419136f4cc80d2d",
+    "revision": "00055df3565663f87e0ec378fd5b3bc793a9b833",
+    "os": "macOS",
+    "command": "python3 -m unittest discover -s scripts",
+    "result": {
+      "executed": 218,
+      "passed": 217,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0
+    },
+    "exit": 1,
+    "log": "historical-gate-stderr.txt",
+    "limit": "No original controller/child snapshot exists in the retained bundle. This failed gate remains failed; exact historical causation is unknown."
+  },
+  "runs": [
+    {
+      "name": "cold baseline",
+      "revision": "45b86ff05dd71c8904a006c8b8c8a7c6489616c7",
+      "command": "cd scripts && python3 -m unittest -v test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks",
+      "result": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 0,
+      "log": "baseline.txt"
+    },
+    {
+      "name": "controlled original startup delay",
+      "revision": "45b86ff05dd71c8904a006c8b8c8a7c6489616c7",
+      "command": "python3 /tmp/builder-2500/startup_probe.py",
+      "runner_source": "startup-probe-source.txt",
+      "result": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 1,
+      "log": "controlled-startup-red.txt",
+      "diagnosis": "Same living PID has started but produced zero bytes when the 250 ms controller deadline expires; child startup is deliberately delayed 750 ms."
+    },
+    {
+      "name": "added regression before repair",
+      "revision": "ec18638cba8c06baaccf124b91099530fc224b38 plus regression-red-source.patch.txt",
+      "command": "cd scripts && python3 -m unittest -v test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup",
+      "result": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 1,
+      "log": "regression-red.txt"
+    },
+    {
+      "name": "initial affected class",
+      "revision": "96763389302e9581312689b2ec615b83566193ae source-identical before commit",
+      "command": "cd scripts && python3 -m unittest -v test_e2e_daemon_fault.GenerationReadinessTest",
+      "result": {
+        "executed": 12,
+        "passed": 12,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 0,
+      "log": "class-green.txt"
+    },
+    {
+      "name": "delayed proof with raw controller/child evidence",
+      "revision": "96763389302e9581312689b2ec615b83566193ae source-identical before commit",
+      "command": "python3 /tmp/builder-2500/proof_probe.py /tmp/builder-2500/proof-green",
+      "runner_source": "proof-probe-source.txt",
+      "result": {
+        "executed": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 0,
+      "log": "proof-green.txt",
+      "observed": "4096 bytes: 503, living/unready; 4113 bytes: 200, living/ready, identical PID and generation."
+    },
+    {
+      "name": "scanner suffix-carry negative control",
+      "revision": "96763389302e9581312689b2ec615b83566193ae source-identical before commit, temporary controller mutation only",
+      "command": "python3 /tmp/builder-2500/proof_probe.py /tmp/builder-2500/no-tail-red /tmp/builder-2500/no-tail",
+      "mutation": "In a temporary controller copy, replace tail = scanned[-(len(token) - 1):] if len(token) > 1 else b\"\" with tail = b\"\". Copy e2e_session_cleanup.py alongside it. Repository controller unchanged.",
+      "result": {
+        "executed": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 1,
+      "log": "no-tail-red.txt",
+      "observed": "4113 bytes present and living child, but final start still 503; scanner failure is distinct from zero-byte startup failure."
+    },
+    {
+      "name": "final committed affected class",
+      "revision": "96763389302e9581312689b2ec615b83566193ae",
+      "command": "cd scripts && python3 -m unittest -v test_e2e_daemon_fault.GenerationReadinessTest",
+      "result": {
+        "executed": 12,
+        "passed": 12,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit": 0,
+      "log": "class-final.txt"
+    }
+  ],
+  "pending": "Dispatcher complete Linux scripts gate, including the named method executed/passed. No complete suite was run by the builder; macOS execution is outside scope."
+}
