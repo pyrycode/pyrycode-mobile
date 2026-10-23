@@ -205,6 +205,52 @@ class ProducerThreadObservationTest {
         }
     }
 
+    @Test fun replacementDiscardsPartialBatchesAndRequiresItsOwnCatchUp() {
+        val target = observer()
+        baseline(target)
+        val abandoned = request(target)
+        target.received(source, batch(abandoned, listOf(item(2, text = "uncommitted")), 2))
+        target.ended(source)
+        val replacement = Any()
+        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+        assertNull(target.evidence())
+        assertEquals(ThreadQueryRequest.CatchUp("chat", "epoch", 1uL).payload(), target.nextQuery().payload())
+        val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+        target.sending(replacement, query)
+        target.sent(replacement, query, true)
+        target.received(source, batch(abandoned, emptyList(), 2, final = true))
+        assertNull(target.evidence())
+        target.received(replacement, batch(query, listOf(item(2, text = "last-older")), 2))
+        assertFalse(target.completedPost("last-older"))
+        target.received(replacement, batch(query, emptyList(), 2, final = true))
+        assertTrue(target.completedPost("last-older"))
+        assertTrue(checkNotNull(target.evidence()).owner.connection === replacement)
+    }
+
+    @Test fun replacementRetainsOneActualSendButCannotReuseItsOldCompletion() {
+        val target = observer()
+        baseline(target)
+        send(target)
+        val first = request(target)
+        finish(target, first, reply(), 4)
+        assertNotNull(target.produced())
+        target.ended(source)
+        val replacement = Any()
+        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+        assertNull(target.produced())
+        val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+        assertEquals(ThreadQueryRequest.CatchUp("chat", "epoch", 4uL).payload(), query.payload)
+        target.sending(replacement, query)
+        target.sent(replacement, query, true)
+        target.received(source, batch(query, emptyList(), 4, final = true))
+        assertNull(target.produced())
+        target.received(replacement, batch(query, emptyList(), 4, final = true))
+        assertEquals("send-id", target.produced()?.messageId)
+        assertEquals("ping", target.produced()?.text)
+        target.ended(source)
+        assertNotNull(target.produced())
+    }
+
     @Test fun sessionlessCanonicalPostStillNeedsItsOwnCompletion() {
         val target = observer()
         val query = request(target)

@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.ThreadQueryDecoder
 import de.pyryco.mobile.data.network.ThreadQueryReply
 import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.repository.AuthoritativeThreadOutcome
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -14,10 +15,14 @@ import kotlinx.serialization.json.JsonPrimitive
 internal class ProducerThreadObservation(
     private val host: String,
     private val conversation: String,
-    val connection: Any,
+    connection: Any,
     capabilities: Set<String>,
-    private val current: () -> Boolean,
+    current: () -> Boolean,
 ) {
+    var connection: Any = connection
+        private set
+    private var current = current
+
     init {
         require(setOf("thread", "interactive").all { it in capabilities }) { "producer capabilities unavailable" }
     }
@@ -31,14 +36,39 @@ internal class ProducerThreadObservation(
         var bytes = 0L
     }
 
-    private val store = AuthoritativeThreadStore()
+    private var store = AuthoritativeThreadStore()
+    private var committed: AuthoritativeThreadSnapshot? = null
     private var pending: Query? = null
     private var completedId: Long? = null
     private var retired = false
     private var reply: OwnedReplyObservation? = null
     private var sendId: Long? = null
+    private var beforeReply: ThreadEvidence? = null
+    private var sendReceipt: Pair<Any, Envelope>? = null
+    private var sendAccepted: Boolean? = null
+    private var rejected = false
 
     private fun owns(source: Any) = source === connection && !retired && current()
+
+    /** Retained facts are unqualified until a fresh query on the replacement completes. */
+    @Synchronized fun replaceConnection(
+        source: Any,
+        capabilities: Set<String>,
+        isCurrent: () -> Boolean,
+    ) {
+        check(!rejected && source !== connection) { "producer replacement unavailable" }
+        require(setOf("thread", "interactive").all { it in capabilities }) { "producer capabilities unavailable" }
+        pending?.decoder?.abandon()
+        reply?.phoneEnded(connection)
+        reply?.ended(sendReceipt?.first ?: connection)
+        connection = source
+        current = isCurrent
+        retired = false
+        pending = null
+        completedId = null
+        store = AuthoritativeThreadStore().also { fresh -> committed?.let { fresh.restore(host, conversation, it, 0) } }
+        if (beforeReply != null) rebuildReply()
+    }
 
     @Synchronized fun nextQuery(): ThreadQueryRequest {
         check(owns(connection) && pending == null) { "producer source unavailable or query incomplete" }
@@ -57,7 +87,10 @@ internal class ProducerThreadObservation(
     ) {
         if (!owns(source)) return
         if (envelope.type == "send_message") {
-            if (reply?.sending(source, envelope, current) == true) sendId = envelope.id
+            if (reply?.sending(source, envelope, current) == true) {
+                sendId = envelope.id
+                sendReceipt = source to envelope
+            }
             return
         }
         if (envelope.type !in setOf("thread_catch_up", "thread_page")) return
@@ -73,7 +106,10 @@ internal class ProducerThreadObservation(
         accepted: Boolean,
     ) {
         if (!owns(source)) return
-        if (envelope.type == "send_message" && sendId == envelope.id) reply?.sent(source, accepted)
+        if (envelope.type == "send_message" && sendId == envelope.id) {
+            sendAccepted = accepted
+            reply?.sent(source, accepted)
+        }
         val query = pending?.takeIf { it.envelope.id == envelope.id } ?: return
         reply?.phoneSent(source, envelope, accepted)
         query.accepted = accepted
@@ -112,7 +148,7 @@ internal class ProducerThreadObservation(
         for (outcome in query.decoder.decode(envelope)) {
             when (outcome) {
                 is ThreadDecodeOutcome.Pending -> Unit
-                is ThreadDecodeOutcome.Repair -> retire()
+                is ThreadDecodeOutcome.Repair -> reject()
                 is ThreadDecodeOutcome.Complete ->
                     when (val value = outcome.value) {
                         is ThreadQueryReply.Batch -> {
@@ -125,17 +161,18 @@ internal class ProducerThreadObservation(
                                     value.items,
                                     0,
                                 )
-                            if (applied !in setOf(AuthoritativeThreadOutcome.Applied, AuthoritativeThreadOutcome.Ignored)) retire()
+                            if (applied !in setOf(AuthoritativeThreadOutcome.Applied, AuthoritativeThreadOutcome.Ignored)) reject()
                         }
                         is ThreadQueryReply.Success -> {
                             if (store.certifyQuery(host, query.decoder.request, value, 0) != AuthoritativeThreadOutcome.Applied) {
-                                retire()
+                                reject()
                             } else {
+                                committed = store.current(host, conversation)
                                 completedId = query.envelope.id
                                 pending = null
                             }
                         }
-                        else -> retire()
+                        else -> reject()
                     }
             }
         }
@@ -146,7 +183,12 @@ internal class ProducerThreadObservation(
         pending?.decoder?.abandon()
         pending = null
         reply?.phoneEnded(connection)
-        reply?.ended(connection)
+        reply?.ended(sendReceipt?.first ?: connection)
+    }
+
+    private fun reject() {
+        rejected = true
+        retire()
     }
 
     @Synchronized fun ended(source: Any) {
@@ -158,7 +200,9 @@ internal class ProducerThreadObservation(
     @Synchronized fun evidence(): ThreadEvidence? {
         if (!owns(connection) || pending != null || completedId == null) return null
         val snapshot = store.current(host, conversation)
-        if (snapshot.repairNeeded || snapshot.resetNeeded || snapshot.coverage?.olderExists != false ||
+        if (snapshot.repairNeeded ||
+            snapshot.resetNeeded ||
+            snapshot.coverage?.olderExists != false ||
             snapshot.checkpoint < snapshot.completedVersion
         ) {
             return null
@@ -168,16 +212,32 @@ internal class ProducerThreadObservation(
 
     @Synchronized fun completedPost(text: String): Boolean =
         evidence()?.sourceSnapshot?.items?.singleOrNull {
-            it.kind == "assistant_message" && !it.active && it.status in setOf("done", "finished") && it.shown &&
-                (it.parent ?: 0) == 0L && (it.order ?: 0) > 0 &&
+            it.kind == "assistant_message" &&
+                !it.active &&
+                it.status in setOf("done", "finished") &&
+                it.shown &&
+                (it.parent ?: 0) == 0L &&
+                (it.order ?: 0) > 0 &&
                 ((it.content as? JsonObject)?.get("text") as? JsonPrimitive)?.content == text
         } != null
 
     @Synchronized fun expectReply() {
         check(reply == null) { "producer reply already armed" }
+        beforeReply = checkNotNull(evidence()) { "producer baseline incomplete" }
+        rebuildReply()
+    }
+
+    private fun rebuildReply() {
+        val before = checkNotNull(beforeReply)
+        val rebound = authoritativeThreadEvidence(host, conversation, connection, checkNotNull(before.sourceSnapshot))
         reply =
-            OwnedReplyObservation(host, checkNotNull(evidence()) { "producer baseline incomplete" }).also {
-                it.bindPhoneConnection(connection, current)
+            OwnedReplyObservation(host, rebound, producerSnapshot = committed).also { observation ->
+                observation.bindPhoneConnection(connection, current)
+                // Rehydrate the actual original receipt; no transport send occurs here.
+                sendReceipt?.let { (original, envelope) ->
+                    observation.sending(original, envelope) { owns(connection) }
+                    sendAccepted?.let { observation.sent(original, it) }
+                }
             }
     }
 

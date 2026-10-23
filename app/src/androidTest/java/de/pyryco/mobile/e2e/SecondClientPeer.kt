@@ -132,11 +132,23 @@ class SecondClientPeer(
         timeoutMs: Long,
     ) {
         awaiting("producer catch-up", timeoutMs) {
-            val query = observation.nextQuery()
-            link.request("producer catch-up", resend = false) { live ->
-                check(live.pump === observation.connection) { "producer connection replaced" }
+            link.request("producer catch-up", resend = true) { live ->
+                if (live.pump.state.value !is PumpState.Open) return@request RedialingLink.Attempt.Ended
+                bindProduction(observation, live)
+                val query = observation.nextQuery()
                 attempt(live, query.type, query.payload()) { id -> inReplyTo == id && observation.completed(id) }
             }
+        }
+    }
+
+    private fun bindProduction(
+        observation: ProducerThreadObservation,
+        live: Link,
+    ) {
+        if (live.pump === observation.connection) return
+        val opened = checkNotNull(live.pump.state.value as? PumpState.Open)
+        observation.replaceConnection(live.pump, opened.capabilities.toSet()) {
+            !closed.value && link.current.value?.pump === live.pump && live.pump.state.value is PumpState.Open
         }
     }
 
@@ -630,6 +642,7 @@ class SecondClientPeer(
         val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
         val observation = replyObservation
         val production = productionObservation
+        if (production != null && type == "send_message") bindProduction(production, live)
         production?.sending(live.pump, envelope)
         val targeted = observation?.sending(this, envelope) { !closed.value && live.pump.state.value is PumpState.Open } == true
         if (type == "modal_answer" && envelope.payloadField("option_id") == "allow_once") {

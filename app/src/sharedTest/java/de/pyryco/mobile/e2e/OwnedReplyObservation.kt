@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.flow.flow
@@ -34,6 +35,7 @@ internal class OwnedReplyObservation(
     val before: ThreadEvidence,
     private val legacyProducer: Boolean = false,
     private val knownSession: String? = null,
+    producerSnapshot: AuthoritativeThreadSnapshot? = null,
 ) {
     private var pump: Any? = null
     private var pumpCurrent: () -> Boolean = { true }
@@ -85,7 +87,7 @@ internal class OwnedReplyObservation(
     private val threadStore =
         if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
             AuthoritativeThreadStore().also { store ->
-                before.sourceSnapshot?.let { store.restore(host, before.owner.conversation, it, 0) }
+                (producerSnapshot ?: before.sourceSnapshot)?.let { store.restore(host, before.owner.conversation, it, 0) }
                 if (store.current(host, before.owner.conversation).epoch == null) {
                     val facts = before.records.mapNotNull { it.fact }
                     store.applyBatch(
@@ -182,8 +184,14 @@ internal class OwnedReplyObservation(
 
     /** Wait for this exact current phone send before another client acts. No reply completion is required. */
     @Synchronized fun acceptedSendCurrent(current: Any?): Boolean =
-        current === before.owner.connection && !closed && !failed && pump != null && pumpCurrent() &&
-            accepted && messageId != null && request?.field("message_id") == messageId &&
+        current === before.owner.connection &&
+            !closed &&
+            !failed &&
+            pump != null &&
+            pumpCurrent() &&
+            accepted &&
+            messageId != null &&
+            request?.field("message_id") == messageId &&
             request?.field("conversation_id") == before.owner.conversation
 
     @Synchronized fun received(
