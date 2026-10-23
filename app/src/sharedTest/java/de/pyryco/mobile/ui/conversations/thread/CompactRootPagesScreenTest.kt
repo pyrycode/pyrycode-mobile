@@ -137,7 +137,9 @@ class CompactRootPagesScreenTest {
             assertEquals(2, f.roots.size)
             // Positive demand control: the installed screen callback reaches the real repository lane.
             compose.onNodeWithText("Root 9001", substring = true).performClick()
+            compose.waitForIdle()
             runCurrent()
+            compose.waitUntil(5000) { f.details.size == 1 }
             assertEquals(1, f.details.size)
             assertEquals("thread_read_tool_body", f.details.single().type)
         }
