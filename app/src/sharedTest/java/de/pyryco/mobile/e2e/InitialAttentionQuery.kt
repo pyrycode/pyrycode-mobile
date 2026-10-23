@@ -7,12 +7,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeout
 import java.io.Closeable
 
@@ -96,30 +96,36 @@ internal class ThreadAcquisitionGate private constructor(
                         }
                     if (gate == null) return delegate.acquire(conversationId, connection)
                     try {
-                        val ready = withTimeout(gate.timeoutMillis) {
-                            coroutineScope {
-                                val observation = async(start = CoroutineStart.UNDISPATCHED) {
-                                    val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
-                                    awaitInitialAttentionQuery(store.observe(host, conversationId).filter { it.generation == gate.generation })
-                                    receipt.isCurrent()
-                                }
-                                val retired = async(start = CoroutineStart.UNDISPATCHED) {
-                                    combine(support, gate.closed) { verdict, closed ->
-                                        closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
-                                    }.first { it }
-                                }
-                                try {
-                                    select<Boolean> {
-                                        observation.onAwait { it }
-                                        retired.onAwait { false }
+                        val ready =
+                            withTimeout(gate.timeoutMillis) {
+                                coroutineScope {
+                                    val observation =
+                                        async(start = CoroutineStart.UNDISPATCHED) {
+                                            val receipt = ThreadQueryReadiness.awaitCurrent(host, conversationId)
+                                            awaitInitialAttentionQuery(
+                                                store.observe(host, conversationId).filter { it.generation == gate.generation },
+                                            )
+                                            receipt.isCurrent()
+                                        }
+                                    val retired =
+                                        async(start = CoroutineStart.UNDISPATCHED) {
+                                            combine(support, gate.closed) { verdict, closed ->
+                                                closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
+                                            }.first { it }
+                                        }
+                                    try {
+                                        select<Boolean> {
+                                            observation.onAwait { it }
+                                            retired.onAwait { false }
+                                        }
+                                    } finally {
+                                        observation.cancel()
+                                        retired.cancel()
                                     }
-                                } finally {
-                                    observation.cancel()
-                                    retired.cancel()
                                 }
                             }
-                        }
-                        if (!ready || synchronized(Companion) { active !== gate } ||
+                        if (!ready ||
+                            synchronized(Companion) { active !== gate } ||
                             (support.value as? ThreadSupport.Supported)?.connection !== connection ||
                             store.current(host, conversationId).generation != gate.generation
                         ) {

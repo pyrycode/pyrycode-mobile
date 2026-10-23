@@ -8858,8 +8858,17 @@ class InteractiveStreamE2ETest {
         val thread = checkNotNull(checkNotNull(registry.connectionFor(host)).coordinator.negotiatedThread)
         ThreadAcquisitionGate.arm(thread, conversation, THREAD_TIMEOUT_MS).use { gate ->
             openChatRow(name)
+            val waitingSince = System.nanoTime()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
-            runBlocking { gate.awaitAcquired() }
+            val remaining = THREAD_TIMEOUT_MS - (System.nanoTime() - waitingSince) / 1_000_000
+            runBlocking {
+                withTimeout(remaining) {
+                    gate.awaitAcquired()
+                    // Back must not release the new destination's producer before its own reply finishes.
+                    val receipt = ThreadQueryReadiness.awaitCurrent(host, conversation)
+                    check(receipt.isCurrent()) { "Reopened thread query owner changed" }
+                }
+            }
         }
     }
 
