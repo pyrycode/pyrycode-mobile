@@ -1123,14 +1123,32 @@ class DeterministicInteractiveStreamE2ETest {
                                 "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
                                     "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
                             }
-                        current.settledQueuedReplyAfterRecovery(
-                            start,
-                            held,
-                            queued,
-                            STREAMED_REPLY,
-                            coordinator.currentRepository.value,
-                        ) !=
-                            null
+                        val before = requireNotNull(start.sourceSnapshot)
+                        val snapshot = requireNotNull(current.sourceSnapshot)
+                        val original = requireNotNull(held.fact)
+                        val reply = current.records.singleOrNull { it.fact?.id == original.id }
+                        val fact = reply?.fact
+                        val accepted = snapshot.items.singleOrNull { it.id == queued.id }
+                        val senders =
+                            snapshot.items.count {
+                                val content = it.content as? kotlinx.serialization.json.JsonObject
+                                content?.get("message_id") == queuedContent["message_id"] &&
+                                    content?.get("device_id") == queuedContent["device_id"]
+                            }
+                        snapshotShape += ";document=${before.incarnation.isNotBlank()}:${before.incarnation == snapshot.incarnation}:" +
+                            "${before.epoch == snapshot.epoch}:${before.generation == snapshot.generation}" +
+                            ";reply=${fact?.session == original.session}:${fact?.turn == original.turn}:" +
+                            "${fact?.agent == original.agent}:${fact?.parent == original.parent}:${fact?.order == original.order}" +
+                            ";family=${current.settledReply(
+                                current.owner,
+                                requireNotNull(held.session),
+                                requireNotNull(held.turn),
+                            )?.size}" +
+                            ";queue=${accepted != null}:$senders:${accepted?.status == "delivered"}:" +
+                            "${(accepted?.content as? kotlinx.serialization.json.JsonObject)?.get("text") == queuedContent["text"]}"
+                        current.records.any {
+                            it.fact?.id == original.id && it.fullText == STREAMED_REPLY && !it.message.isStreaming
+                        }
                     }
                     checkpoint = "rendered reply"
                     composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.renderedReplyText(STREAMED_REPLY) == STREAMED_REPLY }
