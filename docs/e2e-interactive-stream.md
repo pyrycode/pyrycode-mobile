@@ -78,9 +78,11 @@ by `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_st
 (`direct-share`, using `ping.jsonl`). The deterministic twin holds unsent text staging; the live
 scenario also proves private PNG/document bytes and conversation isolation. Ordinary Android-share
 picker coverage remains `InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`.
-Since #2171, the deterministic twin's before/after user-message observations read through
-`harnessThreadEvidence` rather than the repository directly; see
-[the source-bound migration](#scripted-streaming-and-reopen-source-bound-migration-2171).
+Since #2498, the deterministic twin reads the exact destination's retained negotiated route
+through `harnessThreadEvidence`, requires current source/support/snapshot admission before Send,
+and forces connection replacement before accepting exactly one delivered exact user echo from
+the replacement's admitted owner. See [replacement evidence](#direct-share-replacement-evidence-2498)
+and the earlier [source-bound migration](#scripted-streaming-and-reopen-source-bound-migration-2171).
 
 Earlier-session Agent restart (#2246) adds rung 3
 `InteractiveStreamE2ETest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
@@ -3449,7 +3451,7 @@ The configured `scripted-all` gate includes `ping` and retains both methods:
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
 | `background-agent` (#1783, #1827, #1951) | two attributed child tools arrive after main turn end and expand under their Agent; background lifecycle moves a loaded tool family, marker navigation preserves collapse state, explicit expansion reveals its child run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
-| `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
+| `direct-share` (#1729, #2498) | published shortcut stages exact text with admitted absence of user messages without a picker or send; explicit Send renders ping; forced connection replacement admits exactly one delivered exact user echo for that destination | `ping.jsonl` | one |
 | `ping` (default, #1842) | original single-line reply plus durable reconnect newest-page delivery and reader-driven gap catch-up | `ping.jsonl` | one, reused by both methods |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (phone-checkpoint suffix and terminal-result releases) |
 | `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (phone display-checkpoint release) |
@@ -5122,15 +5124,80 @@ method has a rung-4 twin, so verifier gate 8 (`scripted-all`) does not exercise 
 These passes cover only the current legacy route exercised by `harnessThreadEvidence`;
 they do not prove negotiated production activation — #2175 owns that.
 
+### Direct Share replacement evidence (#2498)
+
+On Linux, `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+retains published-shortcut routing, exact unsent staging without the picker, admitted
+absence of user messages before the explicit tap, rendered ping and exactly one delivered
+exact user echo for the destination. Its negotiated observer now follows connection replacement;
+[the verification topic](knowledge/features/development-verification-test-scheduling.md#direct-share-evidence-across-connection-replacement-2498)
+details current source/support/snapshot admission and the four JVM rejection probes.
+
+The [cause and verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2502)
+correlate historical #2486 Send at 06:14:10.308Z, producer-gap teardown at
+06:14:11.355Z, replacement at 06:14:12.912Z and reply read mark at 06:14:13.038Z
+with cleanup at 06:15:43.335Z, about the final 90-second wait later. #2439 has the
+same replacement/read-mark/terminal-wait sequence; neither passing same-tree rerun
+has the producer gap. Their empty failure records remain failures. Historical raw
+phone instrumentation was absent from the downloaded bundles, so cleanup-time
+launcher focus alone cannot identify the operation or establish activity loss.
+
+The fresh controlled pre-repair run supplies that boundary evidence: static stages
+reach thread open, shortcut publication, exact staging, admitted unsent state, Send
+and rendered reply, then forced replacement leaves the captured source
+`admitted=false source_current=false` and the original 90000 ms final wait fails.
+The repaired scenario keeps that replacement on every run, with unchanged deadlines
+and failure propagation. No wider sequence/load investigation was needed.
+
+| Linux `scripted direct-share` invocation | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Unchanged baseline, `26a7bcf650caff73873005734b43ce73aebc4202` | 1 | 1 | 0 | 0 |
+| Controlled pre-repair, `f82cd2691d9128e6867f74b1a575b5a9628e4f25` | 1 | 0 | 1 | 0 |
+| Repaired fresh launch 1 | 1 | 1 | 0 | 0 |
+| Repaired fresh launch 2 | 1 | 1 | 0 | 0 |
+| Repaired fresh launch 3 | 1 | 1 | 0 | 0 |
+
+Each row ran `python3 scripts/android-test-gate.py scripted direct-share` and counted
+the named method once. Repaired candidate: `28acf283e469d0615814d59493d72854ed639485`;
+isolated daemon: `647a4e7526f581f78d422195cb22b3e9b979e767`.
+Focused post-merge JVM XML records `DirectShareEvidenceTest` **4/4**,
+`StreamingReplyEvidenceTest` **7/7** and `ThreadEvidenceTest` **17/17** executed/passed,
+all zero failed/errors/skipped.
+
+The complete configured dispatcher gate separately passed on that candidate at
+2026-10-23T08:18:48.389Z:
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+exited 0 with **24 executed, 24 passed, 0 failed, 0 skipped**, including one executed,
+passing Direct Share method. All six configured verifier gates passed; the JVM gate
+recorded **5390 executed/passed, 0 failed/skipped**, including all four new probes,
+and UI recorded **333 executed/passed, 0 failed, 1 skipped**. The skipped
+`renameAtFigmaViewport` capture is not a pass. No real-Claude run is claimed;
+macOS is outside this Linux ticket's verification scope.
+
+At review time, private raw XML, instrumentation, phone logs, source/binary inputs
+and SHA-256 manifests were under `$AGENTS_REPO_PATH/logs/evidence/2498/`:
+`baseline/` (also both historical bundles), `controlled-red/`, three independent
+`native-pass-1/` through `native-pass-3/`, and `post-merge-unit-*`.
+Matching isolated daemon/relay captures were under `harness/`, with repaired runs
+`fault-5566547babdacfb7695c7aa73e5614e9`,
+`fault-29c713b925eae82214268401d2e1b2fd` and
+`fault-6f3a50ed793d8c304424c43d2ba845a0`.
+The complete gate outcome/counts were retained in agents
+`logs/verifier-gate_#2498.pass.json` and `logs/verifier-gate_#2498_6.log`.
+Raw evidence is pruned after 30 days; these paths record its location at review,
+while the counted results above survive in this document.
+
 ### Scripted streaming and reopen source-bound migration (#2171)
 
-The nine `ConversationRepository.observeMessages` reads inside
+At #2171, the nine `ConversationRepository.observeMessages` reads inside
 `interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`,
 `interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
 (its local `assistantRows`/`assertOpenReply` helpers) and
-`interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` now go through
+`interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` moved to
 #2169's `harnessThreadEvidence` binding instead of reading the repository directly.
-That binding still selects the current legacy source; no production route,
+At that checkpoint the binding selected the legacy source; Direct Share's current
+negotiated replacement checks are documented [above](#direct-share-replacement-evidence-2498).
+No production route,
 capability or fixture changed. New shared predicates in
 `app/src/sharedTest/java/de/pyryco/mobile/e2e/StreamingReplyEvidence.kt`
 (`holdsNoUserMessage`, `ownedUserEcho`, `assistantRecords`, `openReply`,
@@ -8166,8 +8233,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` passed in
   the fresh full live suite, alongside the preserved ordinary-share method. Its rung-4 twin is
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`,
-  selected by `direct-share` with the existing ping fixture. It proves unsent staging without a picker;
-  live coverage adds both file digests and X/Y isolation. Counts and evidence scope are in
+  selected by `direct-share` with the existing ping fixture. Since #2498 it also forces replacement
+  after rendering and requires a current admitted destination owner for the single delivered exact
+  echo, while preserving admitted unsent staging without a picker. The controlled red, three fresh
+  Linux passes and complete 24-test scripted-all pass are recorded in
+  [replacement evidence](#direct-share-replacement-evidence-2498). No deterministic repair follow-up
+  remains; live coverage adds both file digests and X/Y isolation. Counts and evidence scope are in
   [Verification status](#verification-status). No coverage follow-up remains. The pre-ship command
   stays `python3 scripts/android-test-gate.py live`; ranking and launcher placement stay system-controlled.
 
