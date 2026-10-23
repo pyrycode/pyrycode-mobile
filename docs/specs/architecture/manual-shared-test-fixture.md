@@ -39,4 +39,12 @@ Four selected scripted methods also executed and passed with no failures, errors
 
 The red, green and both phone gate bundles are also preserved under `$AGENTS_REPO_PATH/logs/evidence/manual-shared-fixture-20261023-85e7b2085` for review outside the temporary checkout.
 
-Configured dispatcher acceptance and independent review remain pending. Existing independent repairs and all ten scoped holds remain. Focused passes do not establish one cause for every historical flake.
+## Accepted recovery integration
+
+The final workflow read found that 2486 had independently merged and 2491 was being verified separately. Their states were preserved. Eight other tickets still have manual-repair holds: 2351, 2356, 2360, 2368, 2469, 2476, 2493 and 2494.
+
+Accepted main `f1f9c3adb` merged cleanly into this branch as `1436e17548b815cc940352b73647b6aca520b259`. The combined query, connection, recovery and lifecycle selection executed and passed 97 JVM methods. Formatting passed. The exact scripted reconnect method then executed and passed once against the same released daemon source. Both gates exited zero, with no failures, errors or skips. No implementation change was needed for this integration.
+
+Raw integrated JVM XML is in `build/manual-shared-fixture/integrated-jvm`. The phone XML, logs and source/binary identities are in `build/dispatcher-tests/scripted-soiasyw1`. A copy is preserved under the evidence bundle's `integrated-1436e1754` folder. The earlier four recorded and four scripted passes retain their original source and APK identities.
+
+Configured dispatcher acceptance and independent review remain pending. Remaining manual holds and independent work retain their current state. Focused passes do not establish one cause for every historical flake.
