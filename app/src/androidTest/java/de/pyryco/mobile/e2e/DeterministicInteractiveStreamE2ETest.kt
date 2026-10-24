@@ -502,15 +502,23 @@ class DeterministicInteractiveStreamE2ETest {
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
-                runBlocking {
-                    produced =
-                        observation
-                            .awaitReplyAfterPost(
-                                proof.lastOlderPost,
-                                REPLY_TIMEOUT_MS,
-                                catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
-                                send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
-                            ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
+                try {
+                    runBlocking {
+                        produced =
+                            observation
+                                .awaitReplyAfterPost(
+                                    proof.lastOlderPost,
+                                    REPLY_TIMEOUT_MS,
+                                    catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
+                                    send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
+                                ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
+                    }
+                } finally {
+                    android.util.Log.i(
+                        "DurableGapProducer",
+                        "event=producer_wait post_observed=${observation.completedPost(proof.lastOlderPost)} " +
+                            "produced=${produced != null} ${observation.diagnostic()}",
+                    )
                 }
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
