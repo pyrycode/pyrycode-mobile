@@ -150,6 +150,24 @@ class DurableGapIsolationTest {
         assertEquals(listOf("probe"), events)
     }
 
+    @Test fun cleanupFailureAfterSuccessfulCatchUpStillRestores() {
+        val primary = AssertionError("peer close after catch-up")
+        assertSame(
+            primary,
+            assertThrows(AssertionError::class.java) {
+                fixture(peer = {
+                    events += "peer"
+                    throw primary
+                }).run {
+                    sever { events += "sever" }
+                    events += "normal_restore"
+                    events += "catch_up_proof"
+                }
+            },
+        )
+        assertEquals(listOf("sever", "normal_restore", "catch_up_proof", "peer", "probe", "restore"), events)
+    }
+
     @Test fun sameThrowableDoesNotPreventRemainingCleanup() {
         val primary = AssertionError("same failure")
         assertSame(

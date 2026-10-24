@@ -35,9 +35,12 @@ internal class DurableGapIsolation(
             failure = primary
         }
         // Failure-path recovery cannot make a failed proof pass, even if normal reconnect failed.
-        if (failure != null && disconnectAttempted) finish(restore)
+        val failedBeforeCleanup = failure != null
+        if (failedBeforeCleanup && disconnectAttempted) finish(restore)
         finish(closePeer)
         finish(endProbe)
+        // A cleanup-only failure is an exceptional exit too; attempt restoration once in that case.
+        if (!failedBeforeCleanup && failure != null && disconnectAttempted) finish(restore)
         failure?.let { throw it }
     }
 }
