@@ -94,6 +94,7 @@ class SecondClientPeer(
     @Volatile private var productionObservation: ProducerThreadObservation? = null
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
+    private val readTraceCount = AtomicLong()
     private val closed = MutableStateFlow(false)
     private val link = RedialingLink(scope, ::dialLink, ::awaitEnd) { it.pump.close() }
 
@@ -644,6 +645,7 @@ class SecondClientPeer(
     ): RedialingLink.Attempt<Envelope> {
         val id = requestId.incrementAndGet()
         val envelope = Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload)
+        traceRead(live.pump, envelope, sending = true)
         val observation = replyObservation
         val production = productionObservation
         if (production != null && type == "send_message" && !bindProduction(production, live)) return RedialingLink.Attempt.NotSent
@@ -699,6 +701,7 @@ class SecondClientPeer(
                             scope.launch {
                                 try {
                                     pump.inbound.collect { envelope ->
+                                        traceRead(pump, envelope, sending = false)
                                         productionObservation?.received(pump, envelope)
                                         record(envelope)
                                     }
@@ -734,6 +737,22 @@ class SecondClientPeer(
         received.update { frames ->
             if (id != null && frames.any { it.type == envelope.type && it.payloadField(idField) == id }) frames else frames + envelope
         }
+    }
+
+    private fun traceRead(
+        pump: ManagedSessionPump,
+        frame: Envelope,
+        sending: Boolean,
+    ) {
+        val fields = peerReadTrace(frame) ?: return
+        if (readTraceCount.incrementAndGet() > 64) return
+        val opened = pump.state.value as? PumpState.Open
+        android.util.Log.i(
+            "PeerReadProof",
+            "event=peer_read_trace host=${peerReadIdentity(pairing.serverId)} " +
+                "connection=${peerReadIdentity(opened?.connId)} pump=${System.identityHashCode(pump)} " +
+                "current=${link.current.value?.pump === pump} open=${opened != null} sending=$sending $fields",
+        )
     }
 
     private fun Envelope.chunk(): AttachmentChunkPayloadDto =
