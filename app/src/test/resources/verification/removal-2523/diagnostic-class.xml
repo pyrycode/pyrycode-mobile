@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-10-24T09:39:35.541Z" hostname="Juhanas-Air" time="17.825">
+  <properties/>
+  <testcase name="atomicInvariant_failurePreservesCertificateAndRetryCommits" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="5.485"/>
+  <testcase name="ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.107"/>
+  <testcase name="ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.08"/>
+  <testcase name="retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.086"/>
+  <testcase name="retirementInvariant_replayAndRestoreCannotResurrect" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.054"/>
+  <testcase name="retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.16"/>
+  <testcase name="ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.082"/>
+  <testcase name="retirementInvariant_successReleasesRecoveryButFailureRetainsIt" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="3.465"/>
+  <testcase name="retirementInvariant_finalFlushRefreshesRemoval" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.062"/>
+  <testcase name="ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.142"/>
+  <testcase name="retirementInvariant_resetDuringRemovalCreatesNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.084"/>
+  <testcase name="retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.095"/>
+  <testcase name="retirementInvariant_scopeDeletionKeepsOtherHostExact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.077"/>
+  <testcase name="retirementInvariant_heldUpsertThenRemovalCommitsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.067"/>
+  <testcase name="atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.05"/>
+  <testcase name="ownershipInvariant_staleCapturesCannotRemoveNewerFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.071"/>
+  <testcase name="retirementInvariant_emptyPageStillRetainsItsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.106"/>
+  <testcase name="ownershipInvariant_partialRemovalPreservesEveryOtherFact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="6.358"/>
+  <system-out><![CDATA[removal_phase=tied_fixture_begin phase_ms=0 elapsed_ms=0
+removal_phase=tied_cleared phase_ms=14 elapsed_ms=14
+removal_phase=tied_seeded phase_ms=31 elapsed_ms=46
+removal_phase=tied_observed phase_ms=12 elapsed_ms=59
+removal_phase=tied_observer_joined phase_ms=1 elapsed_ms=61
+removal_phase=tied_removed_1 phase_ms=83 elapsed_ms=145
+removal_phase=tied_removed_2 phase_ms=87 elapsed_ms=232
+removal_phase=tied_removed_3 phase_ms=53 elapsed_ms=285
+removal_phase=tied_removed_4 phase_ms=53 elapsed_ms=339
+removal_phase=tied_removed_5 phase_ms=44 elapsed_ms=383
+removal_phase=tied_removed_6 phase_ms=49 elapsed_ms=433
+removal_phase=tied_removed_7 phase_ms=46 elapsed_ms=479
+removal_phase=tied_removed_8 phase_ms=46 elapsed_ms=526
+removal_phase=tied_removed_9 phase_ms=46 elapsed_ms=572
+removal_phase=tied_removed_10 phase_ms=44 elapsed_ms=616
+removal_phase=tied_removed_11 phase_ms=41 elapsed_ms=658
+removal_phase=tied_removed_12 phase_ms=40 elapsed_ms=698
+removal_phase=tied_removed_13 phase_ms=37 elapsed_ms=735
+removal_phase=tied_removed_14 phase_ms=36 elapsed_ms=772
+removal_phase=tied_removed_15 phase_ms=37 elapsed_ms=810
+removal_phase=tied_removed_16 phase_ms=35 elapsed_ms=845
+removal_phase=tied_removed_17 phase_ms=34 elapsed_ms=879
+removal_phase=tied_removed_18 phase_ms=32 elapsed_ms=912
+removal_phase=tied_removed_19 phase_ms=39 elapsed_ms=952
+removal_phase=tied_removed_20 phase_ms=31 elapsed_ms=984
+removal_phase=tied_removed_21 phase_ms=32 elapsed_ms=1016
+removal_phase=tied_removed_22 phase_ms=31 elapsed_ms=1047
+removal_phase=tied_removed_23 phase_ms=28 elapsed_ms=1076
+removal_phase=tied_removed_24 phase_ms=29 elapsed_ms=1105
+removal_phase=tied_removed_25 phase_ms=28 elapsed_ms=1134
+removal_phase=tied_removed_26 phase_ms=28 elapsed_ms=1163
+removal_phase=tied_removed_27 phase_ms=27 elapsed_ms=1190
+removal_phase=tied_removed_28 phase_ms=27 elapsed_ms=1217
+removal_phase=tied_removed_29 phase_ms=30 elapsed_ms=1248
+removal_phase=tied_removed_30 phase_ms=27 elapsed_ms=1276
+removal_phase=tied_removed_31 phase_ms=25 elapsed_ms=1301
+removal_phase=tied_removed_32 phase_ms=25 elapsed_ms=1327
+removal_phase=tied_removed_33 phase_ms=24 elapsed_ms=1351
+removal_phase=tied_removed_34 phase_ms=24 elapsed_ms=1376
+removal_phase=tied_removed_35 phase_ms=30 elapsed_ms=1406
+removal_phase=tied_removed_36 phase_ms=24 elapsed_ms=1430
+removal_phase=tied_removed_37 phase_ms=23 elapsed_ms=1454
+removal_phase=tied_removed_38 phase_ms=22 elapsed_ms=1477
+removal_phase=tied_removed_39 phase_ms=22 elapsed_ms=1500
+removal_phase=tied_removed_40 phase_ms=24 elapsed_ms=1524
+removal_phase=tied_removed_41 phase_ms=21 elapsed_ms=1546
+removal_phase=tied_removed_42 phase_ms=21 elapsed_ms=1568
+removal_phase=tied_removed_43 phase_ms=22 elapsed_ms=1590
+removal_phase=tied_removed_44 phase_ms=21 elapsed_ms=1612
+removal_phase=tied_removed_45 phase_ms=20 elapsed_ms=1633
+removal_phase=tied_removed_46 phase_ms=21 elapsed_ms=1654
+removal_phase=tied_removed_47 phase_ms=20 elapsed_ms=1675
+removal_phase=tied_removed_48 phase_ms=21 elapsed_ms=1696
+removal_phase=tied_removed_49 phase_ms=21 elapsed_ms=1718
+removal_phase=tied_removed_50 phase_ms=21 elapsed_ms=1739
+removal_phase=tied_removed_51 phase_ms=20 elapsed_ms=1759
+removal_phase=tied_removed_52 phase_ms=20 elapsed_ms=1780
+removal_phase=tied_removed_53 phase_ms=93 elapsed_ms=1873
+removal_phase=tied_removed_54 phase_ms=26 elapsed_ms=1900
+removal_phase=tied_removed_55 phase_ms=22 elapsed_ms=1923
+removal_phase=tied_removed_56 phase_ms=20 elapsed_ms=1944
+removal_phase=tied_removed_57 phase_ms=20 elapsed_ms=1964
+removal_phase=tied_removed_58 phase_ms=21 elapsed_ms=1985
+removal_phase=tied_removed_59 phase_ms=20 elapsed_ms=2006
+removal_phase=tied_removed_60 phase_ms=20 elapsed_ms=2026
+removal_phase=tied_removed_61 phase_ms=20 elapsed_ms=2047
+removal_phase=tied_removed_62 phase_ms=20 elapsed_ms=2068
+removal_phase=tied_removed_63 phase_ms=20 elapsed_ms=2088
+removal_phase=tied_removed_64 phase_ms=20 elapsed_ms=2108
+removal_phase=tied_failure_begin phase_ms=0 elapsed_ms=2109
+removal_phase=tied_failure_returned phase_ms=20 elapsed_ms=2129
+removal_phase=tied_failure_reopened phase_ms=9 elapsed_ms=2139
+removal_phase=tied_retry_committed phase_ms=21 elapsed_ms=2161
+removal_phase=tied_retry_reopened phase_ms=9 elapsed_ms=2170
+removal_phase=tied_assertions_done phase_ms=1 elapsed_ms=2172
+removal_phase=absent_fixture_begin phase_ms=0 elapsed_ms=2172
+removal_phase=absent_cleared phase_ms=5 elapsed_ms=2178
+removal_phase=absent_seeded phase_ms=13 elapsed_ms=2191
+removal_phase=absent_observed phase_ms=7 elapsed_ms=2199
+removal_phase=absent_observer_joined phase_ms=0 elapsed_ms=2200
+removal_phase=absent_removed_1 phase_ms=23 elapsed_ms=2224
+removal_phase=absent_removed_2 phase_ms=22 elapsed_ms=2246
+removal_phase=absent_removed_3 phase_ms=21 elapsed_ms=2268
+removal_phase=absent_removed_4 phase_ms=25 elapsed_ms=2294
+removal_phase=absent_removed_5 phase_ms=20 elapsed_ms=2314
+removal_phase=absent_removed_6 phase_ms=20 elapsed_ms=2335
+removal_phase=absent_removed_7 phase_ms=20 elapsed_ms=2355
+removal_phase=absent_removed_8 phase_ms=20 elapsed_ms=2376
+removal_phase=absent_removed_9 phase_ms=20 elapsed_ms=2396
+removal_phase=absent_removed_10 phase_ms=20 elapsed_ms=2416
+removal_phase=absent_removed_11 phase_ms=19 elapsed_ms=2435
+removal_phase=absent_removed_12 phase_ms=19 elapsed_ms=2455
+removal_phase=absent_removed_13 phase_ms=18 elapsed_ms=2473
+removal_phase=absent_removed_14 phase_ms=18 elapsed_ms=2492
+removal_phase=absent_removed_15 phase_ms=19 elapsed_ms=2511
+removal_phase=absent_removed_16 phase_ms=19 elapsed_ms=2530
+removal_phase=absent_removed_17 phase_ms=17 elapsed_ms=2547
+removal_phase=absent_removed_18 phase_ms=17 elapsed_ms=2565
+removal_phase=absent_removed_19 phase_ms=17 elapsed_ms=2582
+removal_phase=absent_removed_20 phase_ms=14 elapsed_ms=2596
+removal_phase=absent_removed_21 phase_ms=19 elapsed_ms=2615
+removal_phase=absent_removed_22 phase_ms=15 elapsed_ms=2631
+removal_phase=absent_removed_23 phase_ms=15 elapsed_ms=2647
+removal_phase=absent_removed_24 phase_ms=15 elapsed_ms=2662
+removal_phase=absent_removed_25 phase_ms=15 elapsed_ms=2677
+removal_phase=absent_removed_26 phase_ms=17 elapsed_ms=2695
+removal_phase=absent_removed_27 phase_ms=17 elapsed_ms=2713
+removal_phase=absent_removed_28 phase_ms=16 elapsed_ms=2729
+removal_phase=absent_removed_29 phase_ms=17 elapsed_ms=2746
+removal_phase=absent_removed_30 phase_ms=17 elapsed_ms=2763
+removal_phase=absent_removed_31 phase_ms=16 elapsed_ms=2780
+removal_phase=absent_removed_32 phase_ms=15 elapsed_ms=2796
+removal_phase=absent_removed_33 phase_ms=16 elapsed_ms=2812
+removal_phase=absent_removed_34 phase_ms=16 elapsed_ms=2828
+removal_phase=absent_removed_35 phase_ms=23 elapsed_ms=2852
+removal_phase=absent_removed_36 phase_ms=16 elapsed_ms=2869
+removal_phase=absent_removed_37 phase_ms=15 elapsed_ms=2884
+removal_phase=absent_removed_38 phase_ms=16 elapsed_ms=2901
+removal_phase=absent_removed_39 phase_ms=15 elapsed_ms=2917
+removal_phase=absent_removed_40 phase_ms=22 elapsed_ms=2939
+removal_phase=absent_removed_41 phase_ms=18 elapsed_ms=2958
+removal_phase=absent_removed_42 phase_ms=21 elapsed_ms=2979
+removal_phase=absent_removed_43 phase_ms=16 elapsed_ms=2996
+removal_phase=absent_removed_44 phase_ms=16 elapsed_ms=3012
+removal_phase=absent_removed_45 phase_ms=15 elapsed_ms=3028
+removal_phase=absent_removed_46 phase_ms=15 elapsed_ms=3044
+removal_phase=absent_removed_47 phase_ms=15 elapsed_ms=3059
+removal_phase=absent_removed_48 phase_ms=15 elapsed_ms=3075
+removal_phase=absent_removed_49 phase_ms=15 elapsed_ms=3091
+removal_phase=absent_removed_50 phase_ms=15 elapsed_ms=3106
+removal_phase=absent_removed_51 phase_ms=16 elapsed_ms=3123
+removal_phase=absent_removed_52 phase_ms=16 elapsed_ms=3139
+removal_phase=absent_removed_53 phase_ms=15 elapsed_ms=3154
+removal_phase=absent_removed_54 phase_ms=15 elapsed_ms=3170
+removal_phase=absent_removed_55 phase_ms=15 elapsed_ms=3185
+removal_phase=absent_removed_56 phase_ms=16 elapsed_ms=3202
+removal_phase=absent_removed_57 phase_ms=16 elapsed_ms=3218
+removal_phase=absent_removed_58 phase_ms=15 elapsed_ms=3234
+removal_phase=absent_removed_59 phase_ms=14 elapsed_ms=3248
+removal_phase=absent_removed_60 phase_ms=19 elapsed_ms=3268
+removal_phase=absent_removed_61 phase_ms=14 elapsed_ms=3283
+removal_phase=absent_removed_62 phase_ms=77 elapsed_ms=3360
+removal_phase=absent_removed_63 phase_ms=16 elapsed_ms=3376
+removal_phase=absent_removed_64 phase_ms=16 elapsed_ms=3393
+removal_phase=absent_failure_begin phase_ms=0 elapsed_ms=3393
+removal_phase=absent_failure_returned phase_ms=14 elapsed_ms=3408
+removal_phase=absent_failure_reopened phase_ms=8 elapsed_ms=3416
+removal_phase=absent_retry_committed phase_ms=16 elapsed_ms=3433
+removal_phase=absent_retry_reopened phase_ms=7 elapsed_ms=3441
+removal_phase=absent_assertions_done phase_ms=0 elapsed_ms=3441
+removal_phase=body_done phase_ms=0 elapsed_ms=3441
+removal_phase=close_begin phase_ms=0 elapsed_ms=3442
+removal_phase=close_done phase_ms=2 elapsed_ms=3444
+owned_removal_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=1, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=1)
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

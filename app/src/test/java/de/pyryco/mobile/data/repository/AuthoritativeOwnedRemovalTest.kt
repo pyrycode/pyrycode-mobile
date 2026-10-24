@@ -498,6 +498,7 @@ class AuthoritativeOwnedRemovalTest {
         runTest {
             val started = System.nanoTime()
             var previous = started
+
             fun phase(code: String) {
                 val now = System.nanoTime()
                 println("removal_phase=$code phase_ms=${(now - previous) / 1_000_000} elapsed_ms=${(now - started) / 1_000_000}")

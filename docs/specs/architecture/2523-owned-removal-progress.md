@@ -34,3 +34,6 @@ Retain original failure output and baseline results. Observe the regression fail
 ## Open Questions
 - Which phase fails to progress: fixture/Room work, observer cancellation, removal persistence or teardown? Resolve with phase evidence before choosing the repair.
 - Does class sequencing expose the failure that focused execution does not? If wider scope is necessary, request the shared investigation with retained evidence rather than running the complete suite.
+
+## Revisions
+- 2026-10-24: retained both immutable historical failures, including #2493's 169.905-second return after the one-minute deadline. The unchanged fresh method passed in 12.437 seconds. Diagnostic class execution passed 18/18 (named method 3.465 seconds), and a diagnostic fresh-worker method passed 1/1 in 10.937 seconds. The raw reports and source hashes are under `app/src/test/resources/verification/removal-2523/`. Every measured removal progressed and cleanup completed in 2 ms; neither fresh Room state nor the affected class sequence reproduced the timeout. The historical awaited phase therefore remains unresolved. Keep the original deadline and every assertion; request shared wider diagnostic assessment before selecting a repair. This is preserved investigation work, not a completed reliability repair.

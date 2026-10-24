@@ -1,0 +1,39 @@
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" tests="18" skipped="0" failures="1" errors="0" timestamp="2026-10-23T20:29:56.956Z" hostname="Juhanas-Air" time="189.731">
+  <properties />
+  <testcase name="atomicInvariant_failurePreservesCertificateAndRetryCommits" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.346" />
+  <testcase name="ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.217" />
+  <testcase name="ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.118" />
+  <testcase name="retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.091" />
+  <testcase name="retirementInvariant_replayAndRestoreCannotResurrect" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.076" />
+  <testcase name="retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.11" />
+  <testcase name="ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.096" />
+  <testcase name="retirementInvariant_successReleasesRecoveryButFailureRetainsIt" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="169.905">
+    <failure message="kotlinx.coroutines.test.UncompletedCoroutinesError: After waiting for 1m, the test body did not run to completion" type="kotlinx.coroutines.test.UncompletedCoroutinesError">kotlinx.coroutines.test.UncompletedCoroutinesError: After waiting for 1m, the test body did not run to completion
+	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$2.invokeSuspend$lambda$0(TestBuilders.kt:353)
+	at kotlinx.coroutines.InvokeOnCancelling.invoke(JobSupport.kt:1571)
+	at kotlinx.coroutines.JobSupport.notifyCancelling(JobSupport.kt:1604)
+	at kotlinx.coroutines.JobSupport.tryMakeCancelling(JobSupport.kt:826)
+	at kotlinx.coroutines.JobSupport.makeCancelling(JobSupport.kt:786)
+	at kotlinx.coroutines.JobSupport.cancelImpl$kotlinx_coroutines_core(JobSupport.kt:702)
+	at kotlinx.coroutines.JobSupport.cancelCoroutine(JobSupport.kt:689)
+	at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+	at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+	at java.base/java.lang.Thread.run(Unknown Source)
+</failure>
+  </testcase>
+  <testcase name="retirementInvariant_finalFlushRefreshesRemoval" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.918" />
+  <testcase name="ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.365" />
+  <testcase name="retirementInvariant_resetDuringRemovalCreatesNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.252" />
+  <testcase name="retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.214" />
+  <testcase name="retirementInvariant_scopeDeletionKeepsOtherHostExact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.516" />
+  <testcase name="retirementInvariant_heldUpsertThenRemovalCommitsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.259" />
+  <testcase name="atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.157" />
+  <testcase name="ownershipInvariant_staleCapturesCannotRemoveNewerFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.199" />
+  <testcase name="retirementInvariant_emptyPageStillRetainsItsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.315" />
+  <testcase name="ownershipInvariant_partialRemovalPreservesEveryOtherFact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="15.483" />
+  <system-out>owned_removal_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=1, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=1)
+</system-out>
+  <system-err />
+</testsuite>

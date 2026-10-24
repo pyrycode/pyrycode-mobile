@@ -1,0 +1,30 @@
+#2523 macOS diagnostic evidence — repair and acceptance remain pending
+
+Historical failures (not converted to passes)
+- #2505 source 2a5d3096ef22a1908f878ebb734ad4b050cae78d.
+- Fleet bundle 6651736b89ef2fbca94b73564bba9eeca206d579933e97f60ea8d0855754801b, digest 7b6f728ccc286b1f0d7ac8cdc923e2d7d98f813f9e0fc5142682952503ca3e08.
+- Source artifact evidence/deadline-rework-20261023/configured-2a5d3096/jvm-fmupk1oe-dispatcher.xml; full report SHA256 dfab1bc3db1993804747cb59fbbbdfb2ef66eb9d666a15b1be80c3566c38df7d.
+- historical-class-red.xml is its verbatim affected-class element: 18 executed, 17 passed, 1 failed, 0 errors/skipped. Named method 62.110 s; one-minute runTest deadline, body incomplete, no phase output.
+- The unchanged isolated rerun in the same bundle, jvm-az6ebf6c-dispatcher.xml, executed/passed 1 with 0 failed/errors/skipped, named method 3.473 s. Its pass does not establish a cause.
+- #2493 fleet bundle e180eb4866bf44da54aef898fc54cbfa3bc399cb875fcef2cf49f2cb9a88ba2a, digest ad34b9d23a3ca34e9e9845adda068ca8fd91cfa0f72ca3e108df1e0ba41ad904.
+- historical-2493-class-red.xml is the verbatim affected-class element from the immutable local report /Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/verifier-gate_#2493_4.log.failure-1792788010197.log.
+- The bundle's pointers.json authenticates that full report: SHA256 4f1ad617d07577d032db5a377703d5d8c3e139c5d77dedb1ee046523337353aa. The bundle retains only its tail; the full local report was read independently.
+- That class executed 18: 17 passed, 1 failed, 0 errors/skipped. Named method 169.905 s despite a one-minute coroutine deadline. A generic timeout stack cannot locate that delay. The seven preceding class methods passed in 0.076–0.346 s each.
+- #2493 isolated rerun artifact logs/2026-10-23T20-40-10-302Z_verifier-gate-rerun__2493.log executed/passed 1, 0 failed/errors/skipped; method 8.452 s.
+
+Fresh builder execution
+- Host macOS/Juhanas-Air. Linux is outside this ticket's verification scope.
+- Every invocation starts a new Gradle test worker and JUnit TemporaryFolder with a new real cache.db. Both ordering arms, 256 facts, all 64 success assertions, failure/retry, independent cache/Room reopen reads and exact 65 fences remain unchanged. The original one-minute deadline remains unchanged.
+- Command prefix: python3 scripts/gradle-gate.py testDebugUnitTest
+- Method selector: --tests de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest.retirementInvariant_successReleasesRecoveryButFailureRetainsIt
+- Class selector: --tests de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest
+- unchanged-method.xml: plan commit 04b34b470c0e9477058e473c318ef7cb7b1bdf86, unchanged test SHA256 0f7e36c0b868aff75f94f90a63bc85990fc2efef4ed2f9f5df110896b9c55e7d. Method selector with --rerun-tasks --console=plain; fresh 1 executed/passed, 0 failed/errors/skipped, method 12.437 s. BUILD SUCCESSFUL in 4m 22s; 34 tasks executed. Initial admission wait 77 s. Cold compilation is outside the reported test time.
+- diagnostic-class.xml: diagnostic source commit 5021af627; test SHA256 5fe0c6ffa9ec639fa9b2f35870231974096f074e20d2da068b93bfba37c06c77. Class selector with --rerun --console=plain; fresh 18 executed/passed, 0 failed/errors/skipped; class 17.825 s, method 3.465 s. BUILD SUCCESSFUL in 2m 28s; 5 tasks executed, 29 up-to-date. Admission wait 140 s.
+- diagnostic-method.xml: same diagnostic test SHA256 and source commit; only additional untracked evidence resources differed. Method selector with --rerun --console=plain; fresh 1 executed/passed, 0 failed/errors/skipped; method 10.937 s. BUILD SUCCESSFUL in 29s; 3 tasks executed, 31 up-to-date. Admission wait 146 s.
+- --rerun reruns the selected Test task; UP-TO-DATE compile prerequisites do not mean cached test execution. The reports have independent fresh timestamps.
+
+Phase findings and limit
+- Diagnostic class: body 3441 ms; every success progressed. Tied observer cancellation 1 ms, absent cancellation 0 ms; failed-removal calls 20/14 ms; reopen reads 7–9 ms; Room cleanup 2 ms. No failed phase was reproduced.
+- Diagnostic isolated method: body 7953 ms, initial fixture clear 3685 ms; tied/absent observation cancellation 10/2 ms; each successful removal completed in 6–115 ms; failed calls 10/32 ms; reopen reads 7–37 ms; Room cleanup 2 ms.
+- These fresh passes exclude a deterministic stall under the measured fresh fixture and affected-class sequence only. They cannot distinguish historical slow progress from a suspended transaction/coroutine or cleanup delay. A root cause, a repair, three post-repair independent passes and post-repair class coverage are still pending.
+- No deadline increase, retry, skip, production change or assertion weakening was selected. A wider investigation must run the diagnostic candidate under the original configured JVM ordering/resource state, retain progress around the one-minute boundary and capture suspended thread/coroutine evidence if one operation stops progressing. Complete JVM acceptance remains dispatcher-owned.
