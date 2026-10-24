@@ -101,7 +101,7 @@ class CompactChildAuthorityTest {
         f.repo.demandAgentChildren("c", this, before, setOf(17))
         page(f, f.details.last(), "tool_call", 50, 100, true)
         runCurrent()
-        f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17), loadMore = 17)
+        f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17), more = 17)
         val failed = f.details.last()
         f.push(obj("""{"code":"thread.query_failed","message":"unavailable","retryable":true}"""), failed, "error")
         runCurrent()
