@@ -89,3 +89,17 @@ numeric feature branch overlaps these files. This diagnostic expansion and the r
 single-defect regression/repair still fit the 1600-line scope boundary; do not select a
 repair until the failed condition is demonstrated. Run the gesture/history controls and
 the exact native method with these diagnostics, preserving each attempt separately.
+
+The exact native method with diagnostics at `ca17cc5c5caed6dbb1b936359302262044286c87`
+passed 1/1, zero failures/errors/skips, retained separately as `ui-382z6fap` in the
+same evidence root. Every pull had one actual positive movement inside the band,
+loading false, a completed release with zero fling velocity, one accepted page and
+one certificate. Certificates sometimes preceded real coverage by one polling interval;
+coverage then advanced. This does not identify the historical failed condition.
+
+Probe the remaining input-scheduling hypothesis with a separate shared test using
+`createComposeRule(effectContext = StandardTestDispatcher())`: queued gesture work
+must still deliver exactly one demand through the real `OlderHistoryGesture` when
+the proof helper batches movement and release. Record the original helper's outcome
+before selecting any synchronization change. This is an experiment until it produces
+the relevant controlled red; a passing control does not establish a repair.
