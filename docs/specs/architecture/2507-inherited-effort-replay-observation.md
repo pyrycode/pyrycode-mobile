@@ -117,7 +117,10 @@ The integrated replay-hub class then freshly passed 29/29, zero failures/errors/
 skips, exit 0. Android lint passed. Initial final pre-verification stopped at one
 Spotless line-wrapping violation in `settingsObservationReady`; no test failure
 is inferred. Its log is retained. The formatter changed only whitespace in that Kotlin file; normalized source
-bytes are identical. Rerun the required pre-verification. Previous runtime checks retain the source identities
+bytes are identical. Final `pre-verify.py --gradle` then passed, exit 0, on
+`f4e245865`: current main merged, Spotless clean, all Kotlin source sets compiled,
+and theme/operator-file checks passed. The pre-PR live-selection check reported
+no open PR body to inspect; normal review still owns configured acceptance. Previous runtime checks retain the source identities
 above; they are not independent acceptance of subsequent formatting/docs commits.
 Complete configured acceptance, source/security review and normal documentation
 remain pending for the independent workflow.
