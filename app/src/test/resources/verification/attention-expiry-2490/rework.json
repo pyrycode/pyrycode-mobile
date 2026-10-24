@@ -44,5 +44,5 @@
     "manifestSha256": "9f21893e0a2669b5ff8321eb94e4d2db11fdaa915f23e671cb6fa67c62475d42"
   },
   "investigation": {"id":"c042f60e5c589466d729dfb883a9e73f6e1e44fa62eca349ddba025b8b86e782","status":"assessment-queued","executed":0,"revision":"eae6ddcca325ac876b3f6a39a0a244f1d9519a4a"},
-  "pending": "Finding 1 remains unresolved. Blocked by open model repair #2356; shared assessment of the dispatcher's original three-method sequence and branch/main attribution is queued, not executed. Preserve all assertions, deadlines and strict tape consumption."
+  "pending": "Historical waiting handoff superseded by resume.json: #2356 is closed/merged, its accepted acquisition repair is integrated and the fresh exact Model method passed. The original zero-execution request and failure evidence remain retained. Current complete dispatcher gates and independent review remain pending."
 }

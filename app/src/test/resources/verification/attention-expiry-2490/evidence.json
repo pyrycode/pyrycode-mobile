@@ -23,5 +23,5 @@
     {"attempt":"native-3","selection":"de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished","sourceRevision":"e80f952ad9e8c20c3dd5e8e795ebd8f706b8527f","counts":[1,1,0,0],"errors":0,"manifestSha256":"98439bc63b247c6b2d045afdbc725f76846fb13e2ee29cf6a28e2e02e5f2cc5e"}
   ],
   "configuredUiGate": {"reviewedRevision":"5b66b8422a6c242877b86f31c43de1e99b221a60","attentionMethodCounts":[1,1,0,0],"gateCounts":[333,330,3,1],"source":"Verifier run 6b89cfed3fcb109a13bc5e3430e815b3061d8d4b88edc7e3a999b79b30dd2d40 confirmed the named attention method passed; complete gate remains failed."},
-  "pending": ["Resolve verifier model-selection finding 1 through shared assessment and blocker #2356; complete configured gate sequence remains unaccepted.","Documentation handoff in plan and PR."]
+  "pending": ["Current configured dispatcher gates and independent review; resume.json records the merged accepted #2356 acquisition repair and fresh focused results.","Documentation handoff in plan and PR."]
 }

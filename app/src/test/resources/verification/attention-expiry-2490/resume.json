@@ -1,0 +1,30 @@
+{
+  "ticket": 2490,
+  "operatingSystem": "macOS 26.6.2",
+  "outsideScope": ["Linux"],
+  "merge": "f2921821cad5a6487f7a2eb43ef118aad1c4adf8",
+  "mergedMain": "e2bd0712c44befc24cfe57ecd2385e6054c0b90b",
+  "privateEvidenceRoot": "$AGENTS_REPO_PATH/logs/evidence/2490/resume-20261024/",
+  "countFields": ["executed", "passed", "failed", "skipped"],
+  "errors": 0,
+  "sourceNotes": "expiry-green and native-attention-1 ran the resolved merge before its commit, with original HEAD ec91b9168d3501e8e2d160d3c70d4e349b232325, MERGE_HEAD and full working.patch retained. Their relevant source/fixture hashes equal the committed merge. All later attempts ran pushed f2921821c with only plan changes pending; every source.json retains exact inputs and built APK hashes. Only plan/evidence edits follow these checks.",
+  "commands": {
+    "jvm": "python3 scripts/gradle-gate.py testDebugUnitTest --tests <selection> --console=plain",
+    "native": "python3 scripts/android-test-gate.py ui --tests <selection>"
+  },
+  "attempts": [
+    {"attempt":"expiry-green","selection":"de.pyryco.mobile.ui.conversations.thread.ThreadAttentionTest","counts":[18,18,0,0],"exit":0,"manifestSha256":"15b2991568ef8fc52168aa6c365d3d91e803a0c05e17f4e91c9d1265768de74c"},
+    {"attempt":"native-attention-1","selection":"de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished","counts":[1,1,0,0],"exit":0,"manifestSha256":"1338549c27e90cfd5003235e9ef4e70b4a9f625e6849913227d511b81c27b620"},
+    {"attempt":"native-attention-2","selection":"de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished","counts":[1,1,0,0],"exit":0,"manifestSha256":"f7060f9b90d100fe72638932436e2f6358ff889e167a06d0d3074981f70bf263"},
+    {"attempt":"native-attention-3","selection":"de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_otherConversationAttentionPills_waitingAndFinished","counts":[1,1,0,0],"exit":0,"manifestSha256":"98611fdf9227d2afac5f2d52db5a1ccee9cf63fdc2726f0ff744cad30368d2bc"},
+    {"attempt":"native-model","selection":"de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation","counts":[1,1,0,0],"exit":0,"manifestSha256":"ff80adb355f975902aec97c325b2371d1e4e6947c1375694b8bf57f4cbb683e0"},
+    {"attempt":"notice-green","selection":"de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest","counts":[10,10,0,0],"exit":0,"manifestSha256":"4106d522910849c3388722b55f4c46ff1ce30857ff7ac51c3119fc6b368965b2"},
+    {"attempt":"navigation-green","selection":"de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNavigationTest","counts":[4,4,0,0],"exit":0,"manifestSha256":"839bd73757fbd238ea71ea6c34fde1e0f58e091318b477f453b64c074b21d364"},
+    {"attempt":"acquisition-green","selection":"de.pyryco.mobile.e2e.InitialAttentionQueryTest","counts":[18,18,0,0],"exit":0,"manifestSha256":"f365aa7681abd7af2740c8d7eca844ddb24a2171ce9bb0cb2f2d832058455dcb"},
+    {"attempt":"readiness-green","selection":"de.pyryco.mobile.e2e.ThreadQueryReadinessTest","counts":[12,12,0,0],"exit":0,"manifestSha256":"876153c093249035d3e1cf257643654293830a21d08dd683cdcb1a61bc6d5949"}
+  ],
+  "acceptedModelRepair": {"ticket":2356,"candidate":"43e5d2819b4335356e274a08be66d901bedb0fa3","runId":"e5ca11a5e56df784e7c4e8b43bbfb5e3c7076c7d1e2a90eb739a65037130581b","state":"accepted","configuredUiCounts":[250,250,0,0],"modelFixtureSha256":"b523906cc45de9399580e0119b7f79f93d57d68001c9e534ab54744da9767873","equivalenceReceipt":"native-attention-1/accepted-source-equivalence.json","stageResponse":"expiry-green/stages-2356.json","limit":"Accepted source and controlled acquisition repair are integrated; the exact historical #2490 interleaving remains unproved. The earlier zero-execution sequence request is not passing evidence."},
+  "selectionRefusal": {"exit":1,"executed":0,"reason":"Initial multi-class JVM selection was refused before execution; corrected checks ran one class per invocation.","retained":"native-attention-1/selection-refusal.txt"},
+  "attentionRecordingSha256": "0d64113330a074c34d55cb37fa251fdcc7aa651902817fc6aad786116cb70c3c",
+  "pending": ["Current candidate's complete configured dispatcher UI/scripted gates and independent review.", "Documentation handoff in plan and PR."]
+}
