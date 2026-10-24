@@ -62,8 +62,11 @@ class AuthoritativeThreadPresentation internal constructor(
             .associate { versions -> versions.maxBy { it.rev }.let { "msg:$scope:${it.id}" to it } }
     private val invalidatedKeys =
         sourceSnapshot.expansionItems
-            .filter { it.id in sourceSnapshot.detailValidity.bodies }
-            .mapTo(HashSet()) { "msg:$scope:${it.id}" }
+            .filter {
+                it.id in sourceSnapshot.detailValidity.bodies ||
+                    sourceSnapshot.detailValidity.staleFullBodies[it.id] == it.rev &&
+                    !sourceSnapshot.hasToolBody(it)
+            }.mapTo(HashSet()) { "msg:$scope:${it.id}" }
 
     internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
 
@@ -665,6 +668,10 @@ private fun ThreadItemDto.toolName(): String? =
         }
 
 private fun ThreadItemDto.recordedTask(): Pair<String, String>? {
+    if (summaryPayload != null) {
+        val id = summaryTaskId?.takeUnless { it.isEmpty() } ?: return null
+        return id to if (kind == "agent") "local_agent" else ""
+    }
     val fields = content as? JsonObject ?: return null
     val link = fields.obj("task_link") ?: return null
     val id = fields.text("task_id")?.takeIf { it.isNotBlank() } ?: return null

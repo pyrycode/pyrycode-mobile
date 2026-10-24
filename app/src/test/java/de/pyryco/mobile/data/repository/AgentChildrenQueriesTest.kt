@@ -739,12 +739,26 @@ class AgentChildrenQueriesTest {
             f.store.applyBatch("h", "c", "e", 70, listOf(saved), 0)
             f.demand()
             val frame = f.reply(version = 80)
-            f.lane.accept(frame.copy(payload = json(frame.payload.toString().replace("\"rev\":7", "\"rev\":70"))))
+            f.lane.accept(
+                frame.copy(
+                    payload =
+                        json(
+                            frame.payload
+                                .toString()
+                                .replace("\"rev\":7", "\"rev\":70")
+                                .replace("\"kind\":\"agent\"", "\"kind\":\"agent\",\"task_id\":\"current-unplaced\""),
+                        ),
+                ),
+            )
             f.lane.accept(f.reply(true, version = 80))
             assertNotNull(f.page())
-            assertSame(saved, f.snapshot().expansionItems.first { it.id == 50L })
+            assertSame(saved, f.snapshot().items.first { it.id == 50L })
+            val current = f.snapshot().expansionItems.first { it.id == 50L }
+            assertNull("a current summary cannot invent placement", current.order)
+            assertEquals("current-unplaced", current.summaryTaskId)
             val converted = mutableListOf<Long>()
             val p = projectDeferredAuthoritativeThread("h", "c", f.snapshot(), onFullConversion = { converted += it })
+            assertEquals(listOf("current-unplaced"), p.tasks.tasks.map { it.taskId })
             val rows = p.demandRows(p.rows, setOf("${p.scope}:17", "${p.scope}:50"))
             assertEquals(listOf("msg:${p.scope}:17"), rows.map { it.listKey(0) })
             assertTrue(converted.isEmpty())

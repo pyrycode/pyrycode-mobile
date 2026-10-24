@@ -1,0 +1,284 @@
+package de.pyryco.mobile.data.repository
+
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.CompactRootFixture.Companion.obj
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
+import de.pyryco.mobile.ui.conversations.thread.listKey
+import de.pyryco.mobile.ui.conversations.thread.projectDeferredAuthoritativeThread
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class CompactChildAuthorityTest {
+    private val oldSink = RelayLog.sink
+
+    @Before fun quiet() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreLog() {
+        RelayLog.sink = oldSink
+    }
+
+    private fun parent() =
+        ThreadItemDto.decode(
+            obj(
+                """{"id":17,"rev":17,"order":17,"parent":0,"kind":"agent","summary":"Agent","status":"done","shown":true,"active":false,"content":{},"subtree_version":90}""",
+            ),
+        )
+
+    private fun child(
+        kind: String = "assistant_message",
+        freshness: Long? = null,
+    ) = ThreadItemDto.decode(
+        JsonObject(
+            CompactRootFixture.message(20) + mapOf("kind" to JsonPrimitive(kind), "parent" to JsonPrimitive(17)) +
+                freshness?.let { mapOf("subtree_version" to JsonPrimitive(it)) }.orEmpty(),
+        ),
+    )
+
+    private fun page(
+        f: CompactRootFixture,
+        request: Envelope,
+        kind: String,
+        freshness: Long?,
+        version: Long,
+        more: Boolean = false,
+    ) {
+        val raw =
+            obj(
+                """{"id":20,"rev":20,"order":20,"parent":17,"kind":"$kind","status":"done","active":false,"shown":true,"headline":"child","detail_omitted":true${freshness?.let {
+                    ",\"subtree_version\":$it"
+                }.orEmpty()}}""",
+            )
+        val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":$version,\"item_id\":17,\"rev\":17"
+        f.push(obj("""{$scope,"children":[$raw],"final":false}"""), request, "thread_children")
+        val cursor = if (more) ",\"cursor\":{$scope,\"order\":20,\"id\":20}" else ""
+        f.push(obj("""{$scope,"children":[],"final":true,"more":$more$cursor}"""), request, "thread_children")
+    }
+
+    private fun assertRead(
+        snapshot: AuthoritativeThreadSnapshot,
+        usable: Boolean,
+    ) {
+        val p = projectDeferredAuthoritativeThread("h", "c", snapshot)
+        val expanded = setOf("${p.scope}:17", "${p.scope}:20")
+        val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
+        assertEquals(usable, p.suppliesReadSight(row, expanded))
+        assertEquals(usable, p.matchesReadContents(row.listKey(0), row.item, 20))
+    }
+
+    @Test fun compactSummaryKeepsCompleteProseReadAuthority() = runTest { prose(true) }
+
+    @Test fun completeHostSummaryKeepsCompleteProseReadAuthority() = runTest { prose(false) }
+
+    private suspend fun TestScope.prose(compact: Boolean) {
+        val store = AuthoritativeThreadStore()
+        val full = child()
+        val expandableParent = ThreadItemDto.decode(JsonObject(parent().raw + ("detail_omitted" to JsonPrimitive(true))))
+        if (compact) store.establishComplete("h", "c", "e", 90, listOf(expandableParent, full), 0)
+        val f = CompactRootFixture(backgroundScope, store = store, compact = compact)
+        f.repo.openAuthoritativeThread("c")
+        runCurrent()
+        if (compact) {
+            f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
+            f.push(f.marker())
+        } else {
+            f.push(JsonObject(f.batch(items = listOf(expandableParent.raw, full.raw)).filterKeys { it !in setOf("headers", "projection") }))
+            f.push(JsonObject(f.marker().filterKeys { it != "projection" }))
+        }
+        runCurrent()
+        val before = store.current("h", "c")
+        assertRead(before, true)
+        f.repo.demandAgentChildren("c", this, before, setOf(17))
+        page(f, f.details.single(), "assistant_message", null, 100)
+        runCurrent()
+        val summarized = store.current("h", "c")
+        assertEquals(full.raw, summarized.items.single { it.id == 20L }.raw)
+        assertTrue(
+            "current equal-revision prose remains complete",
+            summarized.hasToolBody(summarized.expansionItems.single { it.id == 20L }),
+        )
+        assertRead(summarized, true)
+        assertEquals(before.coverage, summarized.coverage)
+        assertEquals(before.checkpoint, summarized.checkpoint)
+        assertEquals(before.completeCoverage, summarized.completeCoverage)
+        assertEquals(before.completeCheckpoint, summarized.completeCheckpoint)
+        store.applyBatch("h", "c", "e", 101, listOf(full), 0)
+        val redelivered = store.current("h", "c")
+        assertRead(redelivered, true)
+        assertEquals("prose never demands a tool body", 1, f.details.size)
+        // Complete prose still loses qualification when its omitted ancestor changes.
+        val changedParent = ThreadItemDto.decode(JsonObject(expandableParent.raw - "subtree_version"))
+        store.applyBatch("h", "c", "e", 102, listOf(changedParent), 0)
+        val invalidated = store.current("h", "c")
+        assertFalse(invalidated.hasToolBody(invalidated.expansionItems.single { it.id == 20L }))
+        assertRead(invalidated, false)
+        store.applyBatch("h", "c", "e", 103, listOf(full), 0)
+        val current = store.current("h", "c")
+        assertRead(current, true)
+        assertEquals(before.coverage, current.coverage)
+        assertEquals(before.checkpoint, current.checkpoint)
+        assertEquals(before.completeCoverage, current.completeCoverage)
+        assertEquals(before.completeCheckpoint, current.completeCheckpoint)
+        assertEquals(1, f.details.size)
+    }
+
+    @Test fun refreshedChildFreshnessCannotReviveSavedBodyAfterEviction() = runTest { refresh(105) }
+
+    @Test fun omittedChildFreshnessCannotReviveSavedBodyAfterEviction() = runTest { refresh(null) }
+
+    private suspend fun TestScope.refresh(freshness: Long?) {
+        val store = AuthoritativeThreadStore()
+        store.establishComplete("h", "c", "e", 90, listOf(parent()), 0)
+        val f = CompactRootFixture(backgroundScope, store = store)
+        f.repo.openAuthoritativeThread("c")
+        runCurrent()
+        f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
+        f.push(f.marker())
+        runCurrent()
+        val before = store.current("h", "c")
+        f.repo.demandAgentChildren("c", this, before, setOf(17))
+        page(f, f.details.last(), "tool_call", 50, 100, true)
+        runCurrent()
+        f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17), more = 17)
+        val failed = f.details.last()
+        f.push(obj("""{"code":"thread.query_failed","message":"unavailable","retryable":true}"""), failed, "error")
+        runCurrent()
+        f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17), retry = 17)
+        page(f, f.details.last(), "tool_call", freshness, 110)
+        runCurrent()
+        val queried = store.current("h", "c")
+        val saved = child("tool_call", 50)
+        store.restore("h", "c", AuthoritativeThreadSnapshot(epoch = "e", items = listOf(saved), completedVersion = 90, checkpoint = 90), 0)
+        val restored = store.current("h", "c")
+        assertEquals(queried.detailValidity.serial(20), restored.detailValidity.serial(20))
+        assertEquals(queried.childPages, restored.childPages)
+        assertFalse(restored.hasToolBody(restored.expansionItems.single { it.id == 20L }))
+        assertRead(restored, false)
+        f.repo.demandToolBodies("c", this, restored, setOf(20))
+        val body = f.details.last()
+        assertEquals("thread_read_tool_body", body.type)
+        for (final in listOf(false, true)) {
+            val content = if (final) "" else ",\"content\":{\"output\":\"current\"}"
+            f.push(
+                obj(
+                    """{"conversation_id":"c","epoch":"e","version":110,"item_id":20,"rev":20,"kind":"tool_call","final":$final$content}""",
+                ),
+                body,
+                "thread_tool_body",
+            )
+        }
+        runCurrent()
+        val refreshed = store.current("h", "c")
+        val row = refreshed.expansionItems.single { it.id == 20L }
+        assertTrue(refreshed.hasToolBody(row))
+        assertRead(refreshed, true)
+        val evicted = refreshed.copy(bodyContents = emptyMap(), bodyLoads = emptyMap())
+        assertFalse("freshness=$freshness cannot revive saved freshness 50", evicted.hasToolBody(row))
+        assertRead(evicted, false)
+        assertEquals(freshness, row.subtreeFreshness)
+        assertEquals(listOf(saved), refreshed.items.filter { it.id == 20L })
+        assertEquals(before.coverage, refreshed.coverage)
+        assertEquals(before.checkpoint, refreshed.checkpoint)
+        assertEquals(before.completeCoverage, refreshed.completeCoverage)
+        assertEquals(before.completeCheckpoint, refreshed.completeCheckpoint)
+    }
+
+    @Test fun compactBeforeSavedProseCannotCertifyStaleRenderedContents() = runTest { savedProse(false) }
+
+    @Test fun savedChildSubsetBeforeCompactCannotCertifyStaleRenderedContents() = runTest { savedProse(true) }
+
+    private suspend fun TestScope.savedProse(savedFirst: Boolean) {
+        val store = AuthoritativeThreadStore()
+        val full = child()
+        val saved =
+            AuthoritativeThreadSnapshot(
+                epoch = "e",
+                items = if (savedFirst) listOf(full) else listOf(parent(), full),
+                completedVersion = 90,
+                checkpoint = 90,
+            )
+        if (savedFirst) assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved, 0))
+        val f = CompactRootFixture(backgroundScope, store = store)
+        f.repo.openAuthoritativeThread("c")
+        runCurrent()
+        f.push(f.batch(headers = listOf(CompactRootFixture.header(17, rev = 30, kind = "agent", facts = ",\"subtree_version\":100"))))
+        f.push(f.marker())
+        runCurrent()
+        val rootCertificate = store.current("h", "c").coverage
+        if (!savedFirst) assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved, 0))
+        val restored = store.current("h", "c")
+        assertEquals(full, restored.items.single { it.id == 20L })
+        assertEquals(20L, restored.detailValidity.staleFullBodies[20])
+        assertFalse(restored.hasToolBody(restored.expansionItems.single { it.id == 20L }))
+        assertRead(restored, false)
+        assertEquals(rootCertificate, restored.coverage)
+        assertTrue("closed rows add no body or child demand", f.details.isEmpty())
+        assertEquals(AuthoritativeThreadOutcome.Applied, store.applyBatch("h", "c", "e", 101, listOf(full), 0))
+        val current = store.current("h", "c")
+        assertTrue(current.hasToolBody(current.expansionItems.single { it.id == 20L }))
+        assertRead(current, true)
+        assertEquals(restored.coverage, current.coverage)
+        assertEquals(restored.checkpoint, current.checkpoint)
+        assertEquals(restored.completeCoverage, current.completeCoverage)
+        assertEquals(restored.completeCheckpoint, current.completeCheckpoint)
+        assertTrue(f.details.isEmpty())
+    }
+
+    @Test fun savedChildCannotMoveAnIdentityAfterAuthenticatedChildEnumeration() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            store.establishComplete("h", "c", "e", 90, listOf(parent()), 0)
+            val f = CompactRootFixture(backgroundScope, store = store)
+            f.repo.openAuthoritativeThread("c")
+            runCurrent()
+            f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
+            f.push(f.marker())
+            runCurrent()
+            f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17))
+            val request = f.details.single()
+            val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":100,\"item_id\":17,\"rev\":17"
+            val summary =
+                """{"id":20,"rev":30,"order":20,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,
+                "headline":"child","detail_omitted":true,"task_id":"current-child"}"""
+            f.push(obj("""{$scope,"children":[$summary],"final":false}"""), request, "thread_children")
+            f.push(obj("""{$scope,"children":[],"final":true,"more":false}"""), request, "thread_children")
+            runCurrent()
+            val before = store.current("h", "c")
+            val old =
+                ThreadItemDto.decode(
+                    JsonObject(
+                        child("agent").raw + mapOf("parent" to JsonPrimitive(18), "task_id" to JsonPrimitive("old-child")),
+                    ),
+                )
+            val saved = AuthoritativeThreadSnapshot(epoch = "e", items = listOf(old), completedVersion = 90, checkpoint = 90)
+            assertEquals(AuthoritativeThreadOutcome.Ignored, store.restore("h", "c", saved, 0))
+            val after = store.current("h", "c")
+            assertEquals(before, after)
+            val current = after.expansionItems.single { it.id == 20L }
+            assertEquals(30L, current.rev)
+            assertEquals(17L, current.parent)
+            assertEquals("current-child", current.summaryTaskId)
+            assertFalse(after.hasToolBody(current))
+            val p = projectDeferredAuthoritativeThread("h", "c", after)
+            assertEquals(listOf("current-child"), p.tasks.tasks.map { it.taskId })
+            val expanded = setOf("${p.scope}:17", "${p.scope}:20")
+            val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
+            assertFalse(p.suppliesReadSight(row, expanded))
+            assertFalse(p.matchesReadContents(row.listKey(0), row.item, 30))
+            assertEquals(listOf("thread_read_children"), f.details.map { it.type })
+        }
+}

@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.THREAD_COMPACT_PROJECTION
 import de.pyryco.mobile.data.network.ThreadDecodeOutcome
 import de.pyryco.mobile.data.network.ThreadQueryDecoder
 import de.pyryco.mobile.data.network.ThreadQueryReply
@@ -27,6 +28,7 @@ internal class AuthoritativeThreadQueries(
     private val retireConnection: () -> Unit = {},
     private val onCertified: (String, Long, ThreadQueryReply.Success) -> Unit = { _, _, _ -> },
     private val expansionEnabled: () -> Boolean = { false },
+    private val compactEnabled: () -> Boolean = { false },
 ) {
     private data class BodyKey(
         val request: ThreadQueryRequest.Expansion,
@@ -311,7 +313,17 @@ internal class AuthoritativeThreadQueries(
 
     @Synchronized
     fun older(conversation: String): Boolean {
-        if (closed || !enabled() || conversation !in opened || store.current(host, conversation).coverage?.olderExists != true) return false
+        val coverage = store.current(host, conversation).coverage
+        if (closed ||
+            !enabled() ||
+            conversation !in opened ||
+            coverage?.olderExists != true ||
+            coverage.projection != projection() ||
+            coverage.projection != null &&
+            coverage.connection != connection
+        ) {
+            return false
+        }
         enqueue(Intent(conversation, true))
         dispatch()
         return true
@@ -426,14 +438,20 @@ internal class AuthoritativeThreadQueries(
                             val checkpoint = reply.checkpoint
                             val applied =
                                 if (checkpoint.version <= 9007199254740991uL) {
-                                    store.applyBatch(
-                                        host,
-                                        request.conversationId,
-                                        checkpoint.epoch,
-                                        checkpoint.version.toLong(),
-                                        reply.items,
-                                        held.generation,
-                                    )
+                                    if (request.projection !=
+                                        null
+                                    ) {
+                                        store.applyCompactBatch(host, reply, held.generation)
+                                    } else {
+                                        store.applyBatch(
+                                            host,
+                                            request.conversationId,
+                                            checkpoint.epoch,
+                                            checkpoint.version.toLong(),
+                                            reply.items,
+                                            held.generation,
+                                        )
+                                    }
                                 } else {
                                     AuthoritativeThreadOutcome.RepairNeeded
                                 }
@@ -442,7 +460,7 @@ internal class AuthoritativeThreadQueries(
                             }
                         }
                         is ThreadQueryReply.Success -> {
-                            val result = store.certifyQuery(host, request, reply, held.generation)
+                            val result = store.certifyQuery(host, request, reply, held.generation, connection)
                             if (result == AuthoritativeThreadOutcome.Applied && request is ThreadQueryRequest.CatchUp) {
                                 onCertified(request.conversationId, held.generation, reply)
                             }
@@ -551,14 +569,30 @@ internal class AuthoritativeThreadQueries(
             val snapshot = store.current(host, intent.conversation)
             if (intent.generation != null && intent.generation != snapshot.generation) continue
             if (intent.body?.let { !bodyCurrent(it) } == true) continue
+            val projection = projection()
             val request =
                 if (intent.body != null) {
                     intent.body.request
                 } else if (intent.older) {
-                    val coverage = snapshot.coverage?.takeIf { it.olderExists } ?: continue
-                    ThreadQueryRequest.Page(intent.conversation, coverage.continuation)
+                    val coverage =
+                        snapshot.coverage?.takeIf {
+                            it.olderExists && it.projection == projection && (projection == null || it.connection == connection)
+                        } ?: continue
+                    ThreadQueryRequest.Page(
+                        intent.conversation,
+                        coverage.continuation,
+                        projection = projection,
+                        epoch = snapshot.epoch.takeIf { projection != null },
+                    )
                 } else {
-                    ThreadQueryRequest.CatchUp(intent.conversation, snapshot.epoch.orEmpty(), snapshot.checkpoint.toULong())
+                    // Compact nonzero catch-up/reconnect selection belongs to #2432/#2433.
+                    val initialize = projection != null || snapshot.compactSelected
+                    ThreadQueryRequest.CatchUp(
+                        intent.conversation,
+                        if (initialize) "" else snapshot.epoch.orEmpty(),
+                        if (initialize) 0u else snapshot.checkpoint.toULong(),
+                        projection = projection,
+                    )
                 }
             val id = nextId()
             ownedRequests += id
@@ -576,6 +610,8 @@ internal class AuthoritativeThreadQueries(
             }
         }
     }
+
+    private fun projection(): String? = THREAD_COMPACT_PROJECTION.takeIf { compactEnabled() }
 
     private fun retire(
         code: String,
