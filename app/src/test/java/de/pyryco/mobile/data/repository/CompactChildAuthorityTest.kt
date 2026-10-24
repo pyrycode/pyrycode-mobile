@@ -56,7 +56,7 @@ class CompactChildAuthorityTest {
         val store = AuthoritativeThreadStore()
         val full = child()
         val expandableParent = ThreadItemDto.decode(JsonObject(parent().raw + ("detail_omitted" to JsonPrimitive(true))))
-        store.establishComplete("h", "c", "e", 90, listOf(expandableParent, full), 0)
+        if (compact) store.establishComplete("h", "c", "e", 90, listOf(expandableParent, full), 0)
         val f = CompactRootFixture(backgroundScope, store = store, compact = compact)
         f.repo.openAuthoritativeThread("c")
         runCurrent()
