@@ -1,0 +1,8 @@
+{
+  "stage": "before",
+  "nativeEffectiveLock": "/home/agent/.local/share/pyry-fleet/test-admission.lock",
+  "dispatcherConfiguredLock": "/work/Projects/.pyry-test-admission.lock",
+  "nativeExit": 0,
+  "dispatcherExit": 1,
+  "privateJournalAcquisitions": 1
+}

@@ -131,6 +131,71 @@ accidentally accept stale evidence across a reconnect.
 See [Gradle and source checks](development-verification-gradle.md#gradle-and-source-checks)
 for build admission, named comparisons, watchdogs, heap evidence and snackbar routing.
 
+### Shared admission and Linux acceptance (#2327)
+
+Containers sharing the Gradle cache must resolve `PYRY_TEST_ADMISSION_LOCK` to
+the same host-backed file. Passing admission unit tests cannot prove deployment
+identity. The [Gradle admission guidance](development-verification-gradle.md#shared-cache-and-deployed-admission-identity-2327)
+records the deployed mismatch, persistent Quadlet correction, effective ownership,
+hashed fixture and before/after comparison. The original main sweep at
+`7a58afac133204acba692a7c9567f59e224de4f1` failed during journal-cache startup,
+before APK compilation or device execution; it establishes no failing device test.
+
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2332#issuecomment-6384551796)
+accepted candidate `6f187e3048229350ec697c7ff5f7257e4883fd56` against merged
+main `4a295611bec8ca3162c461ea0cb1e09fc722fdee` on Linux, run
+`d5a8a250ab7180ebc260198865ed00990745913561be4d3c8d3528b864f54b2e`.
+Configured commands were `python3 scripts/jvm-test-gate.py --with-build-checks`
+and `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py` with
+`ui` and `scripted-all`:
+
+| Check | Retained result |
+| --- | --- |
+| Script unit suite | 220 executed/passed, zero failed/skipped, including seven admission lifecycle regressions. |
+| JVM/build gate | 5,556 passing methods in Gradle-verified cached XML, zero failed/skipped; **zero newly executed JVM methods**. Lint, formatting, APK assembly and instrumentation compilation completed. |
+| Configured UI | Changed-file skip, exit 0, **zero device methods executed**. Accepted #2338 UI evidence supplies 250 executed/passed, zero failed/errors/skipped; relevant application, test and build inputs match. |
+| Configured scripted-all | Raw exit 1: 24 executed, 20 passed, four failed, zero errors/skips. Exact recovery method passed once. |
+| Same-tree and main selections | Each four executed/failed, zero passed/errors/skips; inherited disposition accepted on existing trackers. |
+
+The failed `DeterministicInteractiveStreamE2ETest` methods
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`,
+`interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` and
+`interactiveTurn_seededChannel_durableGapCatchUp` remain with
+[#2521](https://github.com/pyrycode/pyrycode-mobile/issues/2521);
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` remains with
+[#2469](https://github.com/pyrycode/pyrycode-mobile/issues/2469).
+Accepted comparisons preserve these failures; they do not turn the raw run green.
+
+Required owner #2338 / PR #2509 supplied the accepted repaired-source proof for
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`.
+The [dependency receipt](../../../scripts/e2e-fixtures/2327-journal-lock/session-error-acceptance.json)
+retains source/binary identities and accepted run
+`b8fb0d854eb72efdd146a2fd8826aa58be8b232d0b11f2bdb1d9b1247c501452`
+at `e51627c81871ad29708c8a0a572673bdda97db18`: UI 250/250 and scripted
+24 executed, 20 passed, four inherited failures, zero errors/skips, including
+recovery 1/1. Native focused captures retain fresh 1/1 pass, intervening reused
+1/1 failure at dropped `held_send`, then final reused 1/1 pass, all zero skips.
+Both successful captures preserve both arms, the original 20-second assertion,
+independent child-input counts and cleanup. See
+[session-error recovery evidence](../../e2e-interactive-stream.md#configured-linux-recovery-acceptance-and-remaining-work-2338--2327).
+This child proof and the current candidate's configured recovery pass are separate
+obligations, now both accepted.
+
+Earlier #2327 evidence stays failed: the original scripted run had 21 executed,
+18 passed, three failed and one additional skipped; its same-tree selection had
+three executed, two passed, one failed, zero skipped. Recovery failed in both.
+Main's historical focused 1/1 pass did not establish the cause. The separate
+session-error repair does not reopen the deployed journal-lock correction.
+
+The accepted fleet bundle retains `handoff/verifier-2327.md`, counted XML in
+`logs/verifier-gate__2327_6.log`, and timestamped rerun/base logs; bundle digest
+`d82ff4ad2c17b240926fbf8b9c3be745bfae092adc871d624bbb2ae1f274d5ae`.
+Native dependency XML, input hashes and phone/cleanup captures were retained under
+`$AGENTS_REPO_PATH/logs/evidence/2338/integration-linux-20261024/` at review time.
+The committed receipts preserve identities and counts beyond raw-file pruning.
+The later in-depth main sweep remains dispatcher-owned and pending; record its
+result separately when supplied. macOS is outside this Linux ticket's scope.
+
 ## Where a screen test goes
 
 Compose screen tests live in `app/src/sharedTest/java`. Gradle adds that folder to
