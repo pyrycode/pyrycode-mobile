@@ -283,9 +283,31 @@ with all seven original checkpoints. Daemon SHA-256 is
 This is a current baseline, not proof that arbitrary offer retirement is safe or
 that the historical #2388 failure had the same checkpoint. The existing product
 regressions deliberately reject same-revision reconciliation after disconnect.
-The saved controlled-retirement diagnostic is being compared on the same daemon
-through ordinary Linux admission before finalizing the release-boundary evidence.
-Final candidate checks and the independent configured gate remain pending.
+The saved seven-line controlled-retirement diagnostic then failed on the same
+daemon: `scripted-nv9cce0n`, 1 executed, 0 passed, 1 failed, zero errors/skips.
+Its phone trace shows the offer displayed, the explicit retirement checkpoint,
+offer acceptance on the replacement, then the placeholder checkpoint and the
+original 90000-ms timeout. The retained daemon log has no `baseline_required`
+event. Current-source observation succeeds; the composer still cannot display
+that revoked revision. This isolates the scheduling mismatch from the repaired
+accepted-delivery gap without attributing the missing #2388 phone checkpoint.
+
+Retain the fixture fence: recover the already delivered assistant reply while its
+turn is held, assert the replacement owner and identical reply identity, then
+release the original result/native suggestion. Core's repair removes one cause of
+retirement; it does not change the deliberate product suppression of an offer
+already observed before a disconnect. The final native proof consequently submits
+a fresh eligible offer after recovery, preserving all original gesture/echo/clear
+assertions. No text, expected event, product revocation rule or deadline is changed.
+
+Current baseline and controlled-failure evidence are retained under
+`$AGENTS_REPO_PATH/logs/evidence/2436/bounded-20261024/`, in
+`unfenced-current-core/`, `controlled-current-core/` and `harness/`.
+The controlled source patch SHA-256 is
+`037edb1e9c0e0419943905e27dd23dbd6337e58cd7c8d05ed3c7264a0a31da0d`.
+Final candidate checks, counted results and source/binary provenance are recorded
+on the PR. Independent configured scripted acceptance and the normal documentation
+stage remain required; author checks do not replace either.
 
 ## Documentation handoff
 
