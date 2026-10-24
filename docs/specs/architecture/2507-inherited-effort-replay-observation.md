@@ -17,7 +17,7 @@ The retained #2493 macOS gate at `52e6085278` reported 333 executed, 332 passed 
 
 The genuine inherited-effort fixture includes repeated minimal settings notifications followed by complete correlated replies. Normalization keeps the notifications but turns correlated replies into polling-cache updates. A read can receive applied effort, then a later minimal notification replaces the admitted product reading; the subsequent cache update alone does not restore it. Scheduling relative to the sheet-open read can therefore leave its selection/note unavailable. Controlled replay will establish this ordering directly; a focused pass alone is not diagnosis. No decision record is needed.
 
-One behaviour slice: reliably observe inherited applied effort after the owned completed phone turn, with its causal regression. Forecast: under 650 written lines, one new test class, no production types/signatures or state-machine rejection branches. The shared-file changes on #2505 (and its #2360 teardown ancestry) are separate additive acquisition/teardown work; preserve them. Other remote historical scenario branches do not restructure the edited block.
+One behaviour slice: reliably observe inherited applied effort after the owned completed phone turn, with its causal regression. The shared-file changes on #2505 (and its #2360 teardown ancestry) are separate additive acquisition/teardown work; preserve them. Other remote historical scenario branches do not restructure the edited block.
 
 ## Design source
 N/A: test/replay synchronization only; product UI and its visual contract do not change.
@@ -56,3 +56,38 @@ Write the controlled shared regression first and observe its causal red using th
 
 ## Documentation handoff
 Pending for documentation stage: `docs/recorded-tests.md`, successful settings polling/observation boundaries: explain the scenario's scheduling-and-consumption fence and preserve correlation, omission failure and strict consumption. `docs/knowledge/features/remote-conversation-repository-session-settings-read.md`, Native test reads: distinguish a fresh independently admitted reply from the later sheet's current reading. Record evidence limits: original macOS phone logs were not in its retained bundle.
+
+
+## Approved manual continuation — 2026-10-24
+
+Juhana explicitly authorized continuation after the earlier merge-commit approval
+rejection. Before mutation, the saved resolution was checked byte-for-byte:
+`modelReopenProgress` matched the upstream merge head and
+`beforeSettingsObservation` matched the repair head. Full working/index patches,
+all three index stages and a branch bundle preserve the stopped state. The
+supported exact manual hold and approval authorization are retained separately.
+The saved merge committed normally as `4c7eee39b`; current main `bee371a57`
+then merged cleanly as `e30328514`. Both hooks and upstream helper changes remain.
+All 589 retained builder evidence manifest entries verified before continuation.
+The old rejection and every failed test remain recorded; the authorization is
+bounded to this ticket's merge, focused checks, PR, independent review and docs.
+
+Remove the obsolete numeric line/file/production-file forecast. It describes a
+planning estimate rather than behavioral proof and no longer represents the
+retained repair plus upstream integration. Keep no saved override, the owned
+completed phone turn, current-owner correlated settings, exact applied-effort
+label/note and permission assertions, omission failure, strict matching and
+complete tape consumption. The original 30-second sheet deadline remains.
+Focused integrated verification is pending; old green reports retain their own
+source identities and are not acceptance of this integration.
+
+## Security review
+
+Self-review verdict: no new product security boundary or read authority is added.
+The offline-only fence checks the exact existing phone owner across suspension,
+requires the existing causal settings frontier and downstream consumption, then
+performs the original independently correlated settings read. It observes no
+expected setting value and fabricates no wire message or receipt. Closure cannot
+borrow another owner's progress; omitted applied effort remains unavailable.
+No credentials, production API/schema, persistence or genuine recording bytes
+change. Independent review and configured acceptance remain required.
