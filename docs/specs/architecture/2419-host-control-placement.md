@@ -26,3 +26,9 @@ First add a regression cycling the four states and both content widths with fixe
 Run both existing `ListDesignCaptureTest` viewport methods before and after the repair using full API35 with real bars. These tests require hardware framebuffer and system-bar evidence. Retain all four states, unscaled before/after comparisons, raw counted XML, source/APK/runtime identities, screenshots and sidecars in durable private evidence, with a content-free receipt under the existing androidTest design assets. Preserve failed and zero-execution history. Compare only the requested host controls against the two approved frames; other visual mismatches stay outside this ticket.
 
 Run lint, assembleDebug, shared-test instrumentation compilation and Spotless. Commit and push before the final main merge checks; run final assembleDebug and `scripts/pre-verify.py --gradle`. Complete configured gates and family #1650 acceptance remain dispatcher/verifier-owned. Linux is this ticket's verification scope.
+
+## Revisions
+
+2026-10-24: Both baseline full-API35 methods executed and passed (2 passed, zero failures/errors/skips). Native ink centers confirm status insets of 35.5–36 dp and pen insets of 12 dp, with the connected pen also at 12 dp. The controlled regression fails on the offline pen (expected 24 dp, observed about 12.2 dp at forced density). Add the inset only when the host has both status and edit controls, preserving the share picker's status-only row and connected thread-missing placement.
+
+The shared fixture uses its composition's actual density for physical-pixel width rounding. It protects the accepted connected 12 dp slot; fractional ForcedSize rounding otherwise pushes the semantic center just beyond the 10 ±2 dp boundary. The separate native-pixel comparison retains the strict 10 ±2 dp connected target. Earlier fixture failures and the initial zero-execution compile attempt remain retained with the baseline evidence.
