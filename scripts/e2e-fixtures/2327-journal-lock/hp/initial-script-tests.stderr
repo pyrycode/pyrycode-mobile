@@ -1,0 +1,39 @@
+.....................................F................................F..................F........Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+.Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+...Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+.......................................................................Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+...Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+.........
+======================================================================
+FAIL: test_harness_cleanup_stops_the_fixture (test_e2e_emulator_gradle.BypassPairingLifecycleTest.test_harness_cleanup_stops_the_fixture)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/scripts/test_e2e_emulator_gradle.py", line 196, in test_harness_cleanup_stops_the_fixture
+    self.assertEqual(0, result.returncode, "harness cleanup failed")
+AssertionError: 0 != 1 : harness cleanup failed
+
+======================================================================
+FAIL: test_cleanup_tolerates_an_unset_second_daemon (test_e2e_emulator_two_host.EmulatorTwoHostTest.test_cleanup_tolerates_an_unset_second_daemon)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/scripts/test_e2e_emulator_two_host.py", line 192, in test_cleanup_tolerates_an_unset_second_daemon
+    self.assertEqual(0, result.returncode, result.stderr)
+AssertionError: 0 != 1 : 
+
+======================================================================
+FAIL: test_managed_feature_cleanup_defaults_to_private_ticket_evidence (test_e2e_fault_evidence.FaultEvidenceTest.test_managed_feature_cleanup_defaults_to_private_ticket_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/scripts/test_e2e_fault_evidence.py", line 108, in test_managed_feature_cleanup_defaults_to_private_ticket_evidence
+    self.assertEqual(1, len(saved))
+AssertionError: 1 != 0
+
+----------------------------------------------------------------------
+Ran 185 tests in 17.918s
+
+FAILED (failures=3)

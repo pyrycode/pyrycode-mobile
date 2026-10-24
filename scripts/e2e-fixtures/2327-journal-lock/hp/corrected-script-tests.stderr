@@ -1,0 +1,15 @@
+..................................................................................................Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+.Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+...Android gate: adb emu kill failed: Command 'adb' timed out after 30 seconds; killing the emulator
+Android gate: adb emu kill failed: adb missing; killing the emulator
+.......................................................................Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+...Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+.........
+----------------------------------------------------------------------
+Ran 185 tests in 17.302s
+
+OK

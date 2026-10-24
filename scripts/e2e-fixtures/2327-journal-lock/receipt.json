@@ -1,0 +1,232 @@
+{
+  "ticket": "pyrycode/pyrycode-mobile#2327",
+  "kind": "operator-deployed-admission-configuration-repair",
+  "capturedDate": "2026-10-20",
+  "host": "build-hp-1",
+  "os": "Linux",
+  "operatorReports": [
+    "https://github.com/pyrycode/pyrycode-mobile/issues/2327#issuecomment-6290582719",
+    "https://github.com/pyrycode/pyrycode-mobile/issues/2327#issuecomment-6295410964"
+  ],
+  "cause": "Dispatcher and native Android containers shared /home/agent/.gradle but configured different admission-lock files.",
+  "repair": {
+    "owner": "Operator-managed native Android Quadlet deployment",
+    "setting": "Environment=PYRY_TEST_ADMISSION_LOCK=/work/Projects/.pyry-test-admission.lock",
+    "activation": "HP and Fractal activated after existing workers completed",
+    "mobileRuntimeChanges": 0
+  },
+  "originalSweep": {
+    "mobileRevision": "7a58afac133204acba692a7c9567f59e224de4f1",
+    "agentsRevision": null,
+    "exitCode": 1,
+    "gradleSeconds": 62,
+    "deviceTestsExecuted": 0,
+    "historicalOwnerPid": 279774,
+    "historicalOwnerIdentity": "Not established; do not correlate by PID alone."
+  },
+  "hpComparison": {
+    "mobileRevision": "3c57ef21efaefb487de2c16e7543325f0a53ec38",
+    "agentsRevision": null,
+    "journalDeviceInode": "66306:1082682",
+    "nativeAdmissionBeforeDeviceInode": "66306:3566050",
+    "dispatcherAdmissionDeviceInode": "66306:1100311",
+    "dispatcherIdentitySource": "Operator report; owners-before.json retains journal and native admission identities.",
+    "ownerClassification": "Participating native Android service work, correlated by host cgroup and PID namespace; no surviving detached worker or unrelated cache owner established.",
+    "before": {
+      "nativeExit": 0,
+      "dispatcherExit": 1,
+      "journalAcquisitions": 1,
+      "clientsExecuted": 2,
+      "clientsPassed": 1,
+      "clientsFailed": 1,
+      "clientsSkipped": 0
+    },
+    "after": {
+      "nativeExit": 0,
+      "dispatcherExit": 0,
+      "journalAcquisitions": 2,
+      "clientsExecuted": 2,
+      "clientsPassed": 2,
+      "clientsFailed": 0,
+      "clientsSkipped": 0,
+      "nativeJournalStartMonotonic": 500772.907022549,
+      "nativeJournalEndMonotonic": 500773.707201334,
+      "dispatcherJournalStartMonotonic": 500773.836068615,
+      "dispatcherJournalEndMonotonic": 500774.636323012
+    },
+    "timingLimitation": "Journal timestamps retained here were read from original .start/.end files. Exact admission request timestamps were not retained; stderr rounds wait to zero seconds.",
+    "admissionRegressions": {
+      "executed": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    "apk": {
+      "elapsedSeconds": 86.70546982099768,
+      "gradleSeconds": 85,
+      "tasksExecuted": 27,
+      "tasksFromCache": 13,
+      "deviceTestsExecuted": 0
+    },
+    "initialScriptTests": {
+      "executed": 185,
+      "passed": 182,
+      "failed": 3,
+      "skipped": 0
+    },
+    "correctedScriptTests": {
+      "executed": 185,
+      "passed": 185,
+      "failed": 0,
+      "skipped": 0
+    },
+    "scriptRunnerCorrection": "Manual runner removed its incorrectly injected PYRY_GATE_EVIDENCE_DIR; no source change. Original failure remains retained.",
+    "revisionLimitation": "Historical HP agents revision was not recorded. Current checkout does not retroactively establish it."
+  },
+  "admissionSourceSha256": {
+    "scripts/test-admission.py": "02034cf058f1dcff1b616f586bbbc79ae519c669a6b1b6320d1dfc116ddf3ec1",
+    "scripts/test_test_admission.py": "b48455d75f7e3ea78f2c1a009c046cbb504e79c939271bdfb12dc668263c2d2f"
+  },
+  "fractalOperatorReport": {
+    "rawArtifactsLocallyInspected": false,
+    "rawDirectory": "/work/Projects/.manual-2327-fractal-20261020/",
+    "mobileRevision": "89b2fb23dd5f16b51ba98d007746bf7dbd39b22d",
+    "agentsRevision": "e2f17c0ca3173e2991cfbd5d853fd3f6dc8239d0",
+    "admissionDeviceInode": "2050:12099325",
+    "nativeAdmissionWaitSeconds": 139,
+    "contentionClientsPassed": 2,
+    "admissionRegressions": {
+      "executed": 7,
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0
+    },
+    "apk": {
+      "gradleSeconds": 73,
+      "tasksExecuted": 18,
+      "tasksFromCache": 22,
+      "deviceTestsExecuted": 0
+    }
+  },
+  "withdrawnTask": {
+    "id": "da02bf35ad660bab529c0cc9f435a2399ad68333d97e5fd05acd1b7604cf381b",
+    "state": "failed",
+    "reason": "Operator withdrew the unstarted diagnostic-route repair after manual diagnosis and rollout superseded it.",
+    "testsExecuted": 0
+  },
+  "pending": [
+    "Dispatcher complete verifier JVM/UI/scripted acceptance",
+    "Later dispatcher in-depth main sweep"
+  ],
+  "otherOs": "macOS is outside this Linux ticket verification scope.",
+  "files": [
+    {
+      "path": "original-sweep.stderr",
+      "source": "/work/Projects/pyrycode-mobile-agents/logs/2026-10-20T08-46-12-157Z_main-sweep_7a58afa.stderr.log",
+      "sha256": "e4dc98c4c1300d5cd06c1f537caa9884888351d1c38a7c50908be12ea9d0efc8",
+      "bytes": 1869
+    },
+    {
+      "path": "hp/owners-before.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/host-lock-owners-before.json",
+      "sha256": "5db7c68cd21dcf6d8e9a2405893a861eccf5fe7457ff28db725454fbf9def30a",
+      "bytes": 1573
+    },
+    {
+      "path": "hp/configuration-before.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/configuration-before.json",
+      "sha256": "b653920611a2bfd027e8ddd824a61d7262e0bdac797439180ec56b2f4cde656e",
+      "bytes": 161
+    },
+    {
+      "path": "hp/configuration-after.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/configuration-after.json",
+      "sha256": "4ec01fa5230ecb4b7e8afdc7c4529976c7f08f4829465fcb3e3448d7da703382",
+      "bytes": 145
+    },
+    {
+      "path": "hp/contention-before.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-before/result.json",
+      "sha256": "d7e289ef08270924aef4f0e2a1f7d20ceb1144ce3c6095dc53b7156285be4ca6",
+      "bytes": 259
+    },
+    {
+      "path": "hp/contention-before-dispatcher.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-before/dispatcher.log",
+      "sha256": "7a737df0a0ab0434a91ecaa84da179e9ad60cfd8af1232b52dc3fb7c0cb93cfb",
+      "bytes": 135
+    },
+    {
+      "path": "hp/contention-before-native.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-before/native.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "hp/contention-after.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-after/result.json",
+      "sha256": "1ab6afa23d299c10a4e964ce39ad6d81cfdc345834147bb79b4abec463f44f35",
+      "bytes": 243
+    },
+    {
+      "path": "hp/contention-after-dispatcher.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-after/dispatcher.log",
+      "sha256": "2c8ee0570eddbbf7571a18ba9579e92b0457bab0cfe45ddeca8d90c00b8ad637",
+      "bytes": 80
+    },
+    {
+      "path": "hp/contention-after-native.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/contention-after/native.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "hp/admission-regressions.txt",
+      "source": "/work/Projects/.manual-2323-lock-recovery/admission-regressions/tests.log",
+      "sha256": "054670bbf46780ed7f7f379540c1d119efb38e74cef33390b8d98447d65ea413",
+      "bytes": 1486
+    },
+    {
+      "path": "hp/apk.stdout",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-3.stdout",
+      "sha256": "2cc19fc040e78798fe57d48a817ec25828d57cb24da4ec3ee63a596ff8e2059d",
+      "bytes": 7690
+    },
+    {
+      "path": "hp/apk.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-3.stderr",
+      "sha256": "cfca7bbaddf84f22af016f7da6a1e2b9b8f68712b9953e3f3de7ee2aae14b62f",
+      "bytes": 355
+    },
+    {
+      "path": "hp/verification-summary.json",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/summary.json",
+      "sha256": "84973651cc8eaf2be14ad651cf59d102a02e81cf1763cfb374f9a13efd73e00e",
+      "bytes": 1612
+    },
+    {
+      "path": "hp/initial-script-tests.stdout",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-2.stdout",
+      "sha256": "cc11444ceea7c5b2bb6ae19ef281d7e38cd3d479a805e7bf9d59ba1d54b76100",
+      "bytes": 135
+    },
+    {
+      "path": "hp/initial-script-tests.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-2.stderr",
+      "sha256": "031619478a597c58654f39987abdc37bb117e387040c734528649734f8d7f636",
+      "bytes": 2746
+    },
+    {
+      "path": "hp/corrected-script-tests.stdout",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-2-environment-corrected.stdout",
+      "sha256": "cc11444ceea7c5b2bb6ae19ef281d7e38cd3d479a805e7bf9d59ba1d54b76100",
+      "bytes": 135
+    },
+    {
+      "path": "hp/corrected-script-tests.stderr",
+      "source": "/work/Projects/.manual-2323-lock-recovery/verification/gate-2-environment-corrected.stderr",
+      "sha256": "8fe1ddf5052527cf7c871946183859eedcb6bdc8417e41ea3e98b23f20101fae",
+      "bytes": 947
+    }
+  ]
+}

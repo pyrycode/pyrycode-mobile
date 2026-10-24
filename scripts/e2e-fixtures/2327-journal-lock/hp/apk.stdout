@@ -1,0 +1,84 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:generateDebugResources
+> Task :app:processDebugGoogleServices FROM-CACHE
+> Task :app:packageDebugResources
+> Task :app:processDebugNavigationResources
+> Task :app:parseDebugLocalResources
+> Task :app:javaPreCompileDebug FROM-CACHE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:generateDebugRFile
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets FROM-CACHE
+> Task :app:generateDebugGlobalSynthetics FROM-CACHE
+> Task :app:desugarDebugFileDependencies FROM-CACHE
+> Task :app:mapDebugSourceSetPaths
+> Task :app:compileDebugNavigationResources FROM-CACHE
+> Task :app:checkDebugDuplicateClasses
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeExtDexDebug FROM-CACHE
+> Task :app:mergeDebugResources
+> Task :app:mergeLibDexDebug FROM-CACHE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:mergeDebugJniLibFolders
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:mergeDebugNativeLibs
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libbarhopper_v3.so, libdatastore_shared_counter.so, libimage_processing_util_jni.so, libsurface_util_jni.so. Run with --info option to learn more.
+
+> Task :app:processDebugResources
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/push/PushTokenRefresher.kt:48:45 'val token: Task<String!>' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/push/PyryMessagingService.kt:35:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/components/ChannelInfoSheet.kt:688:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageBubble.kt:449:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:13:8 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:90:14 'interface ClipboardManager : Any' is deprecated. Use Clipboard instead, which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageMetaRow.kt:113:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:41:39 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:46:46 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/share/ShareIntake.kt:67:34 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AttachmentActions.kt:100:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AttachmentSendFailure.kt:14:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/MarkdownReaderScreen.kt:347:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt:1366:19 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt:1461:14 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/app/src/main/java/de/pyryco/mobile/ui/settings/DebugBundleDownload.kt:74:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+
+> Task :app:compileDebugJavaWithJavac
+
+> Task :app:processDebugJavaRes
+> Task :app:mergeDebugJavaResource
+> Task :app:dexBuilderDebug
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+
+[Incubating] Problems report is available at: file:///work/Projects/.pyrycode-worktrees/pyrycode-mobile/verifier-2323/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 1m 25s
+40 actionable tasks: 27 executed, 13 from cache
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html
