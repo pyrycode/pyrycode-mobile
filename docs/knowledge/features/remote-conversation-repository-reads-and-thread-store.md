@@ -232,11 +232,20 @@ passed the configured gates under the dispatcher's flaky-test policy, including 
 six required replays, but independent review found the queued-authority race above.
 A buffered-order regression now selects summary-before-withdrawal, restoration and
 recertification before the queued send can run; it also requires fresh-observation
-recovery. That source repair requires fresh independent review; earlier green gates
-do not certify it. On repaired `51738b973`, focused macOS activation passed
+recovery. The earlier green gates did not certify that subsequent source repair.
+On repaired `51738b973`, focused macOS activation passed
 41/41, including the causal buffered-order probe and fresh-observation recovery;
 recorded model-change passed 1/1 and scripted ping passed 2/2, with zero
-failures/errors/skips. These scoped author checks do not replace independent
-re-review. See the
+failures/errors/skips. These scoped author checks retain their own source identity.
+
+Independent review accepted integrated macOS head
+`07b3eaadbc8b20ca6a3fbe64987454a5fcbc9cee`. Its configured JVM/build run
+executed/passed 5,522 tests, zero failures/errors/skips, including activation
+41/41 and both opening arrival orders, the queued withdrawal/recertification probe
+and fresh-observation recovery. Read receipts passed 20/20 and tape passed 49/49.
+The six required recorded methods passed in the original full UI run; UI reruns
+and inherited scripted failures were accepted separately, without converting the
+original failures into passes. See the
+[revision-bound acceptance and artifact limits](../../recorded-tests.md#accepted-macos-integration-2493) and the
 [plan and evidence boundaries](../../specs/architecture/2493-opening-read-metadata.md)
 and [recording contracts](../../recorded-tests.md#unavailable-summary-recording-integration-2467).
