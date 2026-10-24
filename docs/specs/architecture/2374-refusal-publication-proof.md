@@ -66,8 +66,38 @@ session settings returning `haiku`. Restored history never arms a new offer.
 The managed harness owns isolated daemon, relay and device lifetimes and uses
 fakeclaude; zero real Claude turns are required.
 
-Post-repair execution is pending. Do not count admission waiting as execution.
-The continuation evidence destination is `bounded-20261024/` under the root above.
+On 2026-10-24 the command exited 0: **1 executed, 1 passed, 0 failed, 0 skipped**.
+The fresh device XML identifies `pixel2Api33Atd` and records 5.221 seconds for
+the selected method. Admission waited 208 seconds before the run; that waiting
+is not test execution. App and test APK assembly also completed successfully.
+
+| Identity | Recorded value |
+| --- | --- |
+| Mobile test source | `585e5734e234d399250e51a78d6124605e0ba3b8` |
+| Core source and embedded binary revision | `64ef0e0fba71a723b7fdc97141cfc144f6355664` |
+| Core binary SHA-256 | `9d1b74bbfa1163c2043ecdbb53b321c3574cfaf60af4bdced90a62c447476d66` |
+| Relay source and embedded binary revision | `2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1` |
+| Relay binary SHA-256 | `79c5e14b4b52c10c6b5523ca56f8d3354b2d6bbcb2672be68588f199a1b61973` |
+| Device image | Android API 33, Google ATD, x86_64, image revision 1 |
+| Emulator | 37.2.12, build 16428233 |
+
+Both Go binaries report `vcs.modified=false`; Core contains the merged repair.
+The post-run source heads match the runtime identities. This result-only
+documentation update leaves the tested Mobile source, fixture and assertions
+unchanged; it does not require repeating the passing device check.
+
+The retained phone trace records `refusal_offer outcome=armed`, followed by
+`refusal_switch_back outcome=sent` and `outcome=acked`. The isolated daemon trace
+contains no `reason=baseline_required` event. These observations accompany the
+native assertions; absence of a log event alone is not the acceptance proof.
+
+The continuation evidence destination is `bounded-20261024/` under the root above:
+`gates/scripted-tmij09ce/` contains fresh raw and counted XML, phone log and phase
+timestamps; `gates/harness/fault-9729c632652e99621108c502486e58f5/` contains daemon,
+relay, fault log and runtime inputs. `result.json` records APK/binary hashes and
+source heads; Go build metadata and SDK image/emulator metadata are retained
+beside it. The complete `SHA256SUMS` manifest was verified. Scenario-specific
+daemon-b, answer and bypass logs were unavailable and are not claimed as evidence.
 
 ## Security review
 
