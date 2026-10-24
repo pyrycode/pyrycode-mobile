@@ -672,7 +672,10 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             val payload = frame.payload as? JsonObject
             val rows = payload?.get("conversations") as? kotlinx.serialization.json.JsonArray
-            val row = rows?.filterIsInstance<JsonObject>()?.singleOrNull { it["id"]?.jsonPrimitive?.content == conversationId }
+            val row =
+                rows?.filterIsInstance<JsonObject>()?.singleOrNull {
+                    (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { id -> id.isString }?.content == conversationId
+                }
 
             fun number(value: kotlinx.serialization.json.JsonElement?): Long? =
                 (value as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
@@ -696,7 +699,7 @@ class DeterministicInteractiveStreamE2ETest {
             runBlocking {
                 val marks = repository.observeReadMarks(conversationId).first()
                 val shown = marks?.lastShownVersion
-                val current = coordinator.currentRepository.value
+                val current = coordinator.currentRepository.value as? RemoteConversationRepository
                 val currentEvidence = current?.let { harnessThreadEvidence(it).observe(conversationId).first() }
                 val currentMarks = current?.observeReadMarks(conversationId)?.first()
                 val held = evidence.observe(conversationId).first()
@@ -719,7 +722,14 @@ class DeterministicInteractiveStreamE2ETest {
                     current != null &&
                         currentEvidence != null &&
                         current === coordinator.currentRepository.value &&
-                        pingReadMarkConfirmed(reply.owner, replyFact, currentEvidence, currentMarks, supportedConnection) {
+                        pingReadMarkConfirmed(
+                            reply.owner,
+                            replyFact,
+                            currentEvidence,
+                            currentMarks,
+                            supportedConnection,
+                            certified = { pingReplyCertifiedBy(currentEvidence, replyFact, current) },
+                        ) {
                             route.store.current(serverId, conversationId)
                         }
                 val sample =
@@ -739,6 +749,9 @@ class DeterministicInteractiveStreamE2ETest {
                 proved &&
                     current === coordinator.currentRepository.value &&
                     (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
+                    currentEvidence != null &&
+                    current != null &&
+                    pingReplyCertifiedBy(currentEvidence, replyFact, current) &&
                     currentEvidence?.sourceSnapshot === route.store.current(serverId, conversationId)
             }
         try {

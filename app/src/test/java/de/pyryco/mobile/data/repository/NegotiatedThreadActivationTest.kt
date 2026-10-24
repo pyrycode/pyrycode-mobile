@@ -20,6 +20,10 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.t
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
+import de.pyryco.mobile.e2e.OwnedReplyProbe
+import de.pyryco.mobile.e2e.authoritativeThreadEvidence
+import de.pyryco.mobile.e2e.pingReadMarkConfirmed
+import de.pyryco.mobile.e2e.pingReplyCertifiedBy
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -32,6 +36,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -44,6 +50,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -598,6 +605,33 @@ class NegotiatedThreadActivationTest {
 
     @Test fun retiredOpeningOwnerCannotAuthorizeReplacementRecovery() = reconnectReadSummary(true, probe = "retired")
 
+    @Test fun replacementPingProofCannotBorrowSharedCertification() = reconnectReadSummary(false, shown = 9, probe = "ping")
+
+    @Test fun malformedReadTraceCannotDropInboundFrames() =
+        runTest {
+            val frames =
+                listOf("{}", "[]").map { id ->
+                    Envelope(1, "conversations", "", MobileJson.parseToJsonElement("""{"conversations":[{"id":$id}]}"""))
+                }
+            val raw = Pump()
+            val wrapped = OwnedReplyProbe.wrap(OwnedReplyProbe.transport("malformed-trace", Transport()), raw)
+            var calls = 0
+            OwnedReplyProbe.readTrace = { _, frame, _ ->
+                calls++
+                val row = ((frame.payload as JsonObject)["conversations"] as JsonArray).single() as JsonObject
+                // Exercise the former diagnostic parser on both malformed shapes.
+                row["id"]?.jsonPrimitive?.content
+            }
+            try {
+                frames.forEach(raw::push)
+                assertEquals(frames, kotlinx.coroutines.withTimeout(1_000) { wrapped.inbound.take(frames.size).toList() })
+                assertEquals(2, calls)
+            } finally {
+                OwnedReplyProbe.readTrace = null
+                wrapped.close()
+            }
+        }
+
     private fun reconnectReadSummary(
         summaryAfterCertification: Boolean,
         shown: Long? = null,
@@ -631,13 +665,31 @@ class NegotiatedThreadActivationTest {
                         item(12, 12, 12, kind = "turn_end", status = "done").raw + ("active" to JsonPrimitive(false)),
                     ),
                 )
-            val facts = listOf(item(9, 10, 9, status = "done"), terminal)
+            val facts =
+                listOf(item(9, 10, 9, status = "done"), terminal).map {
+                    if (probe == "ping") {
+                        ThreadItemDto.decodeReplacement(
+                            JsonObject(
+                                it.raw +
+                                    mapOf(
+                                        "session" to JsonPrimitive("s"),
+                                        "turn" to JsonPrimitive("t"),
+                                        "active" to JsonPrimitive(false),
+                                    ),
+                            ),
+                        )
+                    } else {
+                        it
+                    }
+                }
             assertTrue(terminal.isCompletion())
             old.openAuthoritativeThread("c")
             val seed = oldPump.queries().single()
             oldPump.push(batch(seed, 12, facts))
             oldPump.push(window(seed, 12, 9, 13, false))
             runCurrent()
+            val held = host.coordinator.authoritativeThreads.current("h", "c")
+            val captured = authoritativeThreadEvidence("h", "c", old, held).owner
             val pump = host.connect()
             pump.open(CAPABLE)
             runCurrent()
@@ -661,12 +713,41 @@ class NegotiatedThreadActivationTest {
             runCurrent()
             assertEquals(shown?.toULong().takeUnless { summaryAfterCertification }, repo.currentReadMarks("c")?.lastShownVersion)
             assertEquals(openingCount, pump.sent.count { it.type == "list_conversations" })
+
+            fun pingProof(): Boolean {
+                val current = authoritativeThreadEvidence("h", "c", repo, host.coordinator.authoritativeThreads.current("h", "c"))
+                return pingReadMarkConfirmed(
+                    captured,
+                    facts.first(),
+                    current,
+                    repo.currentReadMarks("c"),
+                    repo,
+                    certified = { pingReplyCertifiedBy(current, facts.first(), repo) },
+                ) {
+                    host.coordinator.authoritativeThreads.current("h", "c")
+                }
+            }
+            if (probe == "ping") {
+                assertSame(
+                    "idle replacement retains the shared certificate object",
+                    held,
+                    host.coordinator.authoritativeThreads.current("h", "c"),
+                )
+                assertEquals(9uL, repo.currentReadMarks("c")?.lastShownVersion)
+                assertEquals(9uL, repo.currentReadMarks("c")?.readUpTo)
+                assertFalse("current read marks cannot borrow the old connection's certification", pingProof())
+            }
             if (probe == "held") {
                 assertTrue(repo.authoritativeCompletions.value.isEmpty())
                 return@runTest
             }
             repo.openAuthoritativeThread("c")
             val query = pump.queries().single()
+            if (probe == "ping") {
+                pump.push(batch(query, 12, emptyList()))
+                runCurrent()
+                assertFalse("receipt without the replacement final marker cannot certify the reply", pingProof())
+            }
             pump.push(
                 reply(
                     query,
@@ -681,6 +762,9 @@ class NegotiatedThreadActivationTest {
                 ),
             )
             runCurrent()
+            if (probe == "ping") {
+                assertTrue("successful current-connection final marker freshly certifies the exact reply", pingProof())
+            }
             if (probe in setOf("reset", "freshReset")) {
                 host.coordinator.authoritativeThreads.reset("h", "c", "e")
                 if (probe == "freshReset") {

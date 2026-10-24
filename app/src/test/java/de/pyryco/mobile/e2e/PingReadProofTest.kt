@@ -49,8 +49,16 @@ class PingReadProofTest {
         current: ThreadEvidence,
         marks: ConversationReadMarks?,
         connection: Any?,
+        certified: () -> Boolean = { true },
         revalidate: () -> AuthoritativeThreadSnapshot? = { current.sourceSnapshot },
-    ) = pingReadMarkConfirmed(captured, reply, current, marks, connection, revalidate)
+    ) = pingReadMarkConfirmed(captured, reply, current, marks, connection, certified, revalidate)
+
+    @Test fun certificationWithdrawalCannotBeHiddenByAnUnchangedSnapshot() {
+        val captured = evidence().owner
+        assertFalse(proof(captured, reply, evidence(), confirmed, first, certified = { false }))
+        var samples = 0
+        assertFalse(proof(captured, reply, evidence(), confirmed, first, certified = { ++samples == 1 }))
+    }
 
     @Test fun replacementRequiresFreshCertificationAndAcknowledgementWithoutReusingOldOwner() {
         val captured = evidence().owner
