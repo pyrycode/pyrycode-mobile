@@ -297,6 +297,46 @@ class InitialAttentionQueryTest {
             lease.close()
         }
 
+    @Test fun replacementSourceAcquiresDuringAndAfterItsConsumedTerminal() =
+        runTest {
+            for (duringQuery in listOf(true, false)) {
+                val retired = replay()
+                retired.queries.open("b")
+                retired.deliverBatch()
+                retired.deliverTerminal()
+                checkNotNull(retired.queries.acquire("b")).use { retired.assertExactQueriesAndComplete() }
+                val oldReceipt = checkNotNull(ThreadQueryReadiness.current("host", "b"))
+
+                val replacement = replay()
+                retired.close()
+                assertFalse("retired source must not certify its replacement", oldReceipt.isCurrent())
+                replacement.queries.open("b")
+                replacement.deliverBatch()
+                if (!duringQuery) replacement.deliverTerminal()
+
+                ThreadAcquisitionGate.arm(replacement.thread, "b", 30_000).use { gate ->
+                    val destination = ThreadAcquisitionGate.negotiated(replacement.thread)
+                    val navigation = async { destination.acquire("b", replacement.connection) }
+                    runCurrent()
+                    if (duringQuery) {
+                        assertFalse("replacement acquisition must wait for consumed completion", navigation.isCompleted)
+                        assertEquals("acquisition must not coalesce into the replacement query", 1, replacement.sent.size)
+                        replacement.deliverTerminal()
+                        runCurrent()
+                    }
+                    checkNotNull(navigation.await()).use {
+                        val distinctCompletion = async { gate.awaitNextQuery() }
+                        runCurrent()
+                        assertFalse("dispatch alone must not finish the reopened destination", distinctCompletion.isCompleted)
+                        replacement.assertExactQueriesAndComplete()
+                        runCurrent()
+                        assertTrue(distinctCompletion.await().isCurrent())
+                        assertFalse(oldReceipt.isCurrent())
+                    }
+                }
+            }
+        }
+
     @Test fun unfencedAcquisitionLeavesRequiredQueryAndPhoneCompletionPending() {
         val replay = replay()
         replay.queries.open("b")
