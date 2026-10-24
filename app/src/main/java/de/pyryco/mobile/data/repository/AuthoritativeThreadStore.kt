@@ -1116,16 +1116,16 @@ internal class AuthoritativeThreadStore {
                 .filterNot { it.id in retirements }
                 .associateBy { it.id }
                 .toMutableMap()
-        val summaryKinds =
+        val summaryIdentities =
             held.childPages.values
                 .flatMap { it.items }
-                .associate { it.id to it.kind }
+                .associate { it.id to (it.kind to (it.parent ?: 0)) }
         for (item in incoming) {
             if (!valid(item, version)) return null
             if (item.id in retirements) continue
             val previous = merged[item.id]
             if (previous != null && previous.kind != item.kind) return null
-            if (summaryKinds[item.id]?.let { it != item.kind } == true) return null
+            if (summaryIdentities[item.id]?.let { it != (item.kind to (item.parent ?: 0)) } == true) return null
             val root = held.compactRoots[item.id]
             if (root != null && (root.kind != item.kind || (root.parent ?: 0) != (item.parent ?: 0))) return null
             if (previous == null || item.rev > previous.rev) merged[item.id] = item

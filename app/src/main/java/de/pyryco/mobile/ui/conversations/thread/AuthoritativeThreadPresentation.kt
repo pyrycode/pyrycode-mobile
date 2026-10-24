@@ -62,7 +62,10 @@ class AuthoritativeThreadPresentation internal constructor(
             .associate { versions -> versions.maxBy { it.rev }.let { "msg:$scope:${it.id}" to it } }
     private val invalidatedKeys =
         sourceSnapshot.expansionItems
-            .filter { it.id in sourceSnapshot.detailValidity.bodies }
+            .filter {
+                it.id in sourceSnapshot.detailValidity.bodies ||
+                    sourceSnapshot.detailValidity.staleFullBodies[it.id] == it.rev && !sourceSnapshot.hasToolBody(it)
+            }
             .mapTo(HashSet()) { "msg:$scope:${it.id}" }
 
     internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
