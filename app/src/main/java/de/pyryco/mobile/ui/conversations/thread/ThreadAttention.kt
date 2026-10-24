@@ -13,6 +13,7 @@ import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.notifications.nameOf
 import de.pyryco.mobile.notifications.notificationTitle
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -42,6 +43,7 @@ internal fun observeThreadAttention(
         var finished: HostConversationTarget? = null
         var expiry: Job? = null
         var lastWaitingCount = 0
+        val seenCompletions = mutableSetOf<Pair<HostConversationTarget, String>>()
 
         fun waitingTargets(): List<HostConversationTarget> =
             attention.value
@@ -92,6 +94,11 @@ internal fun observeThreadAttention(
                     ) {
                         return@collect
                     }
+                    // Certifying the same terminal fact again is not another completed turn.
+                    if (!seenCompletions.add(target to alert.key)) {
+                        RelayLog.d { "event=thread_attention_finish_suppressed reason=duplicate" }
+                        return@collect
+                    }
                     if (waitingTargets().isNotEmpty()) {
                         RelayLog.d { "event=thread_attention_finish_suppressed reason=waiting" }
                         publish()
@@ -99,15 +106,17 @@ internal fun observeThreadAttention(
                     }
                     expiry?.cancel()
                     finished = target
-                    RelayLog.d { "event=thread_attention_finish_shown" }
-                    publish()
                     expiry =
-                        launch {
+                        launch(start = CoroutineStart.UNDISPATCHED) {
                             delay(5_000)
                             finished = null
                             RelayLog.d { "event=thread_attention_finish_expired" }
                             publish()
                         }
+                    // A consumer may advance its clock as soon as Finished is published.
+                    RelayLog.d { "event=thread_attention_finish_scheduled" }
+                    RelayLog.d { "event=thread_attention_finish_shown" }
+                    publish()
                 }
             }
             awaitCancellation()
