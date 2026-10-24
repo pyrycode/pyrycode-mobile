@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -610,6 +611,80 @@ class ConversationTreeRowsTest {
 
         assertEquals(1, reconnects)
         assertEquals(0, toggles)
+    }
+
+    @Config(qualifiers = "xxxhdpi")
+    @Test
+    fun hostRow_statusGlyphs_matchApprovedPairAndUpdateArtwork() {
+        val states = listOf(RelayLinkStatus.Offline, RelayLinkStatus.PairingRejected, RelayLinkStatus.UpdateRequired(null))
+        var primary = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                primary = MaterialTheme.colorScheme.primary
+                view = LocalView.current
+                CompositionLocalProvider(LocalDensity provides Density(4f)) {
+                    Column(Modifier.width(rowWidth).background(MaterialTheme.colorScheme.surface)) {
+                        states.forEachIndexed { index, relay ->
+                            TreeHostRow(
+                                serverId = "glyph-$index",
+                                hostName = "Host $index",
+                                connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Down),
+                                expanded = true,
+                                onToggleExpanded = {},
+                                onEditTapped = {},
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        states.forEachIndexed { index, relay ->
+            val update = relay is RelayLinkStatus.UpdateRequired
+            val tag = if (update) treeHostUpdateTestTag("glyph-$index") else treeHostReconnectTestTag("glyph-$index")
+            val control = composeTestRule.onNodeWithTag(tag)
+            val slot = control.getUnclippedBoundsInRoot()
+            assertDpEquals(24.dp, slot.width)
+            assertDpEquals(28.dp, slot.height)
+            val rect = control.fetchSemanticsNode().boundsInRoot
+            val width = rect.width.toInt()
+            val height = rect.height.toInt()
+            val pixels =
+                composeTestRule.runOnIdle {
+                    val root = checkNotNull(view)
+                    val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                    root.draw(Canvas(bitmap))
+                    IntArray(width * height).also {
+                        bitmap.getPixels(it, 0, width, rect.left.toInt(), rect.top.toInt(), width, height)
+                        bitmap.recycle()
+                    }
+                }
+            val ink = pixels.indices.filter { rgbWithin(pixels[it], primary.toArgb(), 32) }
+            assertTrue("$relay has primary-tinted artwork", ink.isNotEmpty())
+            val left = ink.minOf { it % width }
+            val right = ink.maxOf { it % width }
+            val top = ink.minOf { it / width }
+            val bottom = ink.maxOf { it / width }
+            // SVG viewport: Pair 9 x 10.8, Update 12 x 12; Update's path has 0.6 dp side bearings.
+            assertEquals("$relay painted width", if (update) 10.8f else 9f, (right - left + 1) / 4f, 0.5f)
+            assertEquals("$relay painted height", if (update) 11.1f else 10.5f, (bottom - top + 1) / 4f, 0.5f)
+            assertEquals("$relay horizontal center", width / 2f, (left + right + 1) / 2f, 4f)
+            assertEquals("$relay vertical center", height / 2f, (top + bottom + 1) / 2f, 4f)
+
+            fun painted(
+                x: Int,
+                y: Int,
+            ) = rgbWithin(pixels[(height / 2 + y) * width + width / 2 + x], primary.toArgb(), 32)
+            if (update) {
+                assertTrue("Update arrow shaft", painted(0, -16))
+                assertTrue("Update tray extends on both sides", painted(-16, 20) && painted(16, 20))
+                assertTrue("Update has no upper side rails", !painted(-16, -16) && !painted(16, -16))
+            } else {
+                assertTrue("Pair has two pins with an open gap", painted(-8, -16) && painted(8, -16) && !painted(0, -16))
+                assertTrue("Pair has a solid body and centered cable", painted(0, -3) && painted(0, 15))
+            }
+        }
     }
 
     @Test
