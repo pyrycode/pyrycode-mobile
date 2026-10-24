@@ -113,7 +113,10 @@ internal data class AuthoritativeThreadSnapshot(
                                 full.id == item.id &&
                                     full.rev == item.rev &&
                                     full.hasToolBody &&
-                                    full.subtreeFreshness?.let { it == item.subtreeFreshness } == true
+                                    (
+                                        full.kind !in setOf("tool_call", "agent") ||
+                                            full.subtreeFreshness?.let { it == item.subtreeFreshness } == true
+                                    )
                             }
                     )
             )
@@ -599,7 +602,14 @@ internal class AuthoritativeThreadStore {
         if (data.any { child -> winners[child.id]?.let { it.rev > child.rev || it.rev == child.rev && it.order != child.order } == true }) {
             return false
         }
-        val admitted = data.map { child -> winners[child.id]?.takeIf { it.rev == child.rev } ?: child }
+        val admitted =
+            data.map { child ->
+                val held = winners[child.id]?.takeIf { it.rev == child.rev } ?: return@map child
+                val summary = held.summaryPayload ?: return@map child
+                // Equal revision preserves structural facts, not a previous query's optional freshness.
+                val freshness = child.raw["subtree_version"]?.let { mapOf("subtree_version" to it) }.orEmpty()
+                ThreadItemDto.decodeSummary(JsonObject((summary - "subtree_version") + freshness), placementOrder = held.order)
+            }
         val rows = (if (request.cursor == null) emptyList() else old?.items.orEmpty()) + admitted
         if (rows.map { it.id }.distinct().size != rows.size) return false
         val bytes = rows.sumOf { detailBytes(it.summaryPayload ?: it.raw) } + (marker.cursor?.let(::detailBytes) ?: 0L)
