@@ -103,3 +103,11 @@ must still deliver exactly one demand through the real `OlderHistoryGesture` whe
 the proof helper batches movement and release. Record the original helper's outcome
 before selecting any synchronization change. This is an experiment until it produces
 the relevant controlled red; a passing control does not establish a repair.
+
+The queued-dispatch probe passed 1/1 with the original helper, zero
+failures/errors/skips. Its retained XML contains start, attributed in-band movement,
+release and zero-velocity completion, in that order. This experiment also produces
+no controlled red. Log positive UserInput movement even when pointer provenance
+has already ended, with `reader=false` and `near=null`, so future evidence can
+distinguish missing movement from unqualified late movement without evaluating the
+range predicate or creating demand on that path. No synchronization repair is selected.

@@ -101,14 +101,15 @@ internal class OlderHistoryGesture(
         val touchMovement = touching && source == NestedScrollSource.UserInput
         if (touchMovement) flingEligible = true
         val readerMovement = touchMovement || flinging && source == NestedScrollSource.SideEffect
-        if (readerMovement && consumed.y + available.y > 0f) {
-            val near = nearOldestEnd()
+        val towardOlder = consumed.y + available.y > 0f
+        val near = if (readerMovement && towardOlder) nearOldestEnd() else null
+        if (towardOlder && (source == NestedScrollSource.UserInput || flinging)) {
             RelayLog.d {
                 "event=older_history_input code=older_movement touching=$touching flinging=$flinging " +
-                    "consumed_y=${consumed.y} available_y=${available.y} near=$near"
+                    "reader=$readerMovement consumed_y=${consumed.y} available_y=${available.y} near=$near"
             }
-            if (near) onDemand()
         }
+        if (near == true) onDemand()
         return Offset.Zero
     }
 
