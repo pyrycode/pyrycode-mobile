@@ -105,6 +105,18 @@ A chrome pointer node can exclude underlying siblings without consuming child
 movement; gradual attachment swipes and composer selection drags must cross touch
 slop successfully. A tap-only test misses cancellation of those recognizers.
 
+For attachment open/save replay (#2526), use `attachmentActionTarget` before the single physical
+gesture: semantic placement can leave a restored deferred row under the composer even while the
+Activity is resumed. The helper reuses `questionAnswerTarget`; permanent header/open and
+composer/save controls retain exactly one action. Diagnose the failing phase before cleanup using
+content-free bounds, request/load/open events and intent-monitor answers. Empty phases and zero
+monitor answers distinguish the controlled lost tap from incomplete retrieval or missed intent
+observation; teardown snapshots alone cannot. Keep the original deadlines, strict recordings,
+restart, URI/read-grant and byte-digest assertions. See the
+[attachment scenario and counted acceptance](../../e2e-interactive-stream.md#verification-status)
+for causal red/green, five fresh starts, shared consumers, original configured UI execution and
+historical-attribution limits. Accepted evidence does not establish the cause of every older flake.
+
 A settled repository reply and an earlier geometry sample do not fence later layout.
 Proof-entry readiness and the earlier finished-marker reveal are separate boundaries.
 For generation-scoped markers, resolve the same raw Agent from current admitted evidence
@@ -162,7 +174,32 @@ on Kotlin/Compose libraries supplied only by the target APK during
 instrumentation. The service declaration requires `BIND_INPUT_METHOD` and remains
 under `app/src/androidTest`.
 
-For a separate dialog, translate dialog-root bounds into screen coordinates before subtracting the Activity's effective `DesignCapture.insets()` status inset. Platform root insets alone omit ATD's synthetic bars and can turn a correct 312 dp screen-area origin into 336 dp. This geometry calculation is separate from proving real bars: retain `requireRealSystemBars=true` and nonblank pixels for visual evidence. Fresh managed-device captures may be in `app/build/intermediates/managed_device_android_test_additional_output/` while a legacy outputs folder still holds older ATD sidecars. Check timestamps, API and `syntheticBars` before retaining PNGs and metadata together. See [Delete evidence](../../../app/src/androidTest/assets/design-1220/list/1861-delete-evidence.txt).
+For a separate dialog, translate semantics bounds by its own root's screen
+location. Independently inset Activity `currentWindowMetrics.bounds` once per edge
+by the union of effective system bars and display cutout from `DesignCapture.insets()`
+(per-edge maxima, not additive overlap), then compare vertical centres within
+2 dp. Do not subtract status clearance again or substitute the dialog window's
+zero bar insets. Effective Activity insets retain ATD synthetic geometry coverage;
+visual proof still requires `requireRealSystemBars=true` and nonblank pixels.
+At 412×892 dp, a 220 dp surface has expected screen top 336 for 24/24 clearance
+(312 status-relative), or 348.5 for 49/24 (299.5 status-relative). A fixed 312
+offset both rejects correct asymmetric centering and can accept displacement.
+`DeleteCaptureGeometryTest` covers displacement, cutouts, origins, density and synthetic insets.
+
+The [#2534 report and provenance](../../../app/src/androidTest/assets/design-1220/list/2534-delete-evidence.txt)
+and [counted XML](../../../app/src/androidTest/assets/design-1220/list/2534-delete-results.xml)
+record fresh Linux full `pixel8Api35` evidence, 2026-10-24: **2 executed/passed,
+0 failures/errors/skips**. Both `ListDesignCaptureTest.listFramesAt412By892` and
+`listFramesAt320By700LargeText` passed and reached `hostStates`. Both centre errors were −0.5 dp.
+The [#1861 24/24 reference](../../../app/src/androidTest/assets/design-1220/list/1861-delete-evidence.txt)
+remains valid. The [original reproduction and provenance](https://github.com/pyrycode/pyrycode-mobile/issues/2534#issuecomment-6383263057)
+remains 2 executed, 1 passed, 1 failed, 0 errors/skips; the old-rule regression
+control remains 7 executed, 2 passed, 5 failed, 0 errors/skips. #2418 still owns
+its candidate captures and host comparisons. See the [Delete confirmation entry](../../../app/src/androidTest/assets/design-1220/list/index.md#delete-confirmation--6733665)
+for bounds, provenance and retained Delete checks.
+
+Before retaining PNGs and sidecars together, check timestamps, API and
+`syntheticBars`: legacy outputs can hold older ATD evidence.
 
 ATD can also report zero physical system-bar insets and return black framebuffer
 captures while geometry assertions pass. `MainActivityInsetsDeviceTest` injects
@@ -647,31 +684,5 @@ paint, not full-screen geometry at the device's native density. See the
 
 ## Probe the evidence itself
 
-Supported-flow fixtures must supply the ownership that makes their negatives meaningful
-(#2366). Admit both conversations and current producing sessions before testing foreign
-session errors, reset or turn state; otherwise rejecting an unknown producer can conceal an
-isolation bug. A valid foreign suggestion must stay hidden here and appear from held state
-when its own conversation opens. Replacement settings and suggestions require fresh current
-producer delivery; old readings cannot become current through a session switch. Preserve
-explicit producer tags and retired-session negatives.
-
-The authoritative harness route probe requires rendered text, an actual catch-up request,
-completed coverage and no legacy content request. Its revision probe requires one newest
-row after duplicate and older facts; local-send acceptance checks device plus message identity.
-The destination-only parser-gap tap must fire on a supplied notice without creating another
-subscription or query. Passive replacement checks reject retired evidence even if connection
-identity is reused. See the [checked 18-client / 91-method inventory](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366)
-and [recorded observation contract](../../recorded-tests.md#passive-thread-assertion-evidence-2317).
-
-Keep the three missing/reordered/duplicate delta-sequence negatives as literal presentation
-inputs until runtime removal #2367. Authoritative items carry no client-reduced delta metadata;
-inventing it would let those probes test a path the screen does not use. Their literals never
-enter the repository, ViewModel or rendered screen. Positive reply order and duplicate-row
-negatives instead use admitted `ThreadEvidence` facts and scoped presentation identities.
-
-An injection or sanitizer test must forge the exact line shape its reader matches.
-For the unrecognized-row sentinel, the hostile value must include the report's row
-prefix, not only a newline. Assert the total report line count as an independent
-fence. Temporarily widen the sanitizer, run the test and read the resulting failure
-before restoring the guard. This proves the assertion can fail instead of merely
-proving that the current implementation passes.
+See [Probe the evidence itself](development-verification-compose-probes.md#probe-the-evidence-itself)
+for fixture ownership, authoritative harness route probes and negative evidence controls.

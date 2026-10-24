@@ -2261,6 +2261,30 @@ attachments-from-phone and peer-attachment scenarios are unaffected: one is the 
 resolves through `sentOriginal`/`canRead` with no relay request regardless of this rule, and the other is
 a history-replayed row, which has no name or type to defer on and so still loads on show.
 
+**Recorded attachment target reliability (#2526).** A semantically displayed restored file row can
+still have its physical center behind thread chrome. `assertOpensAndSaves` uses
+`attachmentActionTarget`, which applies the existing `questionAnswerTarget` geometry correction
+before one open tap or save long-press. It preserves retrieval on first tap, restart and row
+uniqueness, content URI/read grant, both byte digests, save-notice absence and strict recording
+consumption. No gesture retry, recording edit or deadline increase is involved. On a timeout,
+sample row/chrome bounds, resumed Activity, request/load/open phases and monitor answers before
+cleanup; a destroyed-Activity launcher snapshot after teardown cannot identify the earlier cause.
+
+The [independent macOS acceptance](https://github.com/pyrycode/pyrycode-mobile/pull/2536#issuecomment-6384590382)
+at `87e5eb82008794fdf2459cb78faf5b3fb2e91cbe` accepted the controlled original-scenario native
+red (1 executed/failed) and identical-placement repaired green (1 executed/passed). It also
+verified five consecutive fresh-instrumentation focused passes, both other shared consumers (2/2)
+and header/open plus composer/save regressions (2/2), with zero failures/errors/skips in those
+green runs. The named offered-file method passed in the original configured UI sweep (7.411s).
+That sweep executed250:248 passed,2 unrelated failures,0 skipped; the exact two rerun methods passed2/2
+(#2219 interrupted retrieval and #2360 offscreen reconnect). Scripted24 retained4 independently
+accepted inherited failures, reproduced on main `76822ac37f2a363ee60af47eb7f061c1cc9eb5b0` (#2521/#2469).
+These are separate executions; original failures remain failed. The verifier authenticated683
+manifest entries under agents `logs/evidence/2526/builder-20261024/`, including the historical
+#2491/#2507 bundles. Those older natural failures lack pre-cleanup telemetry, so unique historical
+attribution remains unavailable. Investigation `7317741194386b4a52e479e966d549ae1acbd5b68c1179c636605975d0b806a1`
+executed zero tests and contributes no passing coverage. No new live capture or other OS was required.
+
 **The LIVE list only filters; it does not set the order.** JUnit's default `MethodSorters.DEFAULT` runs a
 class's methods by name hash, not by the list's own sequence, so a method's place in
 `scripts/e2e-emulator.sh`'s `TEST_TARGET` string says nothing about when it runs. This ticket's own name
