@@ -60,6 +60,11 @@ Before PR handoff run focused checks, lint, assembly, Android-test compilation, 
 
 Pending for documentation: update `docs/e2e-interactive-stream.md`, “Peer read clears phone attention (#1883),” with demonstrated cause, controlled regression, counted macOS evidence and provenance limitations. Preserve all failures and distinguish `c991edc` from the current 1/2 pair. Link #2494 as integration owner; its final integrated-proof link remains pending until downstream publication.
 
+## Revisions
+
+- 2026-10-24: diagnostic `e6d6d1f6e136971a4f208fe566b135c6df5345b4` on current main executed 2 native methods: 0 passed, 2 failed, no errors/skips. The durable-gap producer query timed out; following ping timed out before receiving the reply, so the peer-read boundary was not reached. Raw evidence and identities are retained in the agents evidence directory `2542/main-diagnostic-e6d6d1f6e`.
+- 2026-10-24: to reach the assigned boundary without adopting the whole parent patch, temporarily reuse `ProducerThreadObservation`'s query-refusal recovery, `SecondClientPeer.catchUpProduction`, `PingReadProof` and the phone proof's current-owner evaluation from #2494 candidate `78e25757935229e975a7cab0c23b2504f237c19c`. This is diagnostic comparison source, not this child's repair. Keep it in a separate commit and revert that commit before the final child diff. Do not copy fixture cleanup owned by #2514 or unrelated parent diagnostics. The original peer-read stage remains unchanged. The temporary source remains below the 1600-line limit with a forecast of approximately 650 written lines including its removal and the eventual peer repair.
+
 ## Security review
 
 **Verdict:** PASS for bounded diagnosis; review any demonstrated repair before implementing it.
