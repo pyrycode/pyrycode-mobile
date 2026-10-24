@@ -20,6 +20,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -55,6 +56,7 @@ import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
@@ -390,7 +392,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
     }
 
-    /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
+    /** #2436: recover the held turn before publishing the native offer that explicit submission clears. */
     @Test
     fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
         arriveInSeededThread()
@@ -407,6 +409,54 @@ class DeterministicInteractiveStreamE2ETest {
                         .id
                 }
             }
+
+        fun awaitHeldReply(): ThreadEvidence =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=await_held_reply")
+                    val (evidence, phase) =
+                        repositories.firstOnLive(
+                            { repository ->
+                                combine(
+                                    harnessThreadEvidence(repository).observe(conversation),
+                                    repository.observeTurnPhase(conversation),
+                                ) { evidence, phase ->
+                                    evidence to phase
+                                }
+                            },
+                        ) { (evidence, phase) ->
+                            phase != LiveSessionEvent.TurnState.Phase.Idle && evidence.assistantRecords().singleOrNull()?.fullText == PING
+                        }
+                    android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=held_observed phase=$phase")
+                    evidence
+                }
+            }
+        val arrived = awaitHeldReply()
+        android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=held_reply")
+        // A reconciled revision cannot re-arm an offer revoked by cold-start connection churn.
+        // Recover this actual reply first; the original result/suggestion fragment is still withheld.
+        severLink()
+        composeTestRule.waitForIdle()
+        restoreLink()
+        val recovered = awaitHeldReply()
+        assertTrue("reply recovery must use a replacement connection", arrived.owner.connection !== recovered.owner.connection)
+        assertEquals(
+            arrived
+                .assistantRecords()
+                .single()
+                .message.id,
+            recovered
+                .assistantRecords()
+                .single()
+                .message.id,
+        )
+        composeTestRule
+            .onAllNodesWithTag(
+                de.pyryco.mobile.ui.conversations.thread.REPLY_SUGGESTION_PLACEHOLDER_TAG,
+                useUnmergedTree = true,
+            ).assertCountEquals(0)
+        android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=recovered_before_offer")
+        DaemonFaultControl().releaseStream()
         composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
