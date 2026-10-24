@@ -3786,6 +3786,46 @@ executed this exact method once and passed, with zero failures/skips, preserving
 90000 ms combined reply/clickable-control deadline and fresh-settings assertion. Passing retries
 against the old daemon remain historical comparisons, not post-repair acceptance.
 
+The [#2380 occurrence reconciliation](specs/architecture/2380-refusal-occurrence-reconciliation.md)
+retains two additional Linux `build-hp-1` sightings of this exact method:
+
+| Historical execution | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| #2246 original scripted-all | 1 | 0 | 1 | 0 |
+| #2246 exact retry | 1 | 1 | 0 | 0 |
+| #2373 original scripted-all | 1 | 0 | 1 | 0 |
+| #2373 exact retry | 1 | 1 | 0 | 0 |
+
+Both failed daemon traces record `baseline_required` and teardown 4414 on old Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`. They fit the controlled publication defect;
+original batching, which operand of the reply/control predicate was missing, and suite-order
+or machine-load causation remain unknown. Retries establish intermittency only. The #2373
+bundle lacks its original refusal phone log and raw device XML; counted reports and primary
+daemon/relay evidence survive. The reconciliation retains exact source/binary identities,
+bundle digests, manifest counts and private capture locations, including failures.
+
+The reconciliation reuses #2374's separate repaired-source Linux proof above: **1 executed, 1 passed,
+0 failed, 0 skipped**. Production, the refusal method, fixture and relevant harness inputs
+match that proof; intervening executable changes concern the separate reply-suggestion
+scenario. The scripted reply, exactly one clickable control, disappearance after tapping,
+fresh unheld `haiku` settings, live-only arming and 90000 ms deadline remain unchanged.
+Neither historical occurrence establishes a distinct residual Mobile defect.
+
+The accepted #2380 verifier record, run
+`d9796af5bb24b9849266bf5196076eae03cb9aff09040fcc6c8f09335b371165`, covers candidate
+`8410b69dfb1933f66ada47fe3836331ddd536ce3` on Linux. Configured `scripted-all` XML records
+**24 executed, 19 passed, 5 failed, 0 skipped**; this exact refusal method executed and
+passed once with no skips. The five failures remain failures, accepted as inherited from
+main and tracked by #2353, #2521 and #2469. JVM/build checks recorded **5547 executed,
+5547 passed, 0 failed, 0 skipped**. The UI gate took its documented docs-only skip and
+executed no UI methods. The verifier bundle retains counted XML in
+`logs/verifier-gate__2380_6.log` and refusal daemon/relay inputs under
+`evidence/harness/fault-b32a8ea0881f847586f4feb3af5e20e2/`; its 160 manifest entries
+were verified. Reused raw phone/device proof was retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2380/builder-20261024/2374-native/`
+at review time, subject to pruning. No additional real Claude turn was needed; macOS is
+outside this Linux ticket's verification scope.
+
 `offline-retry` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
 and belongs to `python3 scripts/android-test-gate.py scripted-all`. The daemon and
@@ -9363,6 +9403,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   Linux proof: 1 executed, 1 passed, 0 failed, 0 skipped. See
   [fixture migration evidence](#authoritative-fixture-migration-evidence-2366) for the retained failure,
   old-daemon comparison limits, runtime identities and missing-original-batching uncertainty.
+
+  [#2380](specs/architecture/2380-refusal-occurrence-reconciliation.md) reconciles the additional
+  #2246 and #2373 sightings: each original failed 1/1 and each exact retry passed 1/1,
+  all without skips. It reuses #2374's matching repaired-source Linux proof (1/1 passed,
+  no failures/skips). Original batching and the missing combined-predicate operand remain
+  unknown. The [scenario record](#scenarios-454) retains these failures, evidence limits
+  and #2380's separately accepted configured gate result; retries do not prove the repair.
 
 - **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
   `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
