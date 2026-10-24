@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.MarkdownNoteStageTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T05:42:25.061Z" hostname="Juhanas-MacBook-Air.local" time="0.0">
+    <testcase name="successRunsOnceAndRecordsCompletion" classname="de.pyryco.mobile.e2e.MarkdownNoteStageTest" time="0.0" />
+    <testcase name="failurePreservesTheOriginalCauseAndNeverRetries" classname="de.pyryco.mobile.e2e.MarkdownNoteStageTest" time="0.0" />
+    <testcase name="cancellationPropagatesUnchanged" classname="de.pyryco.mobile.e2e.MarkdownNoteStageTest" time="0.0" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-12T05:42:21.195Z" hostname="Juhanas-MacBook-Air.local" time="3.864">
+    <testcase name="theRequestedLabelWithoutItsOwnRenderedLinkIsNotReady" classname="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" time="3.501" />
+    <testcase name="thePromptContainingTheRequestedLinkDoesNotCaptureTheAssistantLinkTap" classname="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" time="0.066" />
+    <testcase name="reopeningFindsTheOriginalRenderedLinkAfterTheRewriteReply" classname="de.pyryco.mobile.e2e.MarkdownNoteLinkTest" time="0.062" />
+  </testsuite>
+</testsuites>
