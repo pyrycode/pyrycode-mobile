@@ -1,0 +1,55 @@
+Host control placement — #2419 — Linux, 2026-10-24
+
+Before source: cb77d6804b52e804a70b6e409eeafa0b0daeea0c, with a test-only diff.
+After source: 9e32e7e9d811b81b2440786003a14d9b3c823b33, pushed and clean.
+Subsequent receipt/plan changes record evidence only.
+
+Selected methods under de.pyryco.mobile.design.ListDesignCaptureTest:
+listFramesAt412By892 and listFramesAt320By700LargeText.
+Both before and after: 2 executed/passed, 0 failed/errors/skipped, process exit 0.
+Both walks capture connected, disconnected, PairingRejected and UpdateRequired.
+Focused JVM checks: 28 ConversationTreeRowsTest, 3 TreeHostRowThreadMissingTest,
+7 ChannelListScreenTest methods: 38 executed/passed, 0 failed/errors/skipped.
+Lint, assembleDebug, compileDebugAndroidTestKotlin and spotlessApply passed.
+
+Native command: env DEVICE=pixel8Api35 ANDROID_GATE_WAIT_SECONDS=2700
+'ORG_GRADLE_PROJECT_android.testInstrumentationRunnerArguments.requireRealSystemBars=true'
+python3 scripts/android-test-gate.py ui --tests
+'de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText'
+
+Runtime: full API35 google_apis_playstore x86_64, hardwareAccelerated=true,
+syntheticBars=false, density=1.0, zero captured IME insets.
+412x892 uses fontScale=1.0; 320x700 uses fontScale=1.5.
+Actual system-bar insets are retained per capture; connected startup captures
+vary between runs. Comparisons align each row band and the rule's right edge,
+without scaling images or claiming acceptance of unrelated whole-frame geometry.
+
+At both widths, visible ink insets from the rule:
+Disconnected/re-pair status: 35.5 -> 47.5 dp (target 48).
+Update status: 36 -> 48 dp (target 48).
+All three pens: 12 -> 24 dp (target 24).
+Connected pen: 12 -> 12 dp (target 10, within the allowed 2 dp).
+Vertical center error: 0 dp except Update's 0.5 dp painted offset.
+All status/pen masks match before/after within 1 pixel; exact theme-primary
+pixels remain present. Caption and following tree pixels are identical,
+preserving the existing caption rhythm and compact wrapping.
+
+After app APK SHA256: b107108f76f2861d21d5a9d94941caae459acb7e8f24371ab2a1d4ab98de082e
+After test APK SHA256: d6cc2e5ecb8a9f2e7ac1243b5769eab43b2175667c84ae6f1cb8c3a81261806b
+Agents revision: 3e832193ed2daf6b9dd8bac498d6402112e2542b
+All source hashes, before APK identities, launcher hashes, runtime source.properties
+and build.prop are retained in the private evidence beside the captures.
+
+Private durable evidence:
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2419/builder-20261024/
+before/ and after/: raw XML, phone logs, all captures, sidecars and identities.json.
+comparison/: measurements.json and four unscaled Figma/before/after strips.
+green-rows/, green-thread-missing/, green-list/: counted focused JVM XML.
+red-placement/: controlled regression, 1 executed/failed, 0 passed/skipped.
+Earlier fixture failures and zero-execution compile/selection attempts remain
+in the retained history and command log; they are not passing evidence.
+After manifest SHA256: 68311181d3b6c8e711d46e834c4e1a2a2de3df7a5ba80f5608235c7a27abd3c8
+Root SHA256SUMS verifies the retained files; private directories/files are owner-only.
+
+Complete configured gates and #1650 integration acceptance remain with the
+dispatcher/verifier. Other operating systems are outside this ticket's scope.
