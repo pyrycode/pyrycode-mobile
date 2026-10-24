@@ -479,7 +479,7 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         testIme.select()
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
-        awaitChannelList()
+        testIme.observeFirstComposeWait { awaitChannelList() }
 
         // 2. Wait for the relay connection to open before creating a conversation — createDiscussion
         //    round-trips to the daemon, so tapping before the session is Open would fail the send.
@@ -802,7 +802,12 @@ class InteractiveStreamE2ETest {
 
             // 4. Open the chat and send nothing. Read from the replacement source, whether its fresh
             // reading arrived on reconnect or on open. The footer alone could come from session_settings.
-            openChatRow(chatName)
+            RelayLog.i {
+                "event=reconnect_footer_acquisition stage=before ready=${ThreadQueryReadiness.current(serverId, conversationId) != null} " +
+                    RecordedSuiteNative.modelReopenProgress(serverId)
+            }
+            openChatRowAfterCurrentQuery(chatName, serverId, conversationId)
+            RelayLog.i { "event=reconnect_footer_acquisition stage=completed ${RecordedSuiteNative.modelReopenProgress(serverId)}" }
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
                     currentRepository.observeContextUsage(conversationId).filterNotNull().first()
