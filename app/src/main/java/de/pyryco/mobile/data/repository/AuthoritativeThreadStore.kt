@@ -96,7 +96,12 @@ internal data class AuthoritativeThreadSnapshot(
                 item.hasToolBody ||
                     (item.id to item.rev) in bodyContents ||
                     item.summaryPayload != null &&
-                    items.any { it.id == item.id && it.rev == item.rev && it.hasToolBody }
+                    items.any { full ->
+                        full.id == item.id &&
+                            full.rev == item.rev &&
+                            full.hasToolBody &&
+                            full.subtreeFreshness?.let { it == item.subtreeFreshness } == true
+                    }
             )
 
     fun retainedBody(item: ThreadItemDto): JsonObject? =
@@ -623,24 +628,37 @@ internal class AuthoritativeThreadStore {
         if (current.incarnation.isNotEmpty() && current.incarnation != saved.incarnation) return AuthoritativeThreadOutcome.Ignored
         val retirements = saved.retirements + current.retirements
         val merged = merge(current, saved.items, saved.completedVersion, retirements) ?: return AuthoritativeThreadOutcome.Ignored
+        val heldRevisions = current.items.associate { it.id to it.rev }
+        val admitted = saved.items.filter { it.rev > (heldRevisions[it.id] ?: 0) }
         val adoptCertification = current.checkpoint == 0L && !current.compactSelected
+        val retainComplete =
+            current.compactSelected && saved.savedCheckpoint > current.completeCheckpoint && saved.savedCoverage?.projection == null
         val completedVersion = maxOf(current.completedVersion, saved.completedVersion)
         val checkpoint = if (adoptCertification) saved.checkpoint else current.checkpoint
         publishSnapshot(
             host,
             conversation,
-            current.copy(
-                epoch = saved.epoch,
-                incarnation = saved.incarnation,
-                retirements = retirements,
-                items = ordered(if (olderSaved) insertOlderSaved(current.items, saved.items, merged) else merged),
-                completedVersion = completedVersion,
-                checkpoint = checkpoint,
-                coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
-                openingRows = openingRows?.plus(current.openingRows ?: current.items.flatMap { listOf(it.id to false, it.id to true) }),
-                // Live updates may lead the checkpoint until completion; a known-live supplement adds no new gap.
-                repairNeeded = current.repairNeeded || saved.completedVersion > current.completedVersion && completedVersion > checkpoint,
-            ),
+            current
+                .copy(
+                    items = ordered(if (olderSaved) insertOlderSaved(current.items, saved.items, merged) else merged),
+                ).observeDetails(admitted, completedVersion, restoring = true)
+                .copy(
+                    epoch = saved.epoch,
+                    incarnation = saved.incarnation,
+                    retirements = retirements,
+                    completedVersion = completedVersion,
+                    checkpoint = checkpoint,
+                    coverage = if (adoptCertification && current.coverage == null) saved.coverage else current.coverage,
+                    completeCheckpoint = if (retainComplete) saved.savedCheckpoint else current.completeCheckpoint,
+                    completeCoverage = if (retainComplete) saved.savedCoverage else current.completeCoverage,
+                    openingRows =
+                        openingRows?.plus(current.openingRows ?: current.items.flatMap { listOf(it.id to false, it.id to true) }),
+                    // Live updates may lead the checkpoint until completion; a known-live supplement adds no new gap.
+                    repairNeeded =
+                        current.repairNeeded ||
+                            saved.completedVersion > current.completedVersion &&
+                            completedVersion > checkpoint,
+                ),
             restoring = true,
             preservePlacement = olderSaved,
         )

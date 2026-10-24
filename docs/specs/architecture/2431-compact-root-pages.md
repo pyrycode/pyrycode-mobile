@@ -46,6 +46,8 @@ No new coroutine, dispatcher or background downloader. Reuse synchronized store 
 | --- | --- |
 | Initial mixed/reordered/duplicate roots | Repository ordering probe, one newest row per identity, zero closed detail traffic/conversion |
 | Repeated revisions, newer full facts and same-revision freshness changes | Retention probe preserves full source/cache facts while invalidating obsolete detail independently |
+| Saved full facts arrive after compact metadata; repeated restore during explicit refresh | `restoreInvariantSameRevisionSavedBodiesMustMatchCurrentCompactFreshnessBeforeOpening` and `restoreInvariantCompleteHostKeepsSavedFullBodiesWithoutCompactFreshness` |
+| Saved complete certificate arrives after compact certification | `restoreInvariantCompleteCertificateSurvivesCompactFirstThroughCacheWithoutBecomingActive` |
 | Explicit older demand, tied boundary, terminal empty page | Paging probe checks exclusive continuation, merged root coverage and bounded request count |
 | Wrong conversation/request/projection/epoch | Decoder/repository attribution probes leave certificates unchanged |
 | Interrupted oversized non-tool assembly, failure/cancel/disconnect | Fragment and retirement probes leave root/detail certificates unchanged |
@@ -77,7 +79,7 @@ Pending documentation stage, supplied to #2393: compact initial/older selection,
 - Trust boundary: `decodeThreadQueryReply` and `ThreadQueryDecoder` enforce projection, root shape, bounded summary text and request/epoch attribution before store admission. MUST FIX addressed in design: a complete marker or assembled payload cannot certify compact scope.
 - Tokens: no new credentials; exact unsigned query tokens retain the existing numeric decoder and are never logged.
 - Files/storage: existing cache seam persists full app-private facts only; compact summaries/certificates and expansion buffers remain runtime state. No new path, schema, backup policy or write mechanism.
-- Restore freshness: MUST FIX from review. Newly admitted saved full facts must reconcile against current compact observations before body availability or read sight. Equal source revision does not establish equal subtree freshness; unknown or different freshness keeps the saved fact but invalidates body/child knowledge and requires explicit-open refresh. Disk admission cannot replace the current compact observation or its certificate. Compatible saved complete certificates belong only in the retained complete fields after compact selection.
+- Restore freshness: MUST FIX from review. Newly admitted saved full facts must reconcile against current compact observations before body availability or read sight. Equal source revision does not establish equal subtree freshness; unknown or different freshness keeps the saved fact but invalidates body/child knowledge and requires explicit-open refresh. Saved-body fallback always requires matching known freshness, including after separately fetched detail is evicted. Disk admission cannot replace the current compact observation or its certificate. Compatible saved complete certificates belong only in the retained complete fields after compact selection.
 - Android surface: no component, intent, provider, WebView or external action changes; summary text uses existing inert row presentation.
 - Cryptography: reuse authenticated Noise session and existing vendored primitives unchanged.
 - Network/I/O: preserve envelope/assembly bounds, timeout and serialized admission; reject compact data before full conversion. Relay delay/reorder cannot manufacture a matching successful marker.
@@ -87,7 +89,7 @@ Pending documentation stage, supplied to #2393: compact initial/older selection,
 - Threat model: malicious relay remains bounded by existing Noise/framing/timeout controls; hostile daemon summaries are validated and inert. Rooted-device theft and UI screenshot/accessibility leakage are unchanged existing platform concerns, outside this root-page slice.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
-**Date:** 2026-10-23
+**Date:** 2026-10-24 (restore boundary re-review)
 
 ## Revisions
 
@@ -104,3 +106,5 @@ Pending documentation stage, supplied to #2393: compact initial/older selection,
 2026-10-24, verifier findings 1 and 3: add reverse-arrival cache regressions for compact-first/saved-full-second, including same-revision freshness mismatch, explicit body demand, read-sight rejection, exact saved fact retention and unchanged compact certificates. Reconcile only newly admitted saved facts through detail validity, preserving current compact observations. Retain a compatible saved complete checkpoint/coverage separately when compact coverage is active. Repair forecast adds about 160 written lines to the measured 1215-line existing diff, below 1600; no new exported declaration or consumer migration is planned. The in-flight #2493 store edit adds a generation-capture helper away from restore; no dependency or overlapping block change is required.
 
 2026-10-24, verifier finding 2 remains a contract question: the supplied Core protocol's Compact projection and Bounded expansion reads omit `task_id`/`task_link` from `ThreadSummary`, while `recordedTask` requires both for the task roster and background placement. A cold compact join has no full facts from which to retain them. Do not invent a task identity from a root ID or fetch closed content. Refinement must define the producer-owned summary task identity/placement contract and its Core prerequisite, or explicitly define another supported identity model for these consumers. Preserve the existing 8333-item proof and its historical failures; it does not prove the missing navigation/lifecycle behavior.
+
+2026-10-24, retention probe for finding 1: 13 executed, 12 passed, 1 failed after a successful explicit refresh followed by dropping fetched body contents using the existing eviction state shape. Refresh clears body invalidation, so restore-time reconciliation alone allowed stale saved fallback to regain availability. Require known matching subtree freshness whenever `hasToolBody` falls back from a summary to saved full facts. Reuse the same parsed freshness fact in admission and availability; complete full-item delivery still needs no compact freshness token. The probe remains in the reverse-arrival regression; no retention service or schema changes are needed.

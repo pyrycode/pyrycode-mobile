@@ -24,10 +24,14 @@ internal data class ExpansionDetailValidity(
     override fun toString() = "ExpansionDetailValidity(redacted)"
 }
 
+internal val ThreadItemDto.subtreeFreshness: Long?
+    get() = (raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 }
+
 /** Only validated source admission calls this; equal/older captures cannot re-invalidate a replacement. */
 internal fun AuthoritativeThreadSnapshot.observeDetails(
     incoming: List<ThreadItemDto>,
     version: Long,
+    restoring: Boolean = false,
 ): AuthoritativeThreadSnapshot {
     val known = expansionItems.associateBy { it.id }
     val observations = detailValidity.observations.toMutableMap()
@@ -42,15 +46,28 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
             }
             continue
         }
-        val freshness = (item.raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 }
+        val freshness = item.subtreeFreshness
         val previous =
             observations[item.id]?.takeIf { it.revision >= (known[item.id]?.rev ?: 0) } ?: known[item.id]?.let { held ->
                 ExpansionDetailValidity.Observation(
                     held.rev,
-                    (held.raw["subtree_version"] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull?.takeIf { it >= 0 },
+                    held.subtreeFreshness,
                     -1,
                 )
             }
+        // Disk facts may arrive after their compact observation. Preserve that observation and
+        // the full source fact, but equal revision alone cannot make an old subtree current.
+        if (restoring && previous != null && item.rev <= previous.revision) {
+            if (known[item.id]?.summaryPayload != null &&
+                item.rev == previous.revision &&
+                item.hasToolBody &&
+                (freshness == null || freshness != previous.freshness)
+            ) {
+                changed += item.id
+                incompleteChanges += item.id
+            }
+            continue
+        }
         if (previous != null &&
             (
                 item.rev < previous.revision ||

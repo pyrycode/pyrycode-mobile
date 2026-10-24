@@ -370,4 +370,128 @@ class CompactRootPagesTest {
             assertTrue(after.hasToolBody(after.expansionItems.single()))
             assertEquals(full.raw, after.items.single().raw)
         }
+
+    @Test fun restoreInvariantSameRevisionSavedBodiesMustMatchCurrentCompactFreshnessBeforeOpening() =
+        runTest {
+            for (kind in listOf("tool_call", "agent")) {
+                for (freshness in listOf(50L, 90L, null)) {
+                    val f = CompactRootFixture(backgroundScope)
+                    f.repo.openAuthoritativeThread("c")
+                    runCurrent()
+                    f.push(f.batch(headers = listOf(header(17, facts = ",\"subtree_version\":90", kind = kind))))
+                    f.push(f.marker())
+                    runCurrent()
+                    val store = f.repo.authoritativeThreads
+                    val before = store.current("h", "c")
+                    val raw =
+                        kotlinx.serialization.json.JsonObject(
+                            header(17, kind = kind).filterKeys { it !in setOf("headline", "detail_omitted") } +
+                                mapOf(
+                                    "summary" to JsonPrimitive("Held full"),
+                                    "content" to CompactRootFixture.obj("""{"output":"kept"}"""),
+                                ) +
+                                (freshness?.let { mapOf("subtree_version" to JsonPrimitive(it)) } ?: emptyMap()),
+                        )
+                    val saved =
+                        AuthoritativeThreadSnapshot(
+                            epoch = "e",
+                            items = listOf(ThreadItemDto.decode(raw)),
+                            completedVersion = 90,
+                            checkpoint = 90,
+                        ).toSavedAuthoritativeThread()
+                    assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0))
+                    val restored = store.current("h", "c")
+                    assertEquals(saved.items, restored.toSavedAuthoritativeThread().items)
+                    assertEquals(before.checkpoint, restored.checkpoint)
+                    assertEquals(before.coverage, restored.coverage)
+                    assertEquals(before.detailValidity.observations, restored.detailValidity.observations)
+                    val current = restored.expansionItems.single()
+                    val fresh = freshness == 90L
+                    assertEquals(fresh, restored.hasToolBody(current))
+                    val p = projectDeferredAuthoritativeThread("h", "c", restored)
+                    val row = p.rows.filterIsInstance<ThreadRow.Delivered>().single()
+                    val key = row.listKey(0)
+                    if (!fresh) {
+                        assertTrue(17L in restored.detailValidity.children)
+                        assertEquals(before.completedVersion, restored.detailValidity.floors[17])
+                        assertFalse(p.suppliesReadSight(row, setOf(key)))
+                        assertFalse(p.matchesReadContents(key, row.item, 17))
+                    }
+                    assertTrue("restore never demands detail", f.details.isEmpty())
+                    f.repo.demandToolBodies("c", this, restored, setOf(17))
+                    assertEquals(if (fresh) 0 else 1, f.details.size)
+                    assertEquals(before.coverage, store.current("h", "c").coverage)
+                    assertEquals(before.checkpoint, store.current("h", "c").checkpoint)
+                    // Re-reading the same saved facts must not retire an in-flight explicit read.
+                    val opening = store.current("h", "c")
+                    store.restore("h", "c", saved.toSnapshot(), 0)
+                    assertEquals(opening.detailValidity, store.current("h", "c").detailValidity)
+                    if (!fresh) {
+                        val request = f.details.single()
+                        for (final in listOf(false, true)) {
+                            val content = if (final) "" else ",\"content\":{\"output\":\"refreshed\"}"
+                            f.push(
+                                CompactRootFixture.obj(
+                                    """{"conversation_id":"c","epoch":"e","version":100,"item_id":17,"rev":17,"kind":"$kind","final":$final$content}""",
+                                ),
+                                request,
+                                "thread_tool_body",
+                            )
+                        }
+                        runCurrent()
+                        val refreshed = store.current("h", "c")
+                        assertTrue(refreshed.hasToolBody(refreshed.expansionItems.single()))
+                        assertEquals(saved.items, refreshed.toSavedAuthoritativeThread().items)
+                        assertEquals(before.coverage, refreshed.coverage)
+                        assertEquals(before.checkpoint, refreshed.checkpoint)
+                        val withoutFetchedBody = refreshed.copy(bodyContents = emptyMap(), bodyLoads = emptyMap())
+                        assertFalse(
+                            "dropping fetched detail cannot certify the stale saved fact",
+                            withoutFetchedBody.hasToolBody(withoutFetchedBody.expansionItems.single()),
+                        )
+                    }
+                }
+            }
+        }
+
+    @Test fun restoreInvariantCompleteHostKeepsSavedFullBodiesWithoutCompactFreshness() {
+        val full = ThreadItemDto.decode(kotlinx.serialization.json.JsonObject(message(17) + ("kind" to JsonPrimitive("tool_call"))))
+        val saved =
+            AuthoritativeThreadSnapshot(epoch = "e", items = listOf(full), completedVersion = 90, checkpoint = 90)
+                .toSavedAuthoritativeThread()
+        val store = AuthoritativeThreadStore()
+        store.restore("h", "c", saved.toSnapshot(), 0)
+        val restored = store.current("h", "c")
+        assertTrue(restored.hasToolBody(restored.expansionItems.single()))
+        assertEquals(ExpansionDetailValidity(), restored.detailValidity)
+        assertEquals(saved, restored.toSavedAuthoritativeThread())
+    }
+
+    @Test fun restoreInvariantCompleteCertificateSurvivesCompactFirstThroughCacheWithoutBecomingActive() =
+        runTest {
+            val savedStore = AuthoritativeThreadStore()
+            savedStore.establishComplete("h", "c", "e", 90, listOf(ThreadItemDto.decode(message(17))), 0)
+            val saved =
+                savedStore
+                    .current("h", "c")
+                    .copy(coverage = AuthoritativeThreadCoverage(10uL, 91uL, 10uL, true))
+                    .toSavedAuthoritativeThread()
+            val f = CompactRootFixture(backgroundScope)
+            f.repo.openAuthoritativeThread("c")
+            runCurrent()
+            f.push(f.batch(items = listOf(message(17, rev = 80))))
+            f.push(f.marker())
+            runCurrent()
+            val store = f.repo.authoritativeThreads
+            val before = store.current("h", "c")
+            assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0))
+            val restored = store.current("h", "c")
+            assertEquals(before.checkpoint, restored.checkpoint)
+            assertEquals(before.coverage, restored.coverage)
+            val roundTrip = restored.toSavedAuthoritativeThread().toSnapshot()
+            assertEquals(saved.checkpoint, roundTrip.checkpoint)
+            assertEquals(saved.coverage, roundTrip.toSavedAuthoritativeThread().coverage)
+            assertEquals(before.items.single().raw, roundTrip.items.single().raw)
+            assertTrue(f.details.isEmpty())
+        }
 }
