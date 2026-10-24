@@ -140,6 +140,27 @@ carries a legacy history id. The synchronous exact-host lookup below prevents st
 support/read facts from cancelling alerts against a replacement connection. See the
 [repository facts and retries](remote-conversation-repository.md#daemon-conversation-read-marks).
 
+**Opening-summary recovery (#2493).** A reconnected repository can certify held
+completion without a new live completion. Its own correlated opening-list response
+may still omit shown metadata. The repository joins that response with current
+completion certification and permits one consumed follow-up, in either arrival
+order; only the returned daemon facts restore shown/read availability. Existing
+`launchAttention` collection of `observeHostReadMarks` receives those facts; no
+second attention collector or legacy fallback is introduced. Unknown remains
+unknown until that response, recovery itself marks nothing read, and
+WaitingForAnswer/Running still outrank Unread. Repository identity and generation
+fences reject retired responses. Queued recovery retains its revocable request
+identity until dispatch; withdrawal cannot be undone by later recertification. See
+[the bounded join and invalidation rules](remote-conversation-repository-reads-and-thread-store.md#recovering-unavailable-shown-metadata-2493).
+The final paired foreground-read/attention native proof belongs to #2494; this
+metadata slice does not claim that acceptance from a focused replay alone.
+Independent review accepted macOS `07b3eaadbc8b20ca6a3fbe64987454a5fcbc9cee`:
+host-attention tests passed 11/11 within the 5,522-executed/passed JVM run, zero
+failures/errors/skips. The existing read-mark collector consumes recovery facts;
+no transferred sight or inferred read coverage is introduced. The
+[configured replay and inherited-failure dispositions](../../recorded-tests.md#accepted-macos-integration-2493)
+retain their actual results and evidence limits.
+
 **Older-daemon fallback.** Without thread support and without a confirmed `readUpTo`, the
 conversation keeps host-keyed persisted `ReadPosition`. Thread support with missing
 confirmed/shown metadata withholds the shared verdict rather than enabling fallback.
