@@ -1,0 +1,151 @@
+Model reopen reconciliation #2356 — macOS, 2026-10-24
+
+Decision
+The demonstrated acquisition/replay scheduling defect already has the bounded
+repair merged through #2505 / PR #2506. Its existing causal regressions and the
+fresh current-input focused replay pass. No residual model defect was demonstrated
+and no additional behavior change is justified. This is a reconciliation of the
+repair and its inputs, not a claim to reconstruct every historical interleaving.
+This candidate still requires its configured dispatcher UI acceptance before
+verifier PASS. #2368 retains ownership of later-sighting reconciliation.
+
+Historical failure and causal distinction
+The original #2340 branch 9fdaf07bf3e4757693ad297744f4caa5afdd4db6 and grouped
+base 1a845e57d9483e42d2b9a71c7196135e49c506eb failures remain retained in
+model-reopen-2351/investigation.txt and its private evidence references. Five
+baseline passes and two isolated diagnostic passes did not repair those failures.
+
+At #2351 source b38a839a6d5443a697d03f881d9f91732b5787a5, both retained
+ui-0yo0mjih and ui-wyemwg43 diagnostics show Y saved sonnet/low, current matching
+read/wait ownership, published_menu=null and unmatched X catch-up request 38 at
+checkpoint 14. The configured run exited 1: 335 executed, 331 passed, four failed,
+one skipped. Its selected repeat exited 1: four executed, one passed, three failed,
+zero skipped. The model method failed once in each. Those grouped counts include
+other methods. Their raw XML/logcat and all seven reconstructed diagnostic records
+remain preserved. The original 19-entry manifest authenticated without mismatch.
+The composite confirmation_matches=false short-circuited on selection mismatch;
+confirmation_evaluated=false supplies no independent persistence-failure evidence.
+
+AuthoritativeThreadQueries.enqueue coalesces a same-conversation acquisition into
+an active query. RecordedSuiteTape.drain preserves the captured query start before
+dependent later delivery. Acquiring X while its catch-up is active can therefore
+omit the distinct captured request and fence Y's later menu. This is demonstrated
+by controls; attributing that exact ordering to every historical failure remains
+an inference. The older four-method assessment executed zero and was not rerun or
+treated as authorization for a wider investigation.
+
+Existing failing-before / passing-after controls
+- cachedCertificationCannotReleaseAcquisitionDuringTheCurrentQuery: the retained
+  snapshot-only control executed/failed 1/1, exit 1, at the early-acquisition
+  assertion; repaired snapshot-era readiness checks passed 6/6. A saved checkpoint
+  cannot certify the newer in-flight query. Current readiness checks pass 12/12.
+  The prototype's repaired source is 85e7b20859a6eef96e277ef962b6c7b66bc3a5e0;
+  the copied snapshot-only red XML/log do not identify a separate executable
+  commit. That historical provenance limit is retained, not reconstructed.
+- unfencedAcquisitionLeavesRequiredQueryAndPhoneCompletionPending exercises real
+  query coalescing and asserts strict tape incompleteness. The gated during-query
+  path waits for the consumed current terminal before sending the distinct real
+  query; completedInitialQueryAcquiresWithoutAnotherWait covers acquisition after
+  completion. No missing request is fabricated or made optional.
+- queuedReopeningCannotSpendThePreviousCompletion failed in the retained
+  12aeedf5a0bd47b68962fe17dc85ac770c329193 + candidate.patch control (10 executed,
+  seven passed, three failed, exit 1). It now rejects both the old receipt and mere
+  dispatch while requiring the distinct destination's consumed terminal.
+- completionAdvancingDuringObserverCleanupCannotCancelOrReleaseAcquisition failed
+  1/1 on 0f9d27d1a plus the retained source.patch, exit 1. Receipt capture now
+  follows observer cleanup. Source-retirement and replacement controls also pass.
+- Deadline/fixture controls after plan 8faef212a97ed1b2f90d64490dccd90dca54cdda
+  executed/failed 2/2, exit 1, at the intended assertions. Repair
+  c504eac1822775f3c25f6f3425faf1da6febe646 passed 34/34 affected checks. One
+  monotonic 30-second budget spans row lookup, navigation, acquisition and distinct
+  completion; the existing controls reject 40 seconds and accept 29 seconds.
+All these reported control sets have zero errors/skips. Original reds remain red.
+
+Source and recording reconciliation
+Base ba8c54c3d already contains both prerequisites. InitialAttentionQuery.kt,
+ThreadQueryReadiness.kt and their two control classes are byte-identical to merge
+d87abdc13b2c370748cd18bd4e43be3788726223. The model scenario still calls
+openChatRowAfterCurrentQuery before its original fresh X and final Y checks.
+Its exact model values, effort isolation, current-menu selection/confirmation,
+saved-versus-applied distinctions, restoration and original deadlines remain.
+No new diagnostic reads/collections, request relaxation or fixture edit was made.
+
+#2505 accepted verifier candidate 2a5d3096ef22a1908f878ebb734ad4b050cae78d,
+run 6651736b89ef2fbca94b73564bba9eeca206d579933e97f60ea8d0855754801b:
+configured UI exited 0, 249 executed/passed, zero errors/failures/skips, including
+the exact model method. Downloaded bundle SHA-256:
+7b6f728ccc286b1f0d7ac8cdc923e2d7d98f813f9e0fc5142682952503ca3e08;
+193/193 manifest entries authenticated. Its earlier focused model/attention
+selection passed 2/2 at c504eac18 with the older model fixture.
+
+Older model fixture SHA-256, including #2351 and accepted #2505:
+e0266388cd83ee404c4147751b1168c44521e433ea1c87c863681f6e26b9a6e3
+Current model fixture SHA-256, equal to accepted #2493:
+b523906cc45de9399580e0119b7f79f93d57d68001c9e534ab54744da9767873
+Current suite.json SHA-256:
+817e438c9f65e4e5cff0fe18a074e6a3c77c04d66687613220784d5e3b575377
+
+#2493 accepted verifier candidate 07b3eaadbc8b20ca6a3fbe64987454a5fcbc9cee,
+run 001ffb009e86ea433901162030f582a3cee9af92dfda60ecd6be84001ddf5c69:
+the model method passed in its original configured UI run (250 executed, 248
+passed, two unrelated failures, zero errors/skips, exit 1; exact rerun 2/2 passed).
+Current production/build inputs, model scenario/helpers and model recording equal
+that accepted source. Later #2507 changes add a separate effort-observation hook
+and progress notifications in shared replay infrastructure; fresh focused replay
+below covers the current integrated inputs rather than reusing older-input proof.
+
+The current model recording's genuine producer identifies Mobile
+0b93815f1088c28c513aad4f4d83899c3520fea2 and Core
+2c68b595440dd7e8e843af9cff0d9a708bcc81a7. The pinned review at
+8534e6ca2babec13ba8ac0981565590fb946dd19:
+docs/specs/architecture/2467-list-unread-after-reconnect.md authenticates with
+SHA-256 6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343.
+It records model capture 1/1, fresh replay 1/1 and strict comparison IDENTICAL;
+the genuine summary now supplies shown 11/read 0. The other four reviewed CHANGED
+comparisons remain CHANGED. Different fixture bytes are not interchangeable merely
+because their request contract compares identically. No new capture was required.
+
+Fresh focused checks
+Executable revision: 201b5a1ef69293be100fb54d09512c57936c5e18 (plan-only commit;
+production/test executable source unchanged from base). macOS 26.6.2 arm64,
+managed Android 13 pixel2Api33Atd, one shard. Commands:
+python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.e2e.ThreadQueryReadinessTest --console=plain
+python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.e2e.InitialAttentionQueryTest --console=plain
+python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation
+Results respectively: 12/12, 17/17 and 1/1 executed/passed; every process exited 0,
+with zero failures/errors/skips. Native report time: 7.575 seconds. Offline replay
+launched neither daemon nor Claude. No wider native selection was requested.
+
+All seven fresh diagnostics reconstructed from complete numbered logcat chunks.
+Y: selected=true, pending=false, note_matches=true, confirmation_matches=true,
+confirmation_evaluated=true. Sonnet selected; Fable/Opus/Haiku unselected. X saved
+claude-fable-5-1; Y saved sonnet/low. Y request 47 correlates to reply 130 with
+in_reply_to=47, the current conversation/session, held=false and cleared=false.
+Read/wait host, bundle, repository, transport and session ownership match; the
+published menu is present. Before restoration: query-pending=[], first-failure=null,
+matched=32, remaining=10. Remaining restoration/test-end work is expected at this
+observation; successful method completion includes the normal strict full-tape
+consumption check. Saved values are not a claim about an applied running Y model.
+
+Evidence survival and acceptance handoff
+Private durable root:
+$AGENTS_REPO_PATH/logs/evidence/2356/builder-macos-20261024/
+original-2351 retains both historical native failures. snapshot-only-red/green,
+queued-reopening-red, observer-cleanup-red, deadline-red and repaired-green retain
+raw controls. configured-2505 retains accepted counted XML and identity/manifest
+records. focused retains source-equivalence.json, authoritative prerequisite
+stages/verdicts, symbol-equivalence.json, checked historical manifests, exact commands
+and fresh JVM XML.
+native-ui-3tgsdaj6 retains raw native/dispatcher XML, logcat, phases, reconstructed
+model-reopen.json and checked-result.json. The root SHA256SUMS verifies all copies.
+Built APK hashes in checked-result.json identify build outputs; no independent
+installed-byte readback or additional process audit is claimed for this run.
+
+Pending before verifier PASS: this candidate's configured dispatcher UI gate must
+execute/pass the exact named model method with zero failures/skips and retain its
+counted raw evidence. Complete gates belong to the dispatcher. Historical failures
+and uncertainties remain intact. Linux is outside this ticket's verification scope.
+Pending documentation stage: docs/recorded-tests.md, Shared current-query acquisition
+and Accepted shared-fixture evidence (#2505): carry this reconciliation, original
+failures, accepted source/fixture differences and counted focused/configured results
+with durable artifact references. Documentation does not produce missing acceptance.
