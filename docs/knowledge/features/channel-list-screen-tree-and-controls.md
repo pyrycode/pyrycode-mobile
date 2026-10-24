@@ -378,8 +378,8 @@ approved SVG paths and clipped viewports from Figma frame `672:3493` (Pair compo
 24 × 28dp host slot and applies `colorScheme.primary`. The error accent above belongs
 to the host name and server glyph, not these action glyphs. The persistent host pen,
 caption, bounded accessible names, host-specific targets and independent fold action
-keep their existing contracts. Cluster placement and connected-pen comparison belong
-to #2419; #1650 retains final integration acceptance and its historical evidence and holds.
+keep their existing contracts. Cluster placement is recorded below for #2419; #1650 retains final integration
+acceptance and its historical evidence and holds.
 
 **Glyph regression and accepted captures.** Semantics and control bounds cannot distinguish
 the old Power/Download substitutes from the approved artwork.
@@ -427,6 +427,49 @@ After #2534 repaired that assertion, both methods passed as counted above.
 A whole-method failure cannot establish a host-state capture it never reached;
 real-bar inset geometry must be checked separately from artwork geometry. See
 [emulator evidence](development-verification-emulator-evidence.md).
+
+**Control placement (#2419).** With both status and Edit host controls present,
+relay-disconnected hosts use a local 12dp trailing spacer: disconnected, re-pair and
+update status/pen centers target 48/24dp inside the toolbar rule's right edge in
+Figma `672:3493`, vertically centered in the 28dp band. The connected pen stays
+12dp inside the edge, meeting `15:8`'s 10 ±2dp target at its boundary. Do not move a
+shared row constant to adjust this cluster: the status-only share picker (no edit
+callback) and connected `threadMissing` treatment retain their existing positions.
+The inset condition requires both an edit callback and `relay.isDisconnected()`;
+a thread-missing caption alone does not qualify. The persistent pen described above
+remains required by #1525 and now also appears in the current design frame.
+
+`ConversationTreeRowsTest.hostRow_controlCentersMatchTheirStateFrame_andPointerEdgesKeepTheirOwnActions`
+cycles all four compared states at both widths and taps physical status/edit/fold
+edges to protect independent actions. Its controlled red run executed once and
+failed on the offline pen (about 12.2dp instead of 24dp). Focused green XML records
+38 executed/passed, 0 failed/errors/skipped: 28 row, 3 thread-missing and 7 list
+geometry/action checks. `ForcedSize` changes effective density, so physical width
+rounding must use the composition's actual density. The shared fixture preserves
+the connected slot; native ink measurements separately enforce its strict tolerance
+boundary rather than widening that tolerance for rounding.
+
+Linux full-API35 before and after XML each records both
+`ListDesignCaptureTest.listFramesAt412By892` and `listFramesAt320By700LargeText`
+passing: 2 executed/passed, 0 failed/errors/skipped per run. Both capture connected,
+disconnected, PairingRejected and UpdateRequired on full Google Play x86_64 with
+hardware rendering, real bars, density 1 and zero IME insets; font scales are 1 and
+1.5 respectively. Before status insets were 35.5–36dp and pens 12dp; after they are
+47.5–48dp and 24dp. Connected stays 12dp; vertical errors are at most 0.5dp.
+Unscaled comparisons retain actual system-bar sidecars and align row bands/rule
+edges. Artwork masks differ by at most one pixel, exact primary tint remains,
+and caption/tree pixels are identical, preserving the existing 27/28px rhythm.
+This accepts control placement only, not unrelated whole-frame geometry.
+
+The [placement receipt](../../../app/src/androidTest/assets/design-1220/list/2419-placement-evidence.txt)
+retains source/APK/runtime identities and manifest hashes. Before source was
+`cb77d6804b52e804a70b6e409eeafa0b0daeea0c` with a test-only diff; after source was
+`9e32e7e9d811b81b2440786003a14d9b3c823b33`. Raw reports, captures, identities and
+unscaled comparisons were retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2419/builder-20261024/`.
+Earlier fixture failures and zero-execution attempts remain historical, not passes.
+The accepted verifier review of PR #2547 independently confirmed these measurements;
+other operating systems were outside this Linux ticket's scope.
 
 **Figma token deviation.** The frame binds the disconnected name to `Schemes/error-container`, which
 renders `#ffdad6` on the light scheme's near-white surface — legible against a dark background, illegible
