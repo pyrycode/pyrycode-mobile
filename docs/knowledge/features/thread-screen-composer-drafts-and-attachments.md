@@ -65,6 +65,14 @@ reappear after reconnect or switching back. The null-before-Offline and
 null-before-session-replacement regressions in `ThreadViewModelReplySuggestionTest`
 pin this ordering alongside stale-token rejection.
 
+Current-connection delivery alone therefore cannot prove that an offer is eligible
+to appear. The deterministic suggestion proof holds its original result and offer
+until the assistant reply recovers on a replacement connection, then releases them
+once; holding only the offer would start the daemon's post-result fallback window
+too early. Keep the product's same-revision suppression intact when testing this
+boundary. See the [controlled placeholder failure and release proof](../../e2e-interactive-stream.md#reply-suggestion-live-connection-observation-2436)
+for the distinction between delivery, observation and composer eligibility (#2436).
+
 A lower revision identifies a fresh daemon/connection lifetime under the
 [#1865 repository contract](conversation-repository.md). It resets that session's
 local suppression, allowing a restarted daemon's revision 1 after a suppressed
