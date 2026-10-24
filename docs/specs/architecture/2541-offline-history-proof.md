@@ -66,3 +66,26 @@ Recovery assessment `1e85e90ad0215155b10fe1e342449e51b9b44b238bf9a80d75053fa1da7
 The focused `RecoveryQueryAccountingTest` check passed 16/16 with zero failures/errors/skips; its original XML is retained separately. Early JVM XML was initially overwritten by the next Gradle selection before copying. Matching Gradle build-cache retrievals recovered the original one-method control and 21-method history-class XML with the same original timestamps, `2026-10-24T19:37:28.175Z` and `2026-10-24T19:42:02.863Z`. Those retrievals executed zero fresh tests and are not additional passing verification runs. The native attempt's original XML and full phone log were copied before subsequent work.
 
 Lint, debug APK assembly and instrumented Kotlin compilation passed for the retained diagnostic candidate. No complete configured gate, controlled red/green repair, final pre-verification or implementation PR is claimed.
+
+### 2026-10-24 — bounded sequence and input diagnostics
+
+The recovery-authorized nine-method Linux sequence passed 9/9 at integrated source
+`4e6e345ccba9d7791da69a1c9fedbd2eef2f6280`, with zero failures/errors/skips.
+The dispatcher had merged main before this continuation; the recovery helpers match
+candidate `4e0ae327dca008401a224d891cd3dc1ca228c3f2`. The added main code concerns
+conversation-list control placement. Raw TestRunner records establish all nine methods
+in the requested order in instrumentation process 3550. All nine older-page pulls
+completed with one accepted request, one certificate and advancing coverage. This is
+another passing diagnostic, not evidence of a repair or of suite-order independence.
+Raw XML, phone logs, source snapshots and built package identities are hash-verified at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2541/builder-recovery-linux-20261024/ui-mptrvh2c/`.
+
+Extend diagnostics through `OlderHistoryGesture` and the loading guard in `ThreadScreen`
+using debug-only, content-free lifecycle, movement, range and loading codes. Preserve
+their evaluation order and demand behavior. Add page-versus-catch-up counts to
+`DurableGapProof` so an extra automatic query can be distinguished from extra reader
+demand. No new state, types, signatures or failure branches are required. No in-flight
+numeric feature branch overlaps these files. This diagnostic expansion and the remaining
+single-defect regression/repair still fit the 1600-line scope boundary; do not select a
+repair until the failed condition is demonstrated. Run the gesture/history controls and
+the exact native method with these diagnostics, preserving each attempt separately.
