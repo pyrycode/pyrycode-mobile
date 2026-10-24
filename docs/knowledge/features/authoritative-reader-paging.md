@@ -45,6 +45,10 @@ retains the failed original file-bound measurements and source/capture identitie
 
 ## Approved-scope native validation
 
+The [file-fixture retention repair (#2508)](thread-screen-testing-saved-first-draw-comparisons.md#file-compatibility-fixture-retention-2508)
+records on-demand expected facts, native causal red/green proof and completed configured UI
+acceptance under the unchanged DB/file scope above.
+
 The [native benchmark receipts](authoritative-reader-native-benchmarks.md#approved-scope-native-validation)
 retain the approved DB first-draw/slow-control results and exact file compatibility checks.
 
