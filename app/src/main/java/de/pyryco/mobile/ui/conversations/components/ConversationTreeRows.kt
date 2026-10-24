@@ -26,9 +26,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Power
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,7 +39,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -233,8 +229,7 @@ fun TreeHostRow(
             Spacer(modifier = Modifier.width(4.dp))
             if (update != null) {
                 TreeRowControl(
-                    // Material's download, matched to the frame's `download-solid` arrow into a tray.
-                    painter = rememberVectorPainter(Icons.Filled.Download),
+                    painter = painterResource(R.drawable.ic_tree_update),
                     contentDescription = stringResource(R.string.cd_tree_host_update, bounded),
                     onClick = onReconnectTapped,
                     modifier = Modifier.testTag(treeHostUpdateTestTag(serverId)),
@@ -242,12 +237,13 @@ fun TreeHostRow(
                 )
             } else if (disconnected) {
                 TreeRowControl(
-                    // Retained mobile repair action; the reference has no disconnected-host variant.
-                    painter = rememberVectorPainter(Icons.Filled.Power),
+                    painter = painterResource(R.drawable.ic_tree_pair),
                     contentDescription = stringResource(R.string.cd_tree_host_reconnect, bounded),
                     onClick = onReconnectTapped,
                     modifier = Modifier.testTag(treeHostReconnectTestTag(serverId)),
                     height = TreeBandHeight,
+                    glyphWidth = 9.dp,
+                    glyphHeight = 10.8.dp,
                 )
             }
             if (onEditTapped != null) {
