@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
@@ -140,10 +141,15 @@ class SecondClientPeer(
         timeoutMs: Long,
     ) {
         awaiting("producer catch-up", timeoutMs) {
-            link.request("producer catch-up", resend = true) { live ->
-                if (!bindProduction(observation, live)) return@request RedialingLink.Attempt.Ended
-                val query = observation.queryIfCurrent() ?: return@request RedialingLink.Attempt.Ended
-                attempt(live, query.type, query.payload()) { id -> inReplyTo == id && observation.completed(id) }
+            while (true) {
+                val answer =
+                    link.request("producer catch-up", resend = true) { live ->
+                        if (!bindProduction(observation, live)) return@request RedialingLink.Attempt.Ended
+                        val query = observation.queryIfCurrent() ?: return@request RedialingLink.Attempt.Ended
+                        attempt(live, query.type, query.payload()) { id -> inReplyTo == id && observation.answered(id) }
+                    }
+                if (observation.completed(checkNotNull(answer.inReplyTo))) break
+                delay(50)
             }
         }
     }
