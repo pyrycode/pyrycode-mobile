@@ -77,7 +77,9 @@ internal data class AuthoritativeThreadSnapshot(
                         val held = get(child.id)
                         if ((get(owner.first)?.rev == owner.second || get(owner.first) != null && owner.first in detailValidity.children) &&
                             child.id !in retirements &&
-                            (held == null || held.parent == child.parent && held.kind == child.kind && child.rev > held.rev)
+                            (held == null ||
+                                held.parent == child.parent && held.kind == child.kind &&
+                                (child.rev > held.rev || child.rev == held.rev && held.summaryPayload == null))
                         ) {
                             put(child.id, child)
                         }
@@ -865,7 +867,7 @@ internal class AuthoritativeThreadStore {
                 completeCoverage = current.savedCoverage,
                 completedVersion = maxOf(current.completedVersion, version),
                 openingRows = current.openingRows?.plus(batch.items.flatMap { listOf(it.id to false, it.id to true) }),
-            ),
+            ).restoreDetailValidity(current.items, preserveStale = true),
         )
         RelayLog.i { "event=thread_store code=compact_batch" }
         return AuthoritativeThreadOutcome.Applied

@@ -119,8 +119,11 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
     )
 }
 
-/** Disk arrival cannot revoke a current query or let old full facts certify compact descendants. */
-internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(incoming: List<ThreadItemDto>): AuthoritativeThreadSnapshot {
+/** Saved facts cannot certify incompatible or newly known ancestry, or revoke current fetched work. */
+internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
+    incoming: List<ThreadItemDto>,
+    preserveStale: Boolean = false,
+): AuthoritativeThreadSnapshot {
     if (!compactSelected || incoming.isEmpty()) return this
     val full = items.associateBy { it.id }
     val descendants = expansionItems.groupBy { it.parent }
@@ -148,7 +151,8 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(incoming: List<Th
         detailValidity =
             detailValidity.copy(
                 staleFullBodies =
-                    (detailValidity.staleFullBodies - incoming.map { it.id }.toSet()) + restoredStale.associate { it.id to it.rev },
+                    (if (preserveStale) detailValidity.staleFullBodies else detailValidity.staleFullBodies - incoming.map { it.id }.toSet()) +
+                        restoredStale.associate { it.id to it.rev },
                 children = detailValidity.children + restoredStale.filter { it.id !in fetchedChildren }.map { it.id },
                 floors =
                     detailValidity.floors +
