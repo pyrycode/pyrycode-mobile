@@ -5,6 +5,8 @@
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: offered-file scenario, `restartApp`, `readyAttachmentRow`, `assertOpensAndSaves` and scroll helpers define the failing phase and three attachment consumers.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/ActivityIntentStub.kt`: `answer` and `onStartActivity` define intent interception and concurrent observation.
 - `app/src/androidTest/java/de/pyryco/mobile/recording/RecordedMobileSuiteTest.kt`: original native scenario delegation and rule ownership.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/QuestionAnswerPhone.kt`: existing geometry-aware physical target placement accounts for thread chrome before one gesture.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/AttachmentActionTarget.kt` and `AttachmentActionTargetTest.kt`: shared physical target seam and controlled restored-offer placement regressions.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageAttachments.kt`: deferred and retrieved rows share click semantics but different callbacks.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`: `onAttachmentRequested`, `claimAttachment` and `loadAttachment` distinguish request admission from retrieval completion.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/AttachmentActions.kt`: `rememberAttachmentActions` opens the source carried by a load event; `openAttachment` starts the external viewer.
@@ -53,3 +55,11 @@ Estimate remains approximately 600 written lines, no new exported production typ
 ## Open Questions
 
 - Which of click delivery, retrieval completion or intent interception explains the historical viewer timeout? Resolve with failing-phase evidence and a controlled regression; passing unchanged replays alone are insufficient.
+
+## Revisions
+
+### 2026-10-24 — isolate physical attachment placement
+
+The unchanged exact method passed 1/1 on macOS; a diagnostic-only execution also passed 1/1. Neither is repair evidence. The original helper used a physical center tap after semantic list placement. That placement does not account for the header and composer drawn over the list. `AttachmentActionTargetTest.restoredDeferredOffer_behindHeader_receivesOneOpenRequest` reproduces a composed, clickable deferred offer whose physical tap produces no request (1 executed, 1 failed, 0 skipped). Extract the existing target selection into `attachmentActionTarget` so the same seam is exercised by the native open/save helper and regression; repair it with the existing `questionAnswerTarget` geometry correction before a single gesture. Add a composer/save control as the second regression. No app code, intent monitor, recording bytes, consumption checks or deadlines change.
+
+The native controlled restart experiment and historical causal attribution remain pending at this revision. Keep pre-tap bounds and request/load/open phases, with resumed Activity and monitor counts sampled on timeout before cleanup. Restore the borrowed log sink on every exit. Raw evidence is retained under the agents repository's `logs/evidence/2526/builder-20261024/`.
