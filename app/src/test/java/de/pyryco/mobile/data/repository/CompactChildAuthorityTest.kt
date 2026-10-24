@@ -55,7 +55,8 @@ class CompactChildAuthorityTest {
     private suspend fun TestScope.prose(compact: Boolean) {
         val store = AuthoritativeThreadStore()
         val full = child()
-        store.establishComplete("h", "c", "e", 90, listOf(parent(), full), 0)
+        val expandableParent = ThreadItemDto.decode(JsonObject(parent().raw + ("detail_omitted" to JsonPrimitive(true))))
+        store.establishComplete("h", "c", "e", 90, listOf(expandableParent, full), 0)
         val f = CompactRootFixture(backgroundScope, store = store, compact = compact)
         f.repo.openAuthoritativeThread("c")
         runCurrent()
@@ -63,7 +64,7 @@ class CompactChildAuthorityTest {
             f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
             f.push(f.marker())
         } else {
-            f.push(JsonObject(f.batch(items = listOf(parent().raw, full.raw)).filterKeys { it !in setOf("headers", "projection") }))
+            f.push(JsonObject(f.batch(items = listOf(expandableParent.raw, full.raw)).filterKeys { it !in setOf("headers", "projection") }))
             f.push(JsonObject(f.marker().filterKeys { it != "projection" }))
         }
         runCurrent()
