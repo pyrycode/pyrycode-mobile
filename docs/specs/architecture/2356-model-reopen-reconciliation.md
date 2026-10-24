@@ -41,3 +41,27 @@ No new state. Reuse `cachedCertificationCannotReleaseAcquisitionDuringTheCurrent
 ## Documentation handoff
 
 Pending for the documentation stage: reconcile this ticket's diagnosis and acceptance in `docs/recorded-tests.md`, under “Shared current-query acquisition” and “Accepted shared-fixture evidence (#2505)”. Link the retained original failures and accepted repair evidence, state source/fixture differences and remaining historical uncertainty, and record counted focused/configured results with durable raw-artifact references. Documentation records supplied evidence; it does not produce missing acceptance.
+
+## Revisions
+
+### 2026-10-24: bounded configured-gate recovery
+
+The orchestrator returned the interrupted configured gate at `07bb54768067089f9cd7433b8472fb3c184c1ba3` for focused recovery. Its exact model method passed, but the reconnect-footer method timed out with replacement-source catch-up request 8/checkpoint 14 unmatched after request 4/checkpoint 0. Ping has no completed result. Preserve both failures and all earlier model evidence. Current repair base `cc381adc5397298adfbeda1a5a4a11b5073dd992` merges main without changing these scenarios, acquisition helpers, IME rule or recordings.
+
+Additional files read: `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn` still uses ungated `openChatRow`; `TestImeRule.select` performs shell reads and `waitForIdleSync`; `RecordedMobileSuiteTest` delegates the exact native methods. Existing acquisition controls demonstrate coalescing while a query is active and strict completion after it. QMD is unavailable; the recorded-test contract and repository feature topics supply the documentation search fallback.
+
+First reproduce the exact reconnect method unchanged. If the missing request and reading timeout share the existing acquisition mechanism, reuse `openChatRowAfterCurrentQuery` for this one reopen. Keep replacement repository identity assertions, genuine context readings, all request payloads and causal delivery intact. Reuse its single monotonic 30-second navigation/acquisition/completion budget. Add a focused replacement-source control for acquisition during versus after consumed completion; retiring an old fixture must not certify its replacement. Do not change production coalescing or recording bytes. A different causal seam requires scope reassessment.
+
+Investigate ping separately with its exact selector. Add content-free stage diagnostics and a single bounded delayed instrumentation/main-thread stack and IME-state sample around `TestImeRule.select`, without altering its work or deadlines. The diagnostic coroutine belongs to the call and is cancelled when selection returns. Do not repair IME or lifecycle behavior without a reproduced boundary. If isolation passes, request assessment of the retained interrupted-retrieval-to-ping sequence, preserving the original unfinished result. Wider execution and complete UI/scripted acceptance belong to the dispatcher.
+
+Scope forecast: 194 existing written lines plus at most 300 additional lines of test-only repair, controls, diagnostics and evidence. No production file, exported type, signature migration or new application reject branch. This is the bounded same-mechanism recovery authorized by the orchestrator; an independently useful different repair returns for assessment. Remote branches overlap `InteractiveStreamE2ETest` (#1682, #1689, #1690, #1691, #1693, #1695, #1766, #1869, #1879, #1947, #2009, #2032, #2052, #2057, #2088–#2092, #2098–#2100, #2102, #2104, #2112, #2114, #2117–#2119, #2138, #2139, #2175, #2311, #2462, #2490); keep edits local to the named scenario.
+
+Additional state transitions and checks:
+
+| Event | Focused check |
+| --- | --- |
+| Replacement source acquires during/after its query | Replacement acquisition control, existing before/after controls, exact reconnect native method |
+| Old source retires after replacement registration | Existing `oldFixtureTeardownPreservesReadyReplacement` and new replacement control |
+| IME selection starts, blocks or returns after recreation | Exact ping method with one delayed stack/IME sample and stage logs; no acceptance retry assumption |
+
+Run affected readiness/acquisition unit classes, the exact reconnect and ping native methods, and the model method after a shared scenario change. Retain all attempts with source/fixture hashes, raw XML/logcat, counted outcomes and cleanup results. Required lint/build/format and final pre-verify remain mandatory. Extend the pending documentation handoff with this interrupted configured result, the separate model pass, recovery evidence and any pending sequence assessment.
