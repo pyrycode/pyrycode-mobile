@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,6 +49,42 @@ class ProducerThreadObservationTest {
             target.sending(source, it)
             target.sent(source, it, true)
         }
+    }
+
+    @Test fun diagnosticIsPassiveAndDistinguishesRejectedPendingAndRetiredEvidence() {
+        val target = observer()
+        baseline(target)
+        val before = checkNotNull(target.evidence())
+        assertTrue(target.diagnostic().contains("rejected=false"))
+        assertTrue(target.diagnostic().contains("pending=false"))
+        assertSame(before.sourceSnapshot, checkNotNull(target.evidence()).sourceSnapshot)
+        val query = request(target)
+        assertTrue(target.diagnostic().contains("pending=true"))
+        assertNull(target.evidence())
+        target.received(
+            source,
+            Envelope(
+                999,
+                "error",
+                "",
+                buildJsonObject {
+                    put("code", "unavailable")
+                    put("message", "private-payload-never-log")
+                    put("retryable", true)
+                },
+                inReplyTo = query.id,
+            ),
+        )
+        val rejected = target.diagnostic()
+        assertTrue(rejected.contains("rejected=true"))
+        assertTrue(rejected.contains("rejection=query_failure"))
+        assertTrue(rejected.contains("retired=true"))
+        assertTrue(rejected.contains("pending=false"))
+        assertFalse(rejected.contains("private-payload-never-log"))
+        assertFalse(rejected.contains("host"))
+        assertFalse(rejected.contains("chat"))
+        assertNull(target.evidence())
+        assertFalse(target.completed(query.id))
     }
 
     private fun item(
