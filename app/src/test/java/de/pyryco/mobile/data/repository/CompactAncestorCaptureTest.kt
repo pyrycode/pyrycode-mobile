@@ -73,7 +73,7 @@ class CompactAncestorCaptureTest {
         val f = CompactRootFixture(backgroundScope)
         f.repo.openAuthoritativeThread("c")
         runCurrent()
-        val root = if (childPage) 10L else 100L
+        val root = if (childPage) 10L else 90L
         f.push(f.batch(headers = listOf(header(root, rev = 90, kind = "agent", facts = ",\"subtree_version\":90")), version = 90))
         f.push(f.marker(lower = root, upper = 101, version = 90))
         runCurrent()
