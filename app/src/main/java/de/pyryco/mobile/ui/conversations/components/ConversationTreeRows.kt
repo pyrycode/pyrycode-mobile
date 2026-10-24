@@ -256,6 +256,11 @@ fun TreeHostRow(
                     height = TreeBandHeight,
                 )
             }
+            // 672:3493 places the status/pen centers 48/24 dp inside the rule's right edge.
+            // Keep 15:8's accepted connected pen and the status-only share picker unchanged.
+            if (onEditTapped != null && connectionStatus.relay.isDisconnected()) {
+                Spacer(modifier = Modifier.width(12.dp))
+            }
         }
         if (update != null || daemonUpdate) {
             // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.
