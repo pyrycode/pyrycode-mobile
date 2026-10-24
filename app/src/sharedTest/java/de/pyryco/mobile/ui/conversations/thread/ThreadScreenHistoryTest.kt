@@ -456,6 +456,23 @@ class ThreadScreenHistoryTest {
     }
 
     @Test
+    fun proofPullRequestsOnceWhenImmediateArrivalExtendsTheScrollableContent() {
+        var count by mutableStateOf(30)
+        var asks = 0
+        val list =
+            setPrefetchList(27, count = { count }, onDemand = {
+                asks++
+                count += 25
+            })
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput { pullHistoryPage() }
+        composeRule.runOnIdle {
+            assertEquals("arrival extending the list cannot prolong the proof movement", 1, asks)
+            assertTrue("proof input has finished scrolling", !list.isScrollInProgress)
+            assertEquals(55, count)
+        }
+    }
+
+    @Test
     fun proofPullStopsBeforeTheDelayedPageArrives() {
         var count by mutableStateOf(30)
         var loading = false

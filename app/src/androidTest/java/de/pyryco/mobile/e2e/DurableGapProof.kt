@@ -209,6 +209,7 @@ internal class DurableGapProof(
                     rule.onNode(hasText(oldest.fullText) and bubble, useUnmergedTree = true).assertIsDisplayed()
                     assertEquals("revealing the supplied oldest row is inert", requests, AuthoritativeHistoryProbe.requests())
                     var lastProgress: String? = null
+
                     fun progress(stage: String) {
                         val observation = AuthoritativeHistoryProbe.snapshot()
                         val evidence = authoritativeEvidence()
