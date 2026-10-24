@@ -31,6 +31,7 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.design.PerTicketDeviceTest
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
@@ -100,6 +101,7 @@ class SidebarTreeCaptureTest {
 
     @Test fun enlargedTextAt412By892() = capture("emulator-412x892-large-text.png", 412, 892, 1.5f)
 
+    @PerTicketDeviceTest
     @Test fun compactCoordinateTapsOpenTheIntendedHostEditor() {
         shell("wm size 320x800")
         instrumentation.waitForIdleSync()

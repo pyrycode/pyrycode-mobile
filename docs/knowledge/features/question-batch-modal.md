@@ -449,7 +449,7 @@ question rows).
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) —
   `ComposerDraftStore`, the process-lifetime, app-scoped precedent `QuestionDraftStore` follows.
 - [Thread screen](thread-screen.md) — the screen this batch now renders inside; see § Placement above and
-  [Thread screen § Destination block](thread-screen.md#destination-block) for the current wiring.
+  [Thread screen § Destination block](thread-screen-wiring.md#destination-block) for the current wiring.
 - [Thread screen — list and status
   row](thread-screen-inline-question-reveal.md#inline-question-rows-and-the-newest-end-reveal-1305)
   — the prompt-row prefix in the oldest-end history predicate, the newest-end reveal effect, and the

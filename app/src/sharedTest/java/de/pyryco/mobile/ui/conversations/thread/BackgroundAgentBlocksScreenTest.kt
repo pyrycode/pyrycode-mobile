@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.AgentRunNavigationFamily
 import de.pyryco.mobile.e2e.assertFinishedAgentMarker
 import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.e2e.verifyAgentRunNavigation
@@ -400,6 +401,78 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
     }
 
+    @Test fun resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker() {
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(settled, collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var recovered = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = {
+                if (reset && !recovered) {
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                    recovered = true
+                    compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+                }
+                "a"
+            },
+        ) { sample ->
+            if ("stage=keyed-ready" in sample && !reset) {
+                reset = true
+                compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+            }
+        }
+        assertTrue("reset after atomic keyed reveal must be exercised", reset)
+        assertTrue("a new identity sample must recover the absent projection", recovered)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "revealing the finished marker must preserve collapsed child membership",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @Test fun resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent() {
+        mount(listOf(tool("a", "Agent"), launch(), finish(), user("Later")), collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var sampledAfterReset = false
+        assertThrows(ComposeTimeoutException::class.java) {
+            compose.assertFinishedAgentMarker(
+                "a",
+                ownedMarker,
+                "Agent finished",
+                readinessTimeoutMillis = 1_000,
+                resolveAgentId = {
+                    if (reset && !sampledAfterReset) {
+                        sampledAfterReset = true
+                        compose.runOnIdle {
+                            state = state.copy(items = listOf(tool("b", "Agent"), launch().copy(toolCallId = "b"), finish()))
+                        }
+                    }
+                    "a"
+                },
+            ) { sample ->
+                if ("stage=keyed-ready" in sample && !reset) {
+                    reset = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                }
+            }
+        }
+        assertTrue("the reset must follow successful keyed reveal", reset)
+        assertTrue("readiness must sample the replacement instead of failing an absent-list lookup", sampledAfterReset)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "the displayed finished Agent cannot substitute for the requested identity",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a") < 0,
+        )
+    }
+
     @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
         mount(
             listOf(
@@ -690,6 +763,84 @@ class BackgroundAgentBlocksScreenTest {
             },
         )
         assertTrue("the proof must observe the reset before restoring the exact Agent", resetObserved)
+    }
+
+    @Test fun generationAfterReadinessUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = true)
+    }
+
+    @Test fun generationDuringNavigationRevealUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = false)
+    }
+
+    private fun navigationAcrossGenerationReplacement(afterReadiness: Boolean) {
+        var agent = "a"
+        var run = "child"
+        var second = "child2"
+
+        fun paragraph() =
+            ThreadItem.MessageItem(Message("prose-$agent", "s", Role.Assistant, "Owned paragraph", ts, false, parentToolUseId = agent))
+
+        fun children() = listOf(run, second, "prose-$agent")
+
+        fun ownedText() = hasText("Owned paragraph") and hasAnyAncestor(hasTestTag("background-agent-child:$agent"))
+
+        fun family() = AgentRunNavigationFamily(agent, run, children(), ownedText(), ownedChildKey = "prose-$agent")
+
+        fun items() =
+            listOf(
+                tool(agent, "Agent"),
+                launch().copy(toolCallId = agent),
+                tool(run, "Read", agent),
+                tool(second, "Glob", agent),
+                paragraph(),
+                finish(),
+            ) +
+                (0 until 35).map { user("Later $it") }
+        mount(items(), collapsed = true, compact = true)
+        val initial = family()
+        var beforeNavigation = false
+        var replaced = false
+        var usedReplacement = false
+        compose.verifyAgentRunNavigation(
+            agentId = initial.agentId,
+            runId = initial.runId,
+            childIds = initial.childIds,
+            ownedChild = initial.ownedChild,
+            ownedChildKey = initial.ownedChildKey,
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            currentFamily = {
+                if (replaced) usedReplacement = true
+                family()
+            },
+            evidence = { sample ->
+                println(sample)
+                if (sample.startsWith("event=agent_run_proof stage=before-navigation")) beforeNavigation = true
+                val boundary =
+                    if (afterReadiness) {
+                        sample.startsWith("event=agent_run_readiness") && "ready=true" in sample
+                    } else {
+                        beforeNavigation && sample.startsWith("event=question_answer_reveal stage=before")
+                    }
+                if (boundary && !replaced) {
+                    replaced = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.waitForIdle()
+                    agent = "a-next"
+                    run = "child-next"
+                    second = "child2-next"
+                    compose.runOnIdle { state = state.copy(items = items(), hasMessages = true) }
+                    compose.waitForIdle()
+                    val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                    assertTrue("the retired family's marker must be absent", index("agent-start:a") < 0)
+                    assertTrue("the same raw owned family has its replacement marker", index("agent-start:$agent") >= 0)
+                }
+            },
+        )
+        assertTrue("replace the family at the selected proof boundary", replaced)
+        assertTrue("the proof must resolve the replacement instead of reusing retired identity", usedReplacement)
     }
 
     @Test fun missingListCannotPassTheAgentNavigationProof() {

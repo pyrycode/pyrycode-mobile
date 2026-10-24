@@ -268,9 +268,17 @@ internal fun ComposeTestRule.proveNegotiatedAgentRestart(
                         screenEvidence.retainsFinishedAgentPlacement(placementRoot, beforeAnchor, requireNotNull(currentAfter.fact)),
                     )
                 }
-                val indexForKey = onNode(hasScrollToNodeAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
-                indexes = listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
-                    currentAfter?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+                val indexForKey =
+                    onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes().singleOrNull()?.config?.let {
+                        it[SemanticsProperties.IndexForKey]
+                    }
+                indexes =
+                    if (indexForKey == null) {
+                        List(if (after == null) 2 else 3) { -1 }
+                    } else {
+                        listOf(indexForKey("msg:${root.message.id}"), indexForKey("msg:${before.message.id}")) +
+                            currentAfter?.let { listOf(indexForKey("msg:${it.message.id}")) }.orEmpty()
+                    }
             } else {
                 indexes = List(if (after == null) 2 else 3) { -1 }
             }

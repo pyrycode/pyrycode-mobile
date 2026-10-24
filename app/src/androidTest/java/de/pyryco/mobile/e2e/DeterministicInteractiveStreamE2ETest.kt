@@ -101,8 +101,8 @@ import org.koin.core.context.GlobalContext
  *  - `replay-order` (#477) — a sequence of events produced **entirely while the phone is offline**
  *    replays **in production order, each exactly once** after reconnect: the turn is held open, the
  *    link is severed, the ordered sequence accrues in the daemon's in-ring buffer during the outage
- *    (drop B fenced on the relay-logged phone-leg disconnect, not a 2nd send a severed phone cannot
- *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
+ *    (drop B released by the phone's explicit control after deliberate sever), then the link is
+ *    restored and the buffered sequence replays in order (see the method KDoc).
  *  - `refusal` (#1360) — a session-scoped `model_refusal_fallback` offers Switch back on its row; the tap
  *    writes the original model, the button goes, and a fresh settings reading names that model.
  *  - `mcp-failed` (#1457) — fakeclaude's first `mcp_status` answer names a `failed` server; the thread's
@@ -293,45 +293,102 @@ class DeterministicInteractiveStreamE2ETest {
 
     @Test
     fun interactiveTurn_directShareShortcut_stagesBeforeExplicitSend() {
-        arriveInSeededThread()
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val manager = context.getSystemService(ShortcutManager::class.java)
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { manager.dynamicShortcuts.any { it.shortLabel.toString() == SEED_CHANNEL_NAME } }
-        val shortcut = manager.dynamicShortcuts.single { it.shortLabel.toString() == SEED_CHANNEL_NAME }
-        val target =
-            requireNotNull(
-                NotificationTap
-                    .target(shortcut.intent),
-            )
-        composeTestRule.runOnUiThread {
-            context.startActivity(
-                android.content.Intent(context, MainActivity::class.java).apply {
-                    action = android.content.Intent.ACTION_SEND
-                    type = "text/plain"
-                    putExtra(android.content.Intent.EXTRA_TEXT, SEND_PROMPT)
-                    putExtra(android.content.Intent.EXTRA_SHORTCUT_ID, shortcut.id)
-                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                },
-            )
+        var stage = "launch"
+
+        fun mark(next: String) {
+            stage = next
+            android.util.Log.i("DirectShareProof", "event=direct_share_stage stage=$stage")
         }
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction() and hasText(SEND_PROMPT)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
-        val repository =
-            requireNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(target.serverId))
-        val evidence = harnessThreadEvidence(repository)
-        val before = runBlocking { evidence.observe(target.conversationId).first() }
-        assertTrue("nothing may be sent before the explicit tap", before.holdsNoUserMessage())
-        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
-        runBlocking {
-            withTimeout(REPLY_TIMEOUT_MS) {
-                evidence.observe(target.conversationId).first { it.ownedUserEcho(before.owner, SEND_PROMPT) != null }
+        try {
+            arriveInSeededThread()
+            mark("thread_open")
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val manager = context.getSystemService(ShortcutManager::class.java)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { manager.dynamicShortcuts.any { it.shortLabel.toString() == SEED_CHANNEL_NAME } }
+            val shortcut = manager.dynamicShortcuts.single { it.shortLabel.toString() == SEED_CHANNEL_NAME }
+            val target = requireNotNull(NotificationTap.target(shortcut.intent))
+            assertEquals(InstrumentationRegistry.getArguments().getString("serverId"), target.serverId)
+            mark("shortcut_published")
+            composeTestRule.runOnUiThread {
+                context.startActivity(
+                    android.content.Intent(context, MainActivity::class.java).apply {
+                        action = android.content.Intent.ACTION_SEND
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, SEND_PROMPT)
+                        putExtra(android.content.Intent.EXTRA_SHORTCUT_ID, shortcut.id)
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    },
+                )
             }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasSetTextAction() and hasText(SEND_PROMPT)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+            mark("prompt_staged")
+            val hosts = GlobalContext.get().get<HostConversationSource>()
+            val bundle =
+                requireNotNull(GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>().connectionFor(target.serverId))
+            val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(target.serverId, bundle)
+            val route = requireNotNull(repository.negotiatedThread)
+            val evidence = harnessThreadEvidence(repository)
+
+            fun current(observed: ThreadEvidence): Boolean {
+                val connection = hosts.repositoryFor(target.serverId) ?: return false
+                return observed.isCurrentDirectShareEvidence(
+                    target.serverId,
+                    target.conversationId,
+                    connection,
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection,
+                    route.store.current(target.serverId, target.conversationId),
+                ) &&
+                    connection === hosts.repositoryFor(target.serverId) &&
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === connection &&
+                    observed.sourceSnapshot === route.store.current(target.serverId, target.conversationId)
+            }
+
+            val before =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) { evidence.observe(target.conversationId).first(::current) }
+                }
+            assertTrue("nothing may be sent before the explicit tap", before.holdsNoUserMessage())
+            mark("unsent_admitted")
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            mark("send_tapped")
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
+            mark("reply_rendered")
+            // Reproduce the observed producer-gap retirement before checking delivery, on every run.
+            val retiring =
+                runBlocking {
+                    withTimeout(RECONNECT_TIMEOUT_MS) {
+                        val authenticated =
+                            bundle.coordinator.currentRepository.filterNotNull().first {
+                                hosts.repositoryFor(target.serverId) ===
+                                    it
+                            }
+                        bundle.supervisor.close()
+                        bundle.coordinator.currentRepository.first { it == null }
+                        bundle.supervisor.connect()
+                        bundle.coordinator.currentRepository.first { it != null && it !== authenticated }
+                        authenticated
+                    }
+                }
+            assertTrue("the pre-send observation cannot certify replacement delivery", !current(before))
+            mark("replacement_authenticated")
+            val after =
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        evidence.observe(target.conversationId).first { current(it) && it.ownedUserEcho(it.owner, SEND_PROMPT) != null }
+                    }
+                }
+            assertTrue("the echo belongs to the replacement source", after.owner.connection !== retiring)
+            composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
+            mark("echo_admitted")
+        } catch (failure: Throwable) {
+            android.util.Log.i("DirectShareProof", "event=direct_share_failed stage=$stage")
+            throw failure
         }
     }
 
@@ -436,52 +493,24 @@ class DeterministicInteractiveStreamE2ETest {
                     requireNotNull(args.getString("relayUrl")),
                     requireNotNull(args.getString("serverStaticPublicKey")),
                 ),
+                threadEnabled = true,
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            // This scripted fixture has no settings subscriber. Read the physical session through
-            // the existing correlated probe; create-conversation summaries intentionally omit it.
-            val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-            val session =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        SettingsReadProbe
-                            .read(
-                                repo as RemoteConversationRepository,
-                                conversation.id,
-                                { coordinator.currentRepository.value === repo },
-                                { coordinator.hostReadings.liveSessionBindings[conversation.id] },
-                            ).sessionId
-                            .also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
-                    }
-                }
-            val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
-            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
-            peer.replyObservation = observation
+            val observation = runBlocking { peer.observeProduction(conversation.id, THREAD_TIMEOUT_MS) }
             var produced: ProducedReplyEvidence? = null
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
                 runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
-                            }
-                        ) {
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
-                            }
-                        ) {
-                            delay(50)
-                        }
-                    }
-                    produced = checkNotNull(observation.produced()) { observation.producerState() }
-                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
+                    produced =
+                        observation
+                            .awaitReplyAfterPost(
+                                proof.lastOlderPost,
+                                REPLY_TIMEOUT_MS,
+                                catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
+                                send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
+                            ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
                 }
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
@@ -1068,13 +1097,12 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply() {
         arriveInSeededThread()
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val repository = requireNotNull(coordinator.currentRepository.value)
+        val hostRepository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(serverId)
+        val route = requireNotNull(hostRepository.negotiatedThread)
         runBlocking {
             var checkpoint = "conversation"
             var snapshotShape = "unobserved"
@@ -1088,7 +1116,20 @@ class DeterministicInteractiveStreamE2ETest {
                             .id
                     checkpoint = "held prefix"
                     val firstSent = repository.sendMessage(conversationId, SEND_PROMPT)
-                    val evidence = harnessThreadEvidence(repository)
+                    val evidence = harnessThreadEvidence(hostRepository)
+
+                    fun currentEvidence(observed: ThreadEvidence? = null): ThreadEvidence? {
+                        val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+                        val current = coordinator.currentRepository.value?.takeIf { it === supported } ?: return null
+                        val snapshot = route.store.current(serverId, conversationId)
+                        if (observed != null && !observed.isCurrentReplay(serverId, conversationId, current, snapshot)) return null
+                        val fresh = authoritativeThreadEvidence(serverId, conversationId, current, snapshot)
+                        return fresh.takeIf {
+                            fresh.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId)) &&
+                                coordinator.currentRepository.value === current &&
+                                (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current
+                        }
+                    }
                     val start = evidence.observe(conversationId).first { it.heldOpenReply(it.owner, STREAMED_PREFIX) != null }
                     val held = requireNotNull(start.heldOpenReply(start.owner, STREAMED_PREFIX))
                     val phoneDevice =
@@ -1141,22 +1182,65 @@ class DeterministicInteractiveStreamE2ETest {
                     )
                     evidence.observe(conversationId).first { it.holdsOpen(start.owner, held) }
                     checkpoint = "same reply completion"
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=queued_admitted")
                     DaemonFaultControl().releaseStream()
-                    val finished =
-                        evidence.observe(conversationId).first { current ->
-                            snapshotShape =
-                                current.records.joinToString { record ->
-                                    val message = record.message
-                                    "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
-                                        "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
-                                }
-                            !current.holdsOpen(start.owner, held) &&
-                                current.records.any { it.message.id == held.message.id && it.fullText == STREAMED_REPLY }
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=released")
+                    // Force the producer-gap retirement boundary before completion observation, every run.
+                    severAndRestoreLink()
+                    assertTrue(
+                        "the completion observer must follow a replacement source",
+                        coordinator.currentRepository.value !== start.owner.connection,
+                    )
+                    android.util.Log.i("QueuedEcho", "event=queued_reply_phase phase=replacement_authenticated")
+                    evidence.observe(conversationId).first { observed ->
+                        snapshotShape = "admitted=${observed.admitted};source_current=" +
+                            "${observed.owner.connection === coordinator.currentRepository.value};records=${observed.records.size}"
+                        val current = currentEvidence(observed) ?: return@first false
+                        snapshotShape =
+                            current.records.joinToString { record ->
+                                val message = record.message
+                                "${message.role}:${record.fullText.length}:${message.segment?.firstSeq}:${message.segment?.lastSeq}:" +
+                                    "${message.isStreaming}:${message.id == held.message.id}:${record.fact?.rev}"
+                            }
+                        val before = requireNotNull(start.sourceSnapshot)
+                        val snapshot = requireNotNull(current.sourceSnapshot)
+                        val original = requireNotNull(held.fact)
+                        val reply = current.records.singleOrNull { it.fact?.id == original.id }
+                        val fact = reply?.fact
+                        val accepted = snapshot.items.singleOrNull { it.id == queued.id }
+                        val senders =
+                            snapshot.items.count {
+                                val content = it.content as? kotlinx.serialization.json.JsonObject
+                                content?.get("message_id") == queuedContent["message_id"] &&
+                                    content?.get("device_id") == queuedContent["device_id"]
+                            }
+                        snapshotShape += ";document=${before.incarnation.isNotBlank()}:${before.incarnation == snapshot.incarnation}:" +
+                            "${before.epoch == snapshot.epoch}:${before.generation == snapshot.generation}" +
+                            ";reply=${fact?.session == original.session}:${fact?.turn == original.turn}:" +
+                            "${fact?.agent == original.agent}:${fact?.parent == original.parent}:${fact?.order == original.order}" +
+                            ";family=${current.settledReply(
+                                current.owner,
+                                requireNotNull(held.session),
+                                requireNotNull(held.turn),
+                            )?.size}" +
+                            ";queue=${accepted != null}:$senders:${accepted?.status == "delivered"}:" +
+                            "${(accepted?.content as? kotlinx.serialization.json.JsonObject)?.get("text") == queuedContent["text"]}"
+                        current.records.any {
+                            it.fact?.id == original.id && it.fullText == STREAMED_REPLY && !it.message.isStreaming
                         }
+                    }
+                    checkpoint = "rendered reply"
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.renderedReplyText(STREAMED_REPLY) == STREAMED_REPLY }
+                    // Rendering can publish more facts. Reconcile only freshly admitted current evidence.
+                    val fresh = requireNotNull(currentEvidence()) { "queued reply source retired during rendering" }
                     // The held item's one settled form, alone in its turn: no suffix row split it.
                     assertNotNull(
                         "the held reply must settle alone; shape=$snapshotShape",
-                        finished.settledHeldReply(start.owner, held, STREAMED_REPLY),
+                        fresh.settledQueuedReplyAfterRecovery(start, held, queued, STREAMED_REPLY, coordinator.currentRepository.value),
+                    )
+                    android.util.Log.i(
+                        "QueuedEcho",
+                        "event=queued_reply_phase phase=completed source_replaced=${fresh.owner.connection !== start.owner.connection}",
                     )
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -1334,6 +1418,7 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         val host = requireNotNull(InstrumentationRegistry.getArguments().getString(E2eTestApplication.ARG_SERVER_ID))
         val repository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(host)
+        val route = requireNotNull(repository.negotiatedThread)
         val conversationId =
             runBlocking {
                 repository
@@ -1479,7 +1564,7 @@ class DeterministicInteractiveStreamE2ETest {
                 runBlocking {
                     withTimeout(THREAD_TIMEOUT_MS) {
                         evidence.observe(conversationId).onEach { pendingSettlement = it }.first {
-                            it.settledAgentAfterRecovery(launched, family, "after1783") != null
+                            it.settledAgentAfterRecovery(launched, family, "after1783", route.support.value) != null
                         }
                     }
                 }
@@ -1525,7 +1610,7 @@ class DeterministicInteractiveStreamE2ETest {
                 }
                 throw failure
             }
-        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783"))
+        val owned = requireNotNull(settled.settledAgentAfterRecovery(launched, family, "after1783", route.support.value))
         val settledHeader = hasTestTag("background-agent:${owned.agentId}")
         val settledChild = hasTestTag("background-agent-child:${owned.agentId}")
         composeTestRule.questionAnswerTap(
@@ -1787,7 +1872,7 @@ class DeterministicInteractiveStreamE2ETest {
      * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, user echo then thinking) holds
      * the turn open on the 1st `send_message.enqueued`; the test then **severs** the link, the host drops
      * drop B (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fenced on the
-     * relay logging the phone-leg disconnect — so the whole sequence accrues in the daemon's in-ring
+     * explicit test control after deliberate close — so the whole sequence accrues in the daemon's in-ring
      * buffer **while the phone is offline** — and the test **restores** the link, on which the buffered
      * sequence (all `event_id` > the advertised `last_event_id`, #416) replays whole into the fresh,
      * empty repo, which folds the deltas in arrival (= production) order.
@@ -1813,52 +1898,90 @@ class DeterministicInteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect() {
-        arriveInSeededThread()
+        fun <T> phase(
+            name: String,
+            action: () -> T,
+        ): T {
+            android.util.Log.i("ReplayOrder", "event=replay_order_phase phase=$name completed=false")
+            return action().also { android.util.Log.i("ReplayOrder", "event=replay_order_phase phase=$name completed=true") }
+        }
+
+        phase("initial_readiness") { arriveInSeededThread() }
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString("serverId"))
+        val registry = GlobalContext.get().get<de.pyryco.mobile.di.RelayConnectionRegistry>()
+        val coordinator = requireNotNull(registry.connectionFor(serverId)).coordinator
+        val hostRepository = GlobalContext.get().get<de.pyryco.mobile.di.ThreadDestinationFactory>().repository(serverId)
+        val route = requireNotNull(hostRepository.negotiatedThread)
+        val conversationId =
+            phase("conversation_identity") {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        coordinator.currentRepository
+                            .firstOnLive({ it.observeConversations(ConversationFilter.All) }) { rows ->
+                                rows.any {
+                                    it.name ==
+                                        SEED_CHANNEL_NAME
+                                }
+                            }.single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    }
+                }
+            }
+
+        fun currentSource(evidence: ThreadEvidence): ThreadEvidence? {
+            val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+            val current = coordinator.currentRepository.value?.takeIf { it === supported } ?: return null
+            val snapshot = route.store.current(serverId, conversationId)
+            if (!evidence.isCurrentReplay(serverId, conversationId, current, snapshot)) return null
+            val fresh = authoritativeThreadEvidence(serverId, conversationId, current, snapshot)
+            return fresh.takeIf {
+                current === coordinator.currentRepository.value &&
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
+                    fresh.isCurrentReplay(serverId, conversationId, current, route.store.current(serverId, conversationId))
+            }
+        }
 
         // Message #1 → drop A → turn_state(thinking), held open. The spinner proves the turn is open and
         // streaming at the moment we sever; nothing renderable has arrived yet (no partial text by design).
         typeAndSend(SEND_PROMPT)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        phase("open_turn") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
         }
-        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
 
         // Sever the phone's relay link (daemon stays up, in-ring buffer intact). While the phone is offline
-        // the host drops the ordered sequence — fenced on the relay logging the phone-leg disconnect, since
-        // a severed phone cannot send a 2nd send_message — so it accrues in the buffer entirely during the
-        // outage. The bounded hold keeps the phone down until the producer has emitted.
-        severLink()
-        runBlocking { delay(OFFLINE_WINDOW_MS) }
+        // explicitly release the ordered sequence. An automatic producer-gap disconnect before the
+        // thinking assertion must not release it. The bounded hold retains the offline production window.
+        phase("sever") { severLink() }
+        phase("offline_release") { DaemonFaultControl().releaseStream() }
+        phase("offline_window") { runBlocking { delay(OFFLINE_WINDOW_MS) } }
 
         // Restore the link. The fresh Noise hello re-advertises last_event_id (#416); the buffered sequence
         // (all event_id > cursor) replays whole into the fresh empty repo, which folds the deltas in
         // arrival (= production) order.
-        restoreLink()
+        phase("restore") { restoreLink() }
 
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
+        phase("rendered_text") {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
+            }
         }
         // Prove exact text and the source's own identity too: a duplicated sequence within one row must fail.
         val evidence =
-            runBlocking {
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    val repository =
-                        requireNotNull(
-                            GlobalContext
-                                .get()
-                                .get<RelayRepositoryCoordinator>()
-                                .currentRepository.value,
-                        )
-                    val conversationId =
-                        repository
-                            .observeConversations(ConversationFilter.All)
-                            .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
-                            .single { it.name == SEED_CHANNEL_NAME }
-                            .id
-                    harnessThreadEvidence(repository).observe(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
+            phase("completed_current_source") {
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        harnessThreadEvidence(hostRepository).observe(conversationId).first {
+                            currentSource(it)?.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) == true
+                        }
+                    }
                 }
             }
-        composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
+        phase("ordered_identity_and_echo") {
+            composeTestRule.assertOrderedReplay(evidence, ORDERED_REPLY_SUBSTRING, SEND_PROMPT, refresh = ::currentSource)
+        }
     }
 
     /**
@@ -2080,7 +2203,7 @@ class DeterministicInteractiveStreamE2ETest {
         // restoreLink() so the ordered sequence is produced entirely while it is offline. NOT a
         // catch-a-transient delay — the buffered events are durable, so erring long is free; erring short
         // only under-exercises "entirely offline" without breaking the order/exactly-once verdict. Must
-        // exceed [relay disconnect-detect + watcher poll 0.5s + fakeclaude append + one producer tail
+        // exceed [explicit release + fakeclaude append + one producer tail
         // cycle]. Primary first-run tuning point — lengthen if the replay arrives as a live mix.
         const val OFFLINE_WINDOW_MS = 5_000L
 

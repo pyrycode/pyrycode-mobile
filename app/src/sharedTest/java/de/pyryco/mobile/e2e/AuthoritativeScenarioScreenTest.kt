@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
@@ -12,12 +13,17 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.ThreadItemDto
+import de.pyryco.mobile.data.repository.AuthoritativeThreadOutcome
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,9 +38,12 @@ class AuthoritativeScenarioScreenTest {
     private fun mount(
         items: List<ThreadItemDto>,
         collapseToolUses: Boolean = false,
+        snapshot: AuthoritativeThreadSnapshot = scenarioSnapshot(items),
+        onRendered: () -> Unit = {},
     ): ThreadEvidence {
-        val snapshot: AuthoritativeThreadSnapshot = scenarioSnapshot(items)
+        val evidence = authoritativeThreadEvidence("host", "conversation", Any(), snapshot)
         compose.setContent {
+            SideEffect { onRendered() }
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
@@ -51,12 +60,52 @@ class AuthoritativeScenarioScreenTest {
                 )
             }
         }
-        return authoritativeThreadEvidence("host", "conversation", Any(), snapshot)
+        return evidence
     }
 
     @Test fun recoveredReplayRendersAndSettlesInDaemonOrder() {
         val evidence = mount(replayScenarioItems())
         compose.assertOrderedReplay(evidence, "alpha bravo charlie", "hello")
+    }
+
+    @Test fun replayRefreshAcceptsSameDocumentAdvanceDuringRender() {
+        val store = AuthoritativeThreadStore()
+        val items = replayScenarioItems()
+        assertEquals(AuthoritativeThreadOutcome.Applied, store.establishComplete("host", "conversation", "epoch", 4, items, 0))
+        val beforeRender = store.current("host", "conversation")
+        val held =
+            mount(items, snapshot = beforeRender, onRendered = {
+                // Model a later producer/catch-up publication while the reply is being composed.
+                store.applyBatch("host", "conversation", "epoch", 5, emptyList(), 0)
+            })
+        var refreshed = false
+        compose.assertOrderedReplay(held, "alpha bravo charlie", "hello") { observed ->
+            val current = store.current("host", "conversation")
+            assertNotSame(beforeRender, current)
+            assertEquals(5L, current.completedVersion)
+            assertTrue(observed.isCurrentReplay("host", "conversation", held.owner.connection, current))
+            refreshed = true
+            authoritativeThreadEvidence("host", "conversation", held.owner.connection, current)
+        }
+        assertTrue("final proof must read current facts after synchronization", refreshed)
+    }
+
+    @Test fun replayRefreshRejectsNewDuplicateEchoDespiteCorrectOldFactsAndRender() {
+        val store = AuthoritativeThreadStore()
+        val items = replayScenarioItems()
+        store.establishComplete("host", "conversation", "epoch", 4, items, 0)
+        val beforeRender = store.current("host", "conversation")
+        val held =
+            mount(items, snapshot = beforeRender, onRendered = {
+                store.applyBatch("host", "conversation", "epoch", 5, listOf(scenarioUser(5, "hello")), 0)
+            })
+        val failure =
+            assertThrows(AssertionError::class.java) {
+                compose.assertOrderedReplay(held, "alpha bravo charlie", "hello") {
+                    authoritativeThreadEvidence("host", "conversation", held.owner.connection, store.current("host", "conversation"))
+                }
+            }
+        assertTrue("the fresh duplicate echo must cause the rejection", failure.message.orEmpty().contains("users=2"))
     }
 
     @Test fun reorderedRecoveredReplayFailsTheMigratedAssertion() {

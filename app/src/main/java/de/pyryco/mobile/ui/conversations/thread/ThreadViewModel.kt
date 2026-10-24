@@ -712,10 +712,85 @@ class ThreadViewModel(
 
     private val taskControlLock = Any()
     private val taskControls = MutableStateFlow(TaskControls())
+    private val bodyConsumer = Any()
+    private var bodyRelease: java.io.Closeable? = null
+    private var bodyConnection: Any? = null
+    private val childConsumer = Any()
+    private var childRelease: java.io.Closeable? = null
+    private var childConnection: Any? = null
+
+    private fun demandAgentChildren(event: ThreadEvent.AgentChildrenDemand) {
+        if (viewModelScope.coroutineContext[Job]?.isActive != true) return
+        val controls = taskControls.value
+        val p = event.presentation
+        val route = negotiated ?: return
+        if (controls.authoritative !== p ||
+            controls.authoritativeBinding !== event.binding ||
+            p.host != serverId ||
+            p.conversation != conversationId
+        ) {
+            return
+        }
+        val connection = (route.support.value as? ThreadSupport.Supported)?.connection
+        if (connection == null || event.keys.isEmpty()) {
+            childRelease?.close()
+            childRelease = null
+            childConnection = null
+            return
+        }
+        if (p.sourceConnection !== connection) return
+        val current = route.store.current(serverId, conversationId) === p.sourceSnapshot
+        if (childConnection !== connection) childRelease?.close()
+        val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
+
+        fun target(key: String?) = key?.takeIf { current && it in event.keys }?.let { p.bodyItem(it)?.id }
+        childRelease =
+            route.children(conversationId, connection, childConsumer, p.sourceSnapshot, ids, target(event.retry), target(event.more))
+                ?: childRelease
+        childConnection = connection
+    }
+
+    private fun demandToolBodies(event: ThreadEvent.ToolBodyDemand) {
+        if (viewModelScope.coroutineContext[Job]?.isActive != true) return
+        val controls = taskControls.value
+        val p = event.presentation
+        val route = negotiated ?: return
+        if (controls.authoritative !== p ||
+            controls.authoritativeBinding !== event.binding ||
+            p.host != serverId ||
+            p.conversation != conversationId
+        ) {
+            return
+        }
+        val connection = (route.support.value as? ThreadSupport.Supported)?.connection
+        if (connection == null || event.keys.isEmpty()) {
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
+            return
+        }
+        if (p.sourceConnection !== connection) return
+        // The lane applies stale-snapshot withdrawals before requiring freshness for additions.
+        val current = route.store.current(serverId, conversationId) === p.sourceSnapshot
+        if (bodyConnection !== connection) bodyRelease?.close()
+        val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
+        bodyRelease = route.bodies(
+            conversationId,
+            connection,
+            bodyConsumer,
+            p.sourceSnapshot,
+            ids,
+            event.retry?.takeIf { current && it in event.keys }?.let { p.bodyItem(it)?.id },
+        ) ?: bodyRelease
+        bodyConnection = connection
+    }
+
     private val taskStopAttempts = mutableMapOf<String, Any>()
     private val taskStopOwners = mutableMapOf<String, String?>()
 
     init {
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion { bodyRelease?.close() }
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion { childRelease?.close() }
         viewModelScope.launch {
             backgroundTaskStopRefusals(conversationId).collect { taskId ->
                 synchronized(taskControlLock) {
@@ -779,6 +854,12 @@ class ThreadViewModel(
             val old = taskControls.value
             // A fresh lambda can publish to this same owner before its predecessor retires.
             if (old.authoritativeBinding !== binding) return
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
+            childRelease?.close()
+            childRelease = null
+            childConnection = null
             taskStopAttempts.clear()
             taskStopOwners.clear()
             publishTaskControls(old.copy(authoritative = null, authoritativeBinding = null))
@@ -904,7 +985,13 @@ class ThreadViewModel(
                             combine(snapshots, progress) { snapshot, reading ->
                                 withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
                                     // An empty epoch can still carry scoped local Sending feedback.
-                                    projectDeferredAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                    projectDeferredAuthoritativeThread(
+                                        route.host,
+                                        conversationId,
+                                        snapshot,
+                                        reading,
+                                        sourceConnection = (support as? ThreadSupport.Supported)?.connection,
+                                    )
                                 }
                             }.paceThreadContent(contentScheduling),
                         )
@@ -3108,6 +3195,7 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.AgentChildrenDemand -> demandAgentChildren(event)
             ThreadEvent.AgentSwitchConfirm -> confirmAgentSwitch()
             ThreadEvent.AgentSwitchDismiss -> dismissAgentSwitch()
             is ThreadEvent.NewestContentPresented -> {
@@ -3148,6 +3236,7 @@ class ThreadViewModel(
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
             is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.ToolBodyDemand -> demandToolBodies(event)
             is ThreadEvent.AuthoritativeQueueAction -> {
                 val presentation = taskControls.value.authoritative
                 if (presentation?.host != serverId || presentation.conversation != conversationId) return

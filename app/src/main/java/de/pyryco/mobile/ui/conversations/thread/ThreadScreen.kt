@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -226,6 +228,44 @@ private class AuthoritativeThreadActionPublisher {
     )
 
     private var published: Binding? = null
+    private var bodyKeys: Set<String> = emptySet()
+    private var childKeys: Set<String> = emptySet()
+
+    fun demandChildren(
+        presentation: AuthoritativeThreadPresentation,
+        keys: Set<String>,
+        retry: String? = null,
+        more: String? = null,
+    ) {
+        val binding = published?.takeIf { it.presentation === presentation } ?: return
+        childKeys = keys
+        binding.receiver(ThreadEvent.AgentChildrenDemand(presentation, keys, binding.token, retry, more))
+    }
+
+    fun childrenAction(
+        presentation: AuthoritativeThreadPresentation,
+        key: String,
+        retry: Boolean,
+    ) {
+        if (key in childKeys) demandChildren(presentation, childKeys, retry = key.takeIf { retry }, more = key.takeUnless { retry })
+    }
+
+    fun demandBodies(
+        presentation: AuthoritativeThreadPresentation,
+        keys: Set<String>,
+        retry: String? = null,
+    ) {
+        val binding = published?.takeIf { it.presentation === presentation } ?: return
+        bodyKeys = keys
+        binding.receiver(ThreadEvent.ToolBodyDemand(presentation, keys, binding.token, retry))
+    }
+
+    fun retryBody(
+        presentation: AuthoritativeThreadPresentation,
+        key: String,
+    ) {
+        if (key in bodyKeys) demandBodies(presentation, bodyKeys, key)
+    }
 
     fun present(
         presentation: AuthoritativeThreadPresentation?,
@@ -741,6 +781,8 @@ fun ThreadScreen(
                         val folded = if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
                         authoritative?.demandRows(folded, expandedTools) ?: folded
                     }
+                val childControls =
+                    remember(authoritative, rows, expandedTools) { authoritative?.childControls(rows, expandedTools).orEmpty() }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
                 // hasMessages already covers that case.
@@ -782,6 +824,59 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(authoritative, state.items) { authoritative?.depths ?: toolNestingDepths(state.items) }
                         val listState = key(interactionScope) { rememberLazyListState() }
+                        val bodyPresentation by rememberUpdatedState(authoritative)
+                        val bodyRows by rememberUpdatedState(rows)
+                        val bodyConnected by rememberUpdatedState(connected)
+                        val visibleChildControls by rememberUpdatedState(childControls)
+                        LaunchedEffect(listState, destinationLifecycle) {
+                            destinationLifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                                try {
+                                    snapshotFlow {
+                                        val p = bodyPresentation
+                                        val visibleKeys = listState.layoutInfo.visibleItemsInfo.mapTo(HashSet()) { it.key }
+                                        val keys =
+                                            if (!bodyConnected ||
+                                                p == null
+                                            ) {
+                                                emptySet()
+                                            } else {
+                                                bodyRows
+                                                    .filterIsInstance<ThreadRow.Delivered>()
+                                                    .filter { row ->
+                                                        row.listKey(0) in visibleKeys &&
+                                                            ((row.item as? ThreadItem.MessageItem)?.message?.id in expandedTools) &&
+                                                            p.bodyItem(row.listKey(0)) != null
+                                                    }.mapTo(mutableSetOf()) { it.listKey(0) }
+                                            }
+                                        val children =
+                                            if (!bodyConnected || p == null) {
+                                                emptySet()
+                                            } else {
+                                                val expanded =
+                                                    bodyRows
+                                                        .filterIsInstance<ThreadRow.Delivered>()
+                                                        .filter {
+                                                            it.listKey(0) in visibleKeys &&
+                                                                (it.item as? ThreadItem.MessageItem)?.message?.id in expandedTools &&
+                                                                p.childParent(it.listKey(0)) != null
+                                                        }.map { it.listKey(0) }
+                                                (expanded + visibleChildControls.filterKeys { it in visibleKeys }.values.flatten()).toSet()
+                                            }
+                                        Triple(p, keys, children)
+                                    }.collect { (p, keys, children) ->
+                                        if (p != null) {
+                                            actionPublisher.demandChildren(p, children)
+                                            actionPublisher.demandBodies(p, keys)
+                                        }
+                                    }
+                                } finally {
+                                    bodyPresentation?.let {
+                                        actionPublisher.demandChildren(it, emptySet())
+                                        actionPublisher.demandBodies(it, emptySet())
+                                    }
+                                }
+                            }
+                        }
                         val readerViewport = remember(listState) { ThreadListViewport(listState) }
                         val compositionObserver = LocalThreadListCompositionObserver.current
                         SideEffect { compositionObserver?.invoke(listState) }
@@ -962,7 +1057,24 @@ fun ThreadScreen(
                                 (row as? ThreadRow.Delivered)?.agentBlockId?.takeIf { toolId != null && it != toolId }
                             val toolExpansion =
                                 toolId?.let { id ->
-                                    ToolCallExpansion(id in expandedTools) {
+                                    val source = authoritative?.bodyItem(row.listKey(0))
+                                    ToolCallExpansion(
+                                        id in expandedTools,
+                                        missingBody = authoritative?.missingBody(row.listKey(0)) == true,
+                                        retainedBody =
+                                            source?.let { it.hasToolBody || authoritative.sourceSnapshot.retainedBody(it) != null } == true,
+                                        bodyLoad = source?.let { authoritative.sourceSnapshot.bodyLoads[it.id to it.rev] },
+                                        offline = !connected,
+                                        retry = { authoritative?.let { actionPublisher.retryBody(it, row.listKey(0)) } },
+                                        headline =
+                                            source?.raw?.get("headline")?.let {
+                                                (it as? kotlinx.serialization.json.JsonPrimitive)
+                                                    ?.takeIf { value ->
+                                                        value.isString
+                                                    }?.content
+                                                    ?.take(400)
+                                            },
+                                    ) {
                                         expandedTools =
                                             if (id in expandedTools) expandedTools - id else expandedTools + id
                                     }
@@ -1130,6 +1242,17 @@ fun ThreadScreen(
                                                 modifier = Modifier.padding(horizontal = MessageContentGutter),
                                             )
                                         }
+                                }
+                                if (authoritative != null) {
+                                    childControls[row.listKey(0)].orEmpty().forEach { parentKey ->
+                                        AgentChildrenControl(
+                                            authoritative,
+                                            parentKey,
+                                            connected,
+                                            retry = { actionPublisher.childrenAction(authoritative, parentKey, true) },
+                                            more = { actionPublisher.childrenAction(authoritative, parentKey, false) },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1574,6 +1697,42 @@ private fun AuthoritativeSummaryRow(summary: String) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
+    }
+}
+
+@Composable
+private fun AgentChildrenControl(
+    p: AuthoritativeThreadPresentation,
+    key: String,
+    connected: Boolean,
+    retry: () -> Unit,
+    more: () -> Unit,
+) {
+    val parent = p.childParent(key) ?: return
+    val page = p.sourceSnapshot.retainedChildren(parent)
+    val valid = p.sourceSnapshot.hasChildPage(parent)
+    val load = p.sourceSnapshot.childLoads[parent.id to parent.rev]
+    Column(Modifier.padding(horizontal = MessageContentGutter).testTag("agent-children:${parent.id}")) {
+        val label =
+            when {
+                !connected && (!valid || page?.cursor != null) -> R.string.agent_children_offline
+                load == de.pyryco.mobile.data.repository.BodyLoad.Retry -> R.string.agent_children_failed
+                load == de.pyryco.mobile.data.repository.BodyLoad.Loading || !valid -> R.string.agent_children_loading
+                page?.items?.isEmpty() == true -> R.string.agent_children_empty
+                else -> null
+            }
+        label?.let {
+            Text(
+                stringResource(it),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (connected && load == de.pyryco.mobile.data.repository.BodyLoad.Retry) {
+            androidx.compose.material3.TextButton(onClick = retry) { Text(stringResource(R.string.tool_body_retry)) }
+        } else if (connected && valid && load == null && page?.cursor != null) {
+            androidx.compose.material3.TextButton(onClick = more) { Text(stringResource(R.string.agent_children_more)) }
+        }
     }
 }
 

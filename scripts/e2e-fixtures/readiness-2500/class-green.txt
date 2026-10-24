@@ -1,0 +1,17 @@
+test_early_exit_reports_exit (test_e2e_daemon_fault.GenerationReadinessTest.test_early_exit_reports_exit) ... ok
+test_exited_generation_token_cannot_qualify_successor (test_e2e_daemon_fault.GenerationReadinessTest.test_exited_generation_token_cannot_qualify_successor) ... ok
+test_initial_unready_child_cannot_succeed (test_e2e_daemon_fault.GenerationReadinessTest.test_initial_unready_child_cannot_succeed) ... ok
+test_late_readiness_qualifies_only_the_same_living_generation (test_e2e_daemon_fault.GenerationReadinessTest.test_late_readiness_qualifies_only_the_same_living_generation) ... ok
+test_no_token_mode_preserves_owned_process_only (test_e2e_daemon_fault.GenerationReadinessTest.test_no_token_mode_preserves_owned_process_only) ... ok
+test_ready_start_is_idempotent (test_e2e_daemon_fault.GenerationReadinessTest.test_ready_start_is_idempotent) ... ok
+test_registration_token_across_chunks (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks) ... ok
+test_registration_token_across_chunks_after_delayed_startup (test_e2e_daemon_fault.GenerationReadinessTest.test_registration_token_across_chunks_after_delayed_startup) ... ok
+test_spawn_failure_is_not_an_exit_of_the_new_generation (test_e2e_daemon_fault.GenerationReadinessTest.test_spawn_failure_is_not_an_exit_of_the_new_generation) ... ok
+test_stopped_generation_token_cannot_qualify_successor (test_e2e_daemon_fault.GenerationReadinessTest.test_stopped_generation_token_cannot_qualify_successor) ... ok
+test_success_snapshot_cannot_report_an_exited_or_unready_child (test_e2e_daemon_fault.GenerationReadinessTest.test_success_snapshot_cannot_report_an_exited_or_unready_child) ... ok
+test_timeout_then_start_remains_unready_without_duplicate_child (test_e2e_daemon_fault.GenerationReadinessTest.test_timeout_then_start_remains_unready_without_duplicate_child) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 4.673s
+
+OK

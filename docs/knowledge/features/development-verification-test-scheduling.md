@@ -466,6 +466,72 @@ it can still cut in. Fairness holds only among ticketed waiters. `DeviceHoldTest
 covers arrival order, a dead waiter's ticket, a lost ticket counter and an old
 poller mixed with ticketed waiters, all with real second processes.
 
+### Direct Share evidence across connection replacement (#2498)
+
+A rendered reply and its daemon read mark can belong to a replacement connection
+while an assertion against the earlier concrete repository waits until timeout.
+`HostConversationSource.repositoryFor` supplies current availability; capturing it
+before Send does not retain the destination across reconnect. Cleanup-time launcher
+focus cannot establish activity loss or identify the failing operation. The
+[controlled native failure and counted recovery](../../e2e-interactive-stream.md#direct-share-replacement-evidence-2498)
+correlate this boundary with the retained #2486/#2439 failures and passing reruns.
+
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+resolves the exact published shortcut's host/conversation through
+`ThreadDestinationFactory` and observes its retained negotiated route through
+`harnessThreadEvidence`. Before Send, wait for admitted evidence within the existing
+thread deadline, then require no user message. An unadmitted observation cannot
+prove an empty thread. After the reply renders, the scenario closes/reconnects its
+own host supervisor and requires a different authenticated source before accepting
+the delivered echo. This controlled retirement remains in every invocation; it
+introduces no resend, test retry or longer deadline.
+
+`isCurrentDirectShareEvidence` requires authoritative admitted evidence for the
+exact target, a nonnull current authenticated connection identical to the evidence
+owner and route's supported connection, and the store's current snapshot by
+identity, epoch and generation. The native acceptance check rechecks source,
+support and snapshot after evaluating the predicate. Validate exactly one delivered
+exact-text user echo against the fresh observation's own owner, rather than the
+pre-send owner. Equal snapshot contents, retired connections and unsupported
+routes cannot certify even an empty thread.
+
+`DirectShareEvidenceTest` covers replacement ownership, retired/unsupported sources,
+unadmitted/wrong-target/stale snapshots, and exact single delivered echo semantics.
+Its four methods passed in the focused Linux run and the configured JVM gate.
+The native scenario separately proves actual shortcut publication, intent delivery,
+exact composer staging without the picker, explicit Send and rendered reply.
+Bounded diagnostics emit static stages and admission/source booleans only, retain
+the original failure, and exclude authored content and pairing material.
+
+### Terminal replay producer lifetime (#2491)
+
+Keep the successful recorded Activity alive beyond test-end when the tape still requires
+queries, replies or scenario-complete. Run the real session end once while it is alive,
+then prepare the captured terminal prefix and downstream consumption before destruction.
+Whether scenario-complete precedes phone close is a recorded fact; retain either order.
+An early checkpoint is remembered only after its actual successful send. Outer cleanup
+still handles failures and releases replacement Activities once.
+
+One shared 30-second budget covers terminal preparation across observations. Re-entering
+individually bounded waits must not restart it. Repeated requests need their distinct
+correlated replies; foreign owners/generations or work crossing an observation cannot
+satisfy the prefix. Keep the first scenario/preparation failure when destruction fails,
+and reset end/failure state between evaluations. Changing production lifecycle behavior
+or the recording would hide this harness defect.
+
+The retained causal controls failed before repair; 95 affected JVM tests and the exact
+recorded Agent method passed on macOS at `00055df35`. Independent review then accepted
+integrated candidate `eb99f99da`: 220 script and 5411 JVM passes, including all eight
+terminal regression methods, and 24 scripted passes. The original complete UI run
+executed 333: 327 passed and six unrelated tests failed, with one additional ignored
+test. All six failures passed their exact rerun; the dispatcher accepted that gate
+under its flaky-rerun policy. The exact Agent method passed in the original full run
+(1 executed/passed, zero failures/errors/skips), independently of its retained focused pass.
+See [terminal preparation and counted evidence](../../recorded-tests.md#recorded-terminal-preparation-2491)
+for original source/APK identities, distinct pre/post-test-end failures, the shared-budget
+negative and accepted evidence. Historical reds remain failed; replay makes no claim
+about current provider behavior. Linux is outside this macOS ticket's verification scope.
+
 ### Background permission replay consumption (#2348)
 
 The original macOS main sweep on `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`
@@ -553,69 +619,33 @@ unchanged notification post time after the second reconnect, resolution and clea
 Replay supplies no new FCM, encryption or transport-timing certification. Linux was
 outside this macOS ticket's verification scope.
 
-### Stream report execution ownership (#2455)
+### Scenario report execution ownership
 
-`scripts/e2e-stream-scenarios.py` clears pre-existing `TEST-*.xml` within the
-selected device report directory immediately before each scenario subprocess,
-then collects all matching XML without comparing mtimes. Existing host/device
-admission supplies exclusive execution ownership; the original
-`PYRY_TEST_ADMISSION_FD` is still forwarded. Do not widen cleanup to other device
-paths or replace it with a timestamp tolerance: even future-dated old XML cannot
-satisfy a new execution, and a genuinely new report can predate the launch clock.
+[Stream and background-Agent report ownership](development-verification-report-ownership.md)
+covers selected-directory cleanup, timestamp-independent collection, strict
+per-execution accounting, retained original XML and the counted causal evidence
+for #2455 and #2481.
 
-Each execution must produce exactly one testcase with the expected class and
-method, without failure, error or skip. Missing, zero-count and wrong-identity
-reports remain unsuccessful, as does a nonzero child status despite passing XML.
-Copy collected XML to temporary retention and remove its original before the
-next launch can reuse `TEST-run.xml`; per-scenario archives live under
-`build/dispatcher-tests/stream-methods/run-*/`. The `finally` restoration returns
-already collected reports to the selected report directory on normal completion
-or interruption. This preserves the first outcome when the second launch writes
-nothing or interrupts; it does not claim to collect unfinished child output.
+### Subprocess startup and chunk-scanner proofs
 
-`StreamScenarioReportsTest.run_cases` controls the launch clock at
-2,000,000,000 ns and the first report mtime at 1,000,000,000 ns. With the second
-mtime at 3,000,000,000 ns, the old filter omits the first XML without copying or
-removing it; the next writer overwrites that filename. The deterministic
-`test_earlier_report_mtime_keeps_both_independent_outcomes` reproduces `2 != 1`,
-including passing-first/skipped-second. Both-older reports, future-dated stale XML,
-missing second output, interruption, invalid outcomes and admission forwarding
-are also covered, with exact archive/restored bytes checked. This proves a causal
-loss mechanism, not the originating Linux host's actual clock behavior.
+Keep synthetic child startup outside a short scanner deadline. In #2500,
+`GenerationReadinessTest.test_registration_token_across_chunks` could spend its
+250 ms readiness budget before the child wrote anything. A controlled 750 ms
+startup delay reproduced HTTP 503 with `registration_timeout`, a living child
+and zero output bytes. A cold focused pass alone could not expose that race.
 
-[PR #2457's accepted verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2457#issuecomment-6335301526)
-retains these distinct results. Builder runs used macOS Darwin 25.6.0 arm64 and
-`python3 -m unittest -v scripts.test_e2e_stream_scenarios.StreamScenarioReportsTest`:
+Both that method and `test_registration_token_across_chunks_after_delayed_startup`
+now wait boundedly for exactly 4096 fixture bytes: 4090 padding bytes plus
+`relay:`. They require incomplete-token rejection before releasing the suffix,
+then wait for all 4113 bytes and require HTTP 200 with the same living PID and
+generation. Each output wait has a five-second monotonic bound; the controller's
+250 ms test deadline and owned-child cleanup remain intact. Do not replace this
+with a longer controller timeout or remove the padding: the scanner must still
+carry the token prefix across its real read boundary.
 
-| Run | Revision | Executed | Passed methods | Failure records | Errors | Skipped |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Controlled red, unchanged production | `3869d7289281bf848820fc7cd848f5a6b98c1b48` | 8 | 5 | 6 across 3 methods | 0 | 0 |
-| Focused green | `1a4eeeb9f1db272a48860e8837f01b0b4802b2ce` | 8 | 8 | 0 | 0 | 0 |
-
-The raw logs were `/tmp/builder-2455/checks/controlled-red.log` and
-`controlled-green.log`, SHA-256 respectively
-`3982bb5cf87d23e3891e89eb137e09f1f5b70f53cf3978018ff60ccd085f5db2` and
-`97d0bdead2b1004a8d0d325ac3f6b33a8bab13bef27f80b1c7ab747703616292`.
-These are retained-file locations at review time, not promises of permanent storage.
-
-At the green revision, completed dispatcher macOS gates supersede the PR body's
-pending-gates statement: scripts discovery executed/passed 214, JVM with build
-checks executed/passed 5,259, and `scripted-all` executed/passed 24; each had zero
-failures, errors or skips. The scripts raw report is
-`verifier-gate_#2455_3.stderr.log` in verifier evidence run
-`e1b2d3f14106d6804577dc06bee73da184d85deb75c28a72c03d438b2f896c5c`.
-The verifier confirmed both independent deterministic stream methods in the full
-scripted run. Pre-verify and docs guard passed. The configured UI command skipped
-this scripts-only branch and executed no UI tests; no UI pass is claimed.
-
-The original Linux scripts gate at `544fca1f7721f5ddf2a4092efd738251fb017958`
-remains failed: 211 executed, one failure, zero errors/skips, in
-`test_a_skipped_twin_cannot_count_as_success`. The identical focused failure on
-merged main `206eb3927d29819b7b2ff11cad760c6e5dcaa192` occurred on execution 50
-after 49 passes; those passes do not replace it. Original evidence is ticket
-\#2373 / PR #2454, run
-`36c833f91ea567fc3a3247bef09ab2e54ad5deceb4393bbf2bf4be0c9dde1fec`, bundle digest
-`3b3d6332da7e1f8389f0bc44ec127dfa8d603fca3cd6e7deb1fd8e35d90bda9f`,
-`logs/verifier-gate__2373_3.stderr.log`. The restricted-sandbox full baseline is
-non-authoritative. Linux is outside this macOS ticket's verification scope;
-PR #2454's Agent acceptance remains independent.
+Retain byte counts alongside controller phase, identity and liveness. Removing
+suffix carry in a temporary controller copy made the repaired proof fail with
+all 4113 bytes present, distinguishing scanner failure from the zero-byte startup
+failure. The [retained experiments](../../../scripts/e2e-fixtures/readiness-2500/evidence.json)
+include commands, revisions, raw exchanges, child output and hashes; see
+[counted acceptance and historical limits](../../e2e-interactive-stream.md#chunked-registration-proof-2500).

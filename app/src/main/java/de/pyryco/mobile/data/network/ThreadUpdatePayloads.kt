@@ -19,6 +19,8 @@ internal const val TYPE_THREAD_TEXT_APPEND = "thread_text_append"
 internal class ThreadItemDto private constructor(
     val raw: JsonObject,
     optionalFields: JsonObject = raw,
+    /** Original expansion summary payload, before adapting it to a full item's presentation shape. */
+    val summaryPayload: JsonObject? = null,
 ) {
     val id: Long = raw.threadInteger("id")
     val kind: String = raw.threadString("kind")
@@ -36,6 +38,7 @@ internal class ThreadItemDto private constructor(
     val summary: String = raw.threadString("summary")
     val subtype: String? = optionalFields.optionalString("subtype")
     val content: JsonElement = requireNotNull(raw["content"])
+    val hasToolBody: Boolean get() = raw["detail_omitted"] != JsonPrimitive(true) && content is JsonObject
 
     override fun toString(): String = "ThreadItemDto(content=***)"
 
@@ -43,6 +46,11 @@ internal class ThreadItemDto private constructor(
         private val replacementOptionalKeys = setOf("order", "ended_order", "session", "agent", "no_child", "turn", "parent", "subtype")
 
         internal fun decode(raw: JsonObject): ThreadItemDto = ThreadItemDto(raw)
+
+        internal fun decodeSummary(raw: JsonObject): ThreadItemDto {
+            val adapted = JsonObject(raw + mapOf("summary" to raw.getValue("headline"), "content" to JsonNull))
+            return ThreadItemDto(adapted, summaryPayload = raw)
+        }
 
         /** Patch null clears retain exact raw presence while typed optional facts become unset. */
         internal fun decodeReplacement(raw: JsonObject): ThreadItemDto {

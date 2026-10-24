@@ -36,6 +36,17 @@ internal fun ComposeTestRule.questionAnswerTargetWithCurrentKey(
     evidence: (String) -> Unit = {},
 ): SemanticsNodeInteraction = questionAnswerLocation(matcher, null, allowPartial = false, evidence, currentKey, revealCurrentKey).first
 
+/** Generation-aware opt-in; retain one physical tap and the existing chrome geometry. */
+internal fun ComposeTestRule.questionAnswerTapWithCurrentKey(
+    matcher: SemanticsMatcher,
+    currentKey: () -> String,
+    revealCurrentKey: () -> Int,
+    evidence: (String) -> Unit = {},
+) {
+    val (target, localPoint) = questionAnswerLocation(matcher, null, allowPartial = true, evidence, currentKey, revealCurrentKey)
+    target.performTouchInput { click(localPoint) }
+}
+
 /** Tap once inside the actual exposed control when a short thread cannot scroll past a notice. */
 internal fun ComposeTestRule.questionAnswerTap(
     matcher: SemanticsMatcher,
@@ -87,7 +98,13 @@ private fun ComposeTestRule.questionAnswerLocation(
     }
     if (revealCurrentKey != null) revealCurrentKey() else keyForRead()?.let { list.performScrollToKey(it) }
     currentKey?.invoke()
-    list.performScrollToNode(matcher)
+    if (revealCurrentKey != null) {
+        evidence("event=question_answer_reveal stage=keyed-ready")
+        // The atomic keyed reveal already placed this row. A second matcher scroll can
+        // race reset/catch-up; the geometry reads below resample current-key readiness.
+    } else {
+        list.performScrollToNode(matcher)
+    }
     val target = onNode(matcher)
     var failure = "tap target did not remain composed after keyed reveal"
     // A live row can grow between these synchronized reads. Correct its new position, never tap again.

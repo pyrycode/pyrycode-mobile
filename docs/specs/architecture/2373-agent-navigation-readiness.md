@@ -119,3 +119,105 @@ Run the new growth probe red against the extracted old one-shot operation, then 
 ## Documentation handoff
 
 Pending for documentation stage: `docs/knowledge/features/thread-screen-subagent-tool-rows.md`, Agent navigation evidence, and `docs/knowledge/features/development-verification-compose-evidence.md`, Compose evidence: distinguish this earlier finished-marker reveal race from proof-entry readiness; record the new controlled red/green and native source/recording identities without claiming the historical geometry was captured.
+
+## Recurrence repair plan (2026-10-22)
+
+### Files read and context
+
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/QuestionAnswerPhone.kt`: `questionAnswerLocation` unconditionally follows the atomic current-key reveal with a separate matcher scroll.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentRunNavigationProof.kt`: `assertFinishedAgentMarker` already supplies absolute-deadline readiness and atomic index/scroll dispatch; its geometry reads resample current identity.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentBlocksScreenTest.kt`: preserve earlier growth, generation, reset and wrong-family probes; use the real screen for the new boundary.
+- `docs/knowledge/features/thread-screen-agent-navigation-evidence.md` and `development-verification-agent-reveal-evidence.md`: earlier acceptance is historical; preserve three geometry measurements, exact ownership and default helper behavior.
+- Original #2387 failed/rerun logs in fleet bundle `1cac1378fe6fc1580d9df9e42e70367c6fb81b974eabdd229a9c6632ec1bd7ed`, digest `9333794885bccfb789b342ec160b879816d7d4d4359528f35e2e19c78d95dd6c`: the first assertion is the redundant `performScrollToNode` inside the finished-marker bridge on `eda298fca8e0584107dbbb1ec3993ffd13b45eb6`. Its merged scroll container is absent; the diagnostic's later unmerged match is not a simultaneous snapshot. The summary XML marks this case failed, then passed on the same tree; stderr retains the assertion stack. No suppressed replay-close failure or phone timeline is retained for this occurrence. Do not transfer older teardown explanations to this one.
+
+One useful behavior: finish revealing the exact owned marker across a reset after atomic keyed reveal. Both previous repairs are on baseline `2df547ab26c1264ee79d9aca16709702487ec5cf`. The new failure is before navigation entry readiness, and after the atomic keyed-scroll boundary added by #2430. No product, visual, recording or protocol change; no decision record. No remote feature branch overlaps the two intended files at planning time.
+
+Forecast: under 250 written lines including this revision and probes; zero new exported types, no consumer/signature migration, four criteria and fewer than ten rejection branches. The causal probe and local repair form one deliverable.
+
+### Design and error handling
+
+Add a content-free `keyed-ready` evidence stage after the current-key readiness check, before the existing unconditional matcher scroll, so a controlled probe can publish a real empty projection at exactly that boundary. Run the probe against the unchanged operation and retain the missing merged-list assertion. Restore the exact owned family only when the next identity/readiness sample observes the reset.
+
+For the opt-in current-key path, use its existing atomic keyed reveal directly and proceed to the existing bounded geometry measurements. Omit the redundant matcher scroll only on that path. Every geometry read continues through current-key readiness; an absent or wrong-family projection must time out within the original absolute deadline. Default `questionAnswerTarget` and `questionAnswerTap` retain their matcher scroll, strict key-removal assertion and signatures. No exception catching, scenario/tap retry, extra input, forced expansion, sleep or deadline/measurement increase.
+
+### State and concurrency model
+
+No application state, jobs or lifecycle changes. Controlled test publication uses `runOnIdle`; the existing identity sampler owns readiness and its original absolute deadline. All three geometry measurements and final owned finished-text assertion remain authoritative.
+
+### State transitions and identity reuse
+
+| Event | Regression |
+| --- | --- |
+| Reset removes the list after atomic reveal; the same owned family returns | `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` |
+| Same boundary resets permanently, or returns only another finished Agent | `resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent` |
+| Earlier growth, reset, generation replacement and stale dispatch | Retain the complete `BackgroundAgentBlocksScreenTest` class, including its existing negative probes |
+
+### Testing strategy
+
+Run the new reset regression red on the baseline containing both landed repairs, then green with the local branch change. Run all Agent block/prose/authoritative screen coverage and the short-thread question scroll caller. Run the focused scripted background-Agent scenario and five consecutive separate native invocations of the named recorded method on the final pushed Kotlin revision, retaining fresh XML/logs and source/recording hashes. Native replay needs the real asynchronous activity/transport lifecycle. Run lint, assembly, instrumented compilation, formatting and final pre-verify after merging main. Complete configured UI/scripted acceptance remains dispatcher-owned and pending; macOS is outside scope.
+
+### Open questions
+
+The historical stack identifies the unsafe operation, but the original phone timeline and failure-time semantics geometry are unavailable in the published bundle. The controlled reset will establish the mechanism without claiming it recovers that historical interleaving.
+
+2026-10-22 — `resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker` executed once and failed on the baseline containing both prior repairs, at the same `questionAnswerLocation` / `performScrollToNode` missing merged-list assertion as #2387. The only helper addition in that red control was the content-free boundary callback. The real screen had no list after reset; restoration required the next readiness sample, which the old matcher scroll never reached. Raw XML and the exact source patch are retained under `recurrence-20261022/reset-red-complete/`. Omit that redundant scroll only for the current-key bridge; default callers and the three geometry measurements remain unchanged. The original bundle's 138 file hashes were verified. Its summary marks this method failed once and passed once on the two-method same-tree rerun; no phone timeline or suppressed teardown stack is present, so historical render ordering remains unknown.
+
+2026-10-22 — The repaired causal and wrong-family probes pass in the 28-method block class, alongside all earlier reset, growth, generation/dispatch and ownership negatives. Separate affected selections pass eight prose methods, four authoritative scenario methods and the short-thread question-scroll method: 41 executed/passed, zero failures/errors/skips. These reports retain their exact pre-merge working patches. No test/helper Kotlin changed afterward. Main `206eb3927d29819b7b2ff11cad760c6e5dcaa192` merged without conflicts; lint, APK assembly and instrumented Kotlin compilation passed.
+
+Five consecutive separate native executions of `RecordedMobileSuiteTest#interactiveTurn_backgroundAgent_followsBottomUntilFinished` pass on clean pushed revision `890702783a7611403693f8e7ce1b4a0426b73b29`, each one executed/passed with zero failures/errors/skips. Each retained phone log includes `keyed-ready` and `closed-confirmed`. The unchanged recording SHA-256 is `61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa`. The focused scripted background-Agent selection passes both placement/settlement and restart/reconnect methods, zero failures/errors/skips, on the same Mobile revision and daemon `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`. Private XML, phone logs, source/recording metadata, failed control and isolated daemon/relay diagnostics with verified hashes are retained under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2373/recurrence-20261022/`. The cause is recorded on #2373. Historical render timing remains an explicit evidence limit; no design question remains open. Full configured UI/scripted acceptance and the documentation handoff remain pending for their owning stages.
+
+### Documentation handoff
+
+Pending documentation stage: `docs/knowledge/features/thread-screen-agent-navigation-evidence.md`, finished-marker recurrence, and `docs/knowledge/features/development-verification-agent-reveal-evidence.md`, atomic scroll dispatch. Record the post-keyed-reveal reset boundary, its causal evidence, relationship to both earlier repairs and counted Linux acceptance; preserve historical failures and evidence limits.
+
+## Manual continuation — 2026-10-23
+
+The latest ticket continuation supersedes the historical line/file forecasts and repeated
+five-run requirements above. Preserve the existing five native passes and causal red/green
+controls as historical repair evidence; collect meaningful current-candidate regression,
+named native and complete configured acceptance through normal operator/dispatcher admission.
+A manual hold does not require waiting for an automatic worker to collect the same gates.
+No deadline, geometry attempt, ownership assertion, recording or caller default changes.
+
+The retained verifier found no source defect and stopped on the independent scripts failure #2455,
+before the later gates ran. Main now contains its merged repair in PR #2457 at
+`747d782084b655cd01ccf70691ceef749f669b6c`. The retained Agent repair merged main cleanly
+as `67146d2defd26d204d15e292c56fb28bdc5ad1ae`. Its only helper difference remains the
+opt-in omission of the redundant matcher scroll; both new real-screen regressions remain.
+Fresh Linux focused acceptance passed 41/41: 28 block, eight prose, four authoritative
+scenario and one short-thread question-scroll method, zero failures/errors/skips. The
+unchanged genuine recording hash remains `61709080f051154c15f0125e99e367ab011d0e8963f0074e6621ee18facd7baa`.
+
+### Current configured acceptance and documentation
+
+On that exact code candidate, the normal gate wrappers completed pre-verify, docs guard,
+218 script tests, static checks, 5359 JVM methods, assembly, 333 executed device methods
+and all 24 scripted methods. All executed tests passed, with zero errors. The device report
+also has one skipped `RenameDialogCaptureTest.renameAtFigmaViewport`. The required
+recorded Agent method executed/passed and reached its final closed proof.
+Both new reset controls executed/passed in the full JVM run. Both scripted background-Agent
+methods executed/passed in the full scripted report. No new live-Claude evidence is claimed.
+
+The first manual script discovery executed 218 tests and failed three: the manual runner
+incorrectly exported the Android-only `PYRY_GATE_EVIDENCE_DIR` into script unit fixtures,
+changing their cleanup routing. Removing only that unrelated setting made the same three
+checks pass, then the corrected full 218-test discovery passed on unchanged source. Original
+failed and causal control logs remain alongside the passing evidence; no product repair or
+assertion relaxation was made for those runner errors. The older #2455 failure remains historical.
+
+Raw evidence: `/work/Projects/pyrycode-mobile-agents/logs/evidence/2373/manual-20261023/`.
+The 1536-file `SHA256SUMS` has SHA-256
+`a5678adea178f1a5daf16bef9aa42546934afcad33c0e5500e9b4dafc9fa8c62`.
+`configured-invocation.json`, `candidate-identity.json`, `jvm-summary.json`, `ui-summary.json`
+and `scripted-summary.json` retain commands, exact source and recording hashes, APK hashes,
+Android 13/API 33 x86_64 Google ATD revision 1 identity and counted/named outcomes.
+Agents source: `2ffd702a09190fc1e6d4e4d8cbe89e0e35bf6cfe`; daemon:
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; relay:
+`9939bc1ff8afec5021c09862e6f14dadba33ad42`.
+
+Both documentation handoff items are now written in the owning topics named above: the
+navigation evidence records the cause, earlier-repair distinction and counted historical/current
+results; development verification records why only the opt-in bridge omits the second scroll
+and how the two controls retain ownership proof. Later documentation-only commits do not
+change the tested source, tests or recordings. Normal independent review remains required
+before documentation-worker completion; this manual acceptance is not a verifier PASS.
