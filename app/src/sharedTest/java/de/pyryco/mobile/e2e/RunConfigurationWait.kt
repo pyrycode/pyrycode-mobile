@@ -16,6 +16,7 @@ internal fun ComposeTestRule.awaitRunConfiguration(
     label: String,
     timeoutMillis: Long,
     confirmed: () -> Boolean = { true },
+    observe: (String) -> Unit = {},
     state: (String?) -> Boolean = { true },
 ) {
     var present = false
@@ -23,11 +24,29 @@ internal fun ComposeTestRule.awaitRunConfiguration(
     var pending = false
     var noteMatches = false
     var confirmationMatches = false
+    var confirmationEvaluated = false
+    var observedRows = emptyList<String>()
+    var observedTexts = emptyList<String>()
+    var observedNote: String? = null
+
+    fun evidence() =
+        "run configuration section=$section present=$present selected=$selected pending=$pending " +
+            "note_matches=$noteMatches confirmation_matches=$confirmationMatches " +
+            "confirmation_evaluated=$confirmationEvaluated expected_label=$label rows=$observedRows " +
+            "note=$observedNote section_texts=$observedTexts"
     try {
         waitUntil(timeoutMillis) {
             val root = onAllNodesWithTag("run-config-$section", useUnmergedTree = true).fetchSemanticsNodes().singleOrNull()
             present = root != null
             val nodes = root?.descendants().orEmpty()
+            observedTexts = nodes.flatMap { it.texts() }
+            // Copy only this section's controlled choices from the traversal already used below.
+            observedRows =
+                nodes.mapNotNull { node ->
+                    node.config.getOrNull(SemanticsProperties.Selected)?.let {
+                        "selected=$it texts=${node.descendants().flatMap { child -> child.texts() }}"
+                    }
+                }
             selected =
                 section == "Effort" &&
                 label == "Effort" ||
@@ -43,15 +62,26 @@ internal fun ComposeTestRule.awaitRunConfiguration(
                     ?.flatMap { it.texts() }
                     ?.singleOrNull()
             noteMatches = state(note)
-            confirmationMatches = present && selected && !pending && noteMatches && confirmed()
+            observedNote = note
+            confirmationEvaluated = false
+            confirmationMatches = present &&
+                selected &&
+                !pending &&
+                noteMatches &&
+                run {
+                    confirmationEvaluated = true
+                    confirmed()
+                }
             confirmationMatches
         }
     } catch (e: ComposeTimeoutException) {
-        throw ComposeTimeoutException(
-            "run configuration section=$section present=$present selected=$selected pending=$pending " +
-                "note_matches=$noteMatches confirmation_matches=$confirmationMatches",
-        ).apply { initCause(e) }
+        val detail = evidence()
+        throw ComposeTimeoutException(detail).apply {
+            initCause(e)
+            runCatching { observe(detail) }.exceptionOrNull()?.let(::addSuppressed)
+        }
     }
+    observe(evidence())
 }
 
 private fun SemanticsNode.descendants(): List<SemanticsNode> = listOf(this) + children.flatMap { it.descendants() }

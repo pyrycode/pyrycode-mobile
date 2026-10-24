@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -63,9 +64,12 @@ class AgentChildrenScreenTest {
 
     @Test fun collapsedConsumerWithdrawsBeforeLoadingFrame() = mounted(collapse = true)
 
+    @Test fun capacityRetryStaysInsideExpandedAgentAndRecoversAfterOtherDemandCloses() = mounted(capacity = true)
+
     private fun mounted(
         stop: Boolean = false,
         collapse: Boolean = false,
+        capacity: Boolean = false,
     ) {
         val frames = Channel<Long>(Channel.UNLIMITED).apply { trySend(1) }
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -241,6 +245,7 @@ class AgentChildrenScreenTest {
             parent: Int = 17,
         ) =
             """{"id":$id,"rev":23,"order":0,"parent":$parent,"kind":"agent","status":"done","shown":true,"active":false,"headline":"Nested $id","detail_omitted":true}"""
+        val pressure = if (capacity) occupyExpansionCapacity(repo.authoritativeThreads, "host") else null
         try {
             repo.authoritativeThreads.establishComplete("host", "c", "e", 23, listOf(agent(17), agent(18)), 0)
             compose.setContent {
@@ -290,6 +295,21 @@ class AgentChildrenScreenTest {
                 return
             }
             compose.onNodeWithText("Loading agent children…").assertExists()
+            if (capacity) {
+                reply(17, child(50))
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn’t load agent children").fetchSemanticsNodes().isNotEmpty() }
+                val childRetry = hasText("Retry") and hasAnySibling(hasText("Couldn’t load agent children"))
+                compose.onNode(childRetry).assertExists()
+                compose.mainClock.advanceTimeBy(500)
+                assertEquals(1, reads().size)
+                pressure?.close()
+                compose.onNode(childRetry).performClick()
+                compose.waitUntil(5000) { reads().size == 2 }
+                reply(17, child(50))
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 50").fetchSemanticsNodes().isNotEmpty() }
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             val toolSummaries = (51..52).joinToString(",") { child(it).replace("\"kind\":\"agent\"", "\"kind\":\"tool_call\"") }
             reply(17, child(50) + "," + toolSummaries, true, last = 52)
             compose.waitUntil(5000) { compose.onAllNodesWithText("Load more").fetchSemanticsNodes().isNotEmpty() }
@@ -353,6 +373,7 @@ class AgentChildrenScreenTest {
             ) { compose.onAllNodesWithText("Agent children aren’t available offline").fetchSemanticsNodes().isNotEmpty() }
             assertTrue(sent.none { it.type == "mark_conversation_read" })
         } finally {
+            pressure?.close()
             compose.runOnIdle { vmStore.clear() }
             scope.cancel()
         }

@@ -158,7 +158,6 @@ internal class AuthoritativeThreadQueries(
                 .filter {
                     it.id in ids &&
                         it.shown &&
-                        !snapshot.hasToolBody(it) &&
                         it.kind in setOf("tool_call", "agent")
                 }.mapTo(mutableSetOf()) {
                     BodyKey(
@@ -172,6 +171,7 @@ internal class AuthoritativeThreadQueries(
         pruneBodies()
         for (key in keys.takeIf { current }.orEmpty()) {
             val request = key.request
+            if (snapshot.expansionItems.any { it.id.toULong() == request.itemId && snapshot.hasToolBody(it) }) continue
             val state = store.current(host, conversation).bodyLoads[request.itemId.toLong() to request.expectedRev.toLong()]
             if (state == BodyLoad.Retry && retry?.toULong() != request.itemId) continue
             if (active?.takeIf { it.abandonedAt == null }?.body == key || queued.any { it.body == key }) continue
@@ -218,6 +218,7 @@ internal class AuthoritativeThreadQueries(
     }
 
     private fun pruneBodies() {
+        syncRetention()
         queued.removeAll { intent ->
             intent.body?.let { key ->
                 if (bodyCurrent(key)) {
@@ -229,6 +230,11 @@ internal class AuthoritativeThreadQueries(
             } == true
         }
         active?.body?.let { if (!bodyCurrent(it)) retire("cancelled") }
+    }
+
+    private fun syncRetention() {
+        val keys = (bodyConsumers.values + childConsumers.values).flatten().filter(::bodyCurrent)
+        store.protectDetails(this, keys.mapTo(mutableSetOf()) { ExpansionDetailKey(host, it.request, it.generation, it.incarnation) })
     }
 
     @Synchronized
@@ -300,6 +306,7 @@ internal class AuthoritativeThreadQueries(
     fun cancel(conversation: String) {
         bodyConsumers.entries.removeAll { (_, keys) -> keys.any { it.request.conversationId == conversation } }
         childConsumers.entries.removeAll { (_, keys) -> keys.any { it.request.conversationId == conversation } }
+        syncRetention()
         consumers.remove(conversation)
         opened -= conversation
         queued.removeAll { it.conversation == conversation }
@@ -389,7 +396,7 @@ internal class AuthoritativeThreadQueries(
                                         bodyCurrent(key) &&
                                         request is ThreadQueryRequest.Body &&
                                         store.enrichBody(host, request, data, key.generation, key.incarnation)
-                                retire(if (applied) "complete" else "cancelled", failed = !applied, remoteComplete = true)
+                                retire(if (applied) "complete" else "application", failed = !applied, remoteComplete = true)
                             }
                         }
                         is ThreadQueryReply.Batch -> {
@@ -497,6 +504,7 @@ internal class AuthoritativeThreadQueries(
         consumers.clear()
         bodyConsumers.clear()
         childConsumers.clear()
+        syncRetention()
         retire("disconnected", remoteComplete = true)
     }
 

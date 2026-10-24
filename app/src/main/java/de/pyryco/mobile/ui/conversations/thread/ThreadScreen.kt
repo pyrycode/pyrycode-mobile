@@ -845,7 +845,7 @@ fun ThreadScreen(
                                                     .filter { row ->
                                                         row.listKey(0) in visibleKeys &&
                                                             ((row.item as? ThreadItem.MessageItem)?.message?.id in expandedTools) &&
-                                                            p.missingBody(row.listKey(0))
+                                                            p.bodyItem(row.listKey(0)) != null
                                                     }.mapTo(mutableSetOf()) { it.listKey(0) }
                                             }
                                         val children =

@@ -288,6 +288,12 @@ internal object RecordedSuiteNative {
         android.util.Log.i("RecordedSuite", "event=settings_observation_fence phase=consumed")
     }
 
+    /** Passive only: do not drain, checkpoint, or consult the upstream connection. */
+    fun modelReopenProgress(serverId: String): String {
+        val session = current ?: return "recording=inactive"
+        return "phone_owner=${session.currentOwner("phone", serverId)} ${session.tape?.progress() ?: "recording=capture"}"
+    }
+
     fun beforeHostLinkClose(serverId: String) {
         val session = current?.takeIf { it.document != null } ?: return
         val owner = session.currentOwner("phone", serverId) ?: return

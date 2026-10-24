@@ -161,6 +161,15 @@ existing viewport, exact rendered revision and certified-checkpoint requirements
 still apply after contents render. See [connection-owned body queries](remote-conversation-repository.md#missing-tool-body-queries-2388)
 and [focused evidence for the parent compact handoff](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
 
+**Retained expansion capacity (#2390).** Bodies and child pages share inclusive
+16,777,216-byte/1000-summary limits per host across conversations, open and closed.
+Costs count serialized UTF-8 body objects, original raw summaries and cursors once
+per entry. Loaded expanded demand and descendant ancestry stay protected across
+consumers. Closed entries use cross-kind LRU; retained reopen refreshes use without
+refetch, while recomposition does not. Atomic capacity rejection keeps prior
+children/cursor and shows sticky inline Retry. Closing demand can free capacity
+for explicit Retry; evicted reopen reads again. See [retention rules](remote-conversation-repository.md#retained-expansion-budget-2390).
+
 **Direct agent children (#2389).** A visible, individually expanded agent demands
 its first missing page of direct-child summaries through the same owned lane.
 Nested agents demand only their own children when individually expanded. Opening

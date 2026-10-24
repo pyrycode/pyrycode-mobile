@@ -310,9 +310,5 @@ private fun decodeThreadSummary(
         val count = raw.threadInteger("public_child_count")
         require(raw.threadBoolean("has_public_children") == (count > 0))
     }
-    return ThreadItemDto.decode(
-        JsonObject(
-            raw + mapOf("summary" to raw.getValue("headline"), "content" to kotlinx.serialization.json.JsonNull),
-        ),
-    )
+    return ThreadItemDto.decodeSummary(raw)
 }
