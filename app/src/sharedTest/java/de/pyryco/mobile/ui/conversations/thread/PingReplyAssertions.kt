@@ -22,7 +22,7 @@ internal const val PING_PROMPT = "Reply with exactly the word: ping (nothing els
 //
 // The anchor is `MessageContainer`'s bubble tag rather than "has a scrollable ancestor" (#694's
 // original second clause). That clause encoded a placement — the title and the foot-of-list queued
-// backlog sat outside ThreadScreen's scrollable message list — and #782 retired it: `foldQueuedRows`
+// backlog sat outside ThreadScreen's scrollable message list — and #782 retired it: `fixtureQueuedRows`
 // draws a queued row inline among the delivered rows, so a queued entry whose text is exactly "ping"
 // now does have a scroll ancestor. Anchoring on the bubble keeps #694's actual intent — reply
 // detection is independent of queued text — and is stronger than the placement it replaces, because a

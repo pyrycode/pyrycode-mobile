@@ -10,11 +10,14 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.ThreadEvidence
+import de.pyryco.mobile.e2e.ThreadEvidenceRecord
 import de.pyryco.mobile.e2e.assertOrderedReplay
 import de.pyryco.mobile.e2e.hasCompletedReplay
 import de.pyryco.mobile.e2e.renderedReplyText
@@ -44,6 +47,7 @@ class ScriptedThreadRenderTest {
     val composeRule = createComposeRule()
 
     private lateinit var harness: ScriptedThreadHarness
+    private val requests = java.util.concurrent.ConcurrentLinkedQueue<Envelope>()
 
     private val thinkingDescription: String =
         InstrumentationRegistry
@@ -59,13 +63,64 @@ class ScriptedThreadRenderTest {
 
     @Before
     fun setUp() {
-        harness = ScriptedThreadHarness(composeRule)
+        harness =
+            ScriptedThreadHarness(composeRule, onSend = {
+                requests.add(it)
+                true
+            })
         harness.start()
     }
 
     @After
     fun tearDown() {
         harness.close()
+    }
+
+    @Test
+    fun invariantRenderedContentUsesCompletedAuthoritativeQueryWithoutLegacyRequests() {
+        harness.pushAssistantDelta("authoritative", 0, "Supplied reply")
+        harness.pushTurnEnd("authoritative")
+        composeRule.waitUntil(TIMEOUT_MS) {
+            composeRule.onAllNodesWithText("Supplied reply").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("the destination must synchronize the supplied document", requests.any { it.type == "thread_catch_up" })
+        assertFalse("legacy content must never furnish these rows", requests.any { it.type in setOf("backfill_since", "request_history") })
+        composeRule.waitUntil(TIMEOUT_MS) {
+            val snapshot = harness.authoritativeSnapshot()
+            snapshot.coverage != null &&
+                snapshot.checkpoint == snapshot.completedVersion &&
+                !snapshot.repairNeeded &&
+                !snapshot.resetNeeded
+        }
+        composeRule.onNodeWithText("Supplied reply").assertIsDisplayed()
+    }
+
+    @Test
+    fun invariantDuplicateAndOlderSuppliedRevisionsCannotRegressOrDuplicateRenderedText() {
+        fun supplied(
+            revision: Int,
+            text: String,
+        ) = harness.pushEnvelope(
+            Envelope(
+                900,
+                "thread_item_added",
+                "2026-10-21T00:00:00Z",
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","epoch":"scripted","version":$revision,"item":{
+                        "id":100,"rev":$revision,"order":100,"kind":"assistant_message","session":"session",
+                        "turn":"supplied","agent":"claude","active":false,"shown":true,"status":"done",
+                        "summary":"reply","content":{"text":"$text"}}}""",
+                ),
+            ),
+        )
+        supplied(101, "Newest supplied text")
+        supplied(101, "Newest supplied text")
+        supplied(100, "Retired supplied text")
+        composeRule.waitUntil(TIMEOUT_MS) {
+            composeRule.onAllNodesWithText("Newest supplied text").fetchSemanticsNodes().size == 1
+        }
+        composeRule.onNodeWithText("Retired supplied text").assertDoesNotExist()
+        composeRule.onNodeWithText("Newest supplied text").assertIsDisplayed()
     }
 
     // Text case: several incremental deltas for one turn, then turn_end → one assistant message whose
@@ -177,48 +232,64 @@ class ScriptedThreadRenderTest {
     fun replayReply_correctTextWithDuplicateSequence_isRejected() = assertIncorrectSequences(listOf(0, 1, 1, 2))
 
     private fun assertIncorrectSequences(sequences: List<Int>) {
-        assertIncorrectRows { rows ->
-            rows.map { row ->
-                if (row is ThreadItem.MessageItem && row.message.role == Role.Assistant) {
-                    val segment = requireNotNull(row.message.segment)
-                    row.copy(message = row.message.copy(segment = segment.copy(deltas = sequences.map { SegmentDelta(it, 0) })))
-                } else {
-                    row
-                }
+        pushOrderedReplay(split = false)
+        val evidence = replayRows()
+        composeRule.waitUntil(TIMEOUT_MS) { composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY }
+        // Literal legacy presentation input keeps the old sequence rejection checks until #2367.
+        // These rows never enter the repository, ViewModel or rendered screen.
+        val literal =
+            evidence.records.map { record ->
+                ThreadItem.MessageItem(
+                    if (record.message.role == Role.Assistant) {
+                        record.message.copy(segment = AssistantSegment("t1", sequences.map { SegmentDelta(it, 0) }))
+                    } else {
+                        record.message
+                    },
+                )
             }
+        assertThrows(AssertionError::class.java) {
+            composeRule.assertOrderedReplay(literal, ORDERED_REPLY, REPLAY_PROMPT)
         }
     }
 
     @Test
     fun replayReply_duplicateRetainedSegment_isRejected() =
-        assertIncorrectRows { rows -> rows + rows.filterIsInstance<ThreadItem.MessageItem>().last { it.message.role == Role.Assistant } }
+        assertIncorrectRows { rows -> rows + rows.last { it.message.role == Role.Assistant } }
 
     @Test
     fun replayReply_userAfterCompleteReply_isRejected() =
         assertIncorrectRows { rows ->
-            val user = rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.role == Role.User }
-            rows.filterNot { it == user } + user
+            val user = rows.single { it.message.role == Role.User }
+            val fact = requireNotNull(user.fact)
+            val misplaced =
+                de.pyryco.mobile.data.network.ThreadItemDto.decodeReplacement(
+                    kotlinx.serialization.json.JsonObject(
+                        fact.raw + ("order" to kotlinx.serialization.json.JsonPrimitive(rows.maxOf { requireNotNull(it.fact?.order) } + 1)),
+                    ),
+                )
+            rows.filterNot { it == user } +
+                ThreadEvidenceRecord(user.message, user.fullText, user.session, user.turn, user.agentId, user.toolRunId, misplaced)
         }
 
-    private fun assertIncorrectRows(change: (List<ThreadItem>) -> List<ThreadItem>) {
+    private fun assertIncorrectRows(change: (List<ThreadEvidenceRecord>) -> List<ThreadEvidenceRecord>) {
         pushOrderedReplay(split = false)
         val rows = replayRows()
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
             composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
         }
         assertThrows(AssertionError::class.java) {
-            composeRule.assertOrderedReplay(change(rows), ORDERED_REPLY, REPLAY_PROMPT)
+            composeRule.assertOrderedReplay(ThreadEvidence(rows.owner, change(rows.records)), ORDERED_REPLY, REPLAY_PROMPT)
         }
     }
 
-    private fun replayRows(text: String = ORDERED_REPLY): List<ThreadItem> =
+    private fun replayRows(text: String = ORDERED_REPLY): ThreadEvidence =
         runBlocking {
             withTimeout(TIMEOUT_MS) {
-                harness.observeMessages().first { items ->
-                    val replies = items.filterIsInstance<ThreadItem.MessageItem>().filter { it.message.role == Role.Assistant }
+                harness.observeEvidence().first { evidence ->
+                    val replies = evidence.records.filter { it.message.role == Role.Assistant }
                     replies.isNotEmpty() &&
-                        replies.all { !it.message.isStreaming } &&
-                        replies.joinToString("") { it.message.content } == text
+                        replies.all { it.fact?.active == false && it.fact.status in setOf("done", "finished") } &&
+                        replies.joinToString("") { it.fullText } == text
                 }
             }
         }

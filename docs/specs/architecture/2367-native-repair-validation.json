@@ -1,0 +1,117 @@
+{
+  "ticket": 2367,
+  "scope": "Manual repair of the two confirmed native regressions. Complete independent configured verification remains required.",
+  "implementationRevision": "1a22302d728d89a6f9deb2dc25168496490cd05a",
+  "integratedMain": "d2130e229e5ae7382cf7f6cebe790db6ae8574d5",
+  "codeSourceSha256": {
+    "app/src/androidTest/java/de/pyryco/mobile/recording/RecordedPermissionTest.kt": "de428d46fd0b700bb2742060f56a739294666585dc2eea36192f8122f7a7e9f5",
+    "app/src/androidTest/java/de/pyryco/mobile/design/ThreadDesignCaptureTest.kt": "524618f4ae36d3c19d95322db2f5aa7f20003a884ec9c00dc2932328b01dc96b",
+    "app/src/sharedTest/java/de/pyryco/mobile/recording/RecordedExchange.kt": "f10c3cbac9d0d966c33ba302a2c91db82833d99a05e73ff1ba1afecd79636dca",
+    "scripts/recorded-exchanges.py": "46882645c96303509cfc0ce0df095225bb0da927f59c9acfffe884897dd187a6"
+  },
+  "genuinePermissionCapture": {
+    "decision": "PASS for genuine authoritative replacement after explicit CHANGED review",
+    "fixtureSha256": "1d0268dd52528e76c9520eb3ef7c84b0965e39ba3d5ace251754bbf0e702a58c",
+    "retiredFixtureSha256": "71fff5a9926e594b9568b615480e8c797276eee3956f87829aab0086631c49c1",
+    "strictComparison": "CHANGED",
+    "capture": {
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "xmlSha256": "2a869a37e031020a437b33bca1c1d55d3de564fd4c08585dd473f5186c5c3173"
+    },
+    "freshReplay": {
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "xmlSha256": "2a869a37e031020a437b33bca1c1d55d3de564fd4c08585dd473f5186c5c3173"
+    },
+    "retiredReplay": {
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "reason": "genuine historical fixture has no required thread capability",
+      "xmlSha256": "52b900b5b43bbe4ee1f2ce0171679e920be77b426c29e81df6fa3012ab722cfe"
+    },
+    "source": {
+      "mobileRevision": "1a22302d728d89a6f9deb2dc25168496490cd05a",
+      "daemonRevision": "fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe",
+      "daemonBinarySha256": "7bfe9cd86ddfac4c0c58110fd6b26777935272639447d7dc4c47e34814f96c14",
+      "testApkSha256": "07762fb4f13b64684ca9fc197c0e59c701d50b0a3f7a841ad59719a78122dcf3",
+      "claudeVersion": "2.1.280 (Claude Code)",
+      "capturedAt": "2026-10-21T22:08:14Z",
+      "presentation": "current-production",
+      "androidRelease": "13",
+      "androidApi": "33",
+      "deviceModel": "Android ATD built for arm64"
+    },
+    "proof": {
+      "frames": 76,
+      "outgoingRequests": 11,
+      "catchUpRequests": 2,
+      "correlatedFinals": 2,
+      "retiredHistoryOrBackfillRequests": 0,
+      "settledCanonicalItems": 5,
+      "sameConversationAndEpoch": true,
+      "pairedDeviceAndMessageIdentity": true,
+      "sameReplyAndSuccessfulTerminalFamily": true,
+      "oneRealPermissionResolvedByPhone": true
+    },
+    "privateComparisonSha256": "e0f3e8c91391199421dd17e4fcc8de9369cda6308a4050b20334f68f95fd6b64"
+  },
+  "focusedChecks": [
+    {
+      "name": "strict replay engine",
+      "source": "8ea3fefa7",
+      "methodClass": "de.pyryco.mobile.recording.RecordedExchangeTest",
+      "executed": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "xmlSha256": "f7d75c195a870b03be1206df3b9a96150819fe945e97bd911451c2c588dce423"
+    },
+    {
+      "name": "loaded file save native method",
+      "source": "8ea3fefa7",
+      "method": "de.pyryco.mobile.design.ThreadDesignCaptureTest#threadSavedFrameAt412By892",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "xmlSha256": "0bba105c1873f35ec32be827a6c967f230f09fcae9ec01c5875cacf5d0ae47d6"
+    },
+    {
+      "name": "normal UI gate on committed genuine replacement",
+      "source": "0be7e9fb8",
+      "method": "de.pyryco.mobile.recording.RecordedPermissionTest#capturedPermissionReachesTheClientAndCompletes",
+      "executed": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "xmlSha256": "b6d117faa6339bb36ba01d7004c7b141dc76889e6468e8c709863f1ee2c834a0"
+    }
+  ],
+  "privateEvidenceRoot": "pyrycode-mobile-agents/logs/evidence/2367/manual-takeover-20261021/native-consumer-repair",
+  "retainedFailures": [
+    "second independent candidate 44e: full UI five failures, rerun three failures, main comparison one inherited failure; exactly two PR regressions",
+    "permission-refresh-1: setup failure, zero executed",
+    "permission-refresh-2: one genuine native method executed and failed waiting for the displayed reply; no candidate produced",
+    "permission-refresh-3: overall refresh exit 1, legacy replay fails, comparison CHANGED; successful genuine capture and fresh replay are separate counted results"
+  ],
+  "scriptChecks": {
+    "command": "python3 -m unittest scripts/test_recorded_exchanges.py scripts/test_recorded_mobile_suite.py",
+    "executed": 43,
+    "passed": 43,
+    "failed": 0,
+    "skipped": 0,
+    "source": "8ea3fefa7 with unchanged Python sources"
+  },
+  "manualFinalChecks": {
+    "source": "0be7e9fb84504838f0e8985c486f9d1d57753b27",
+    "preVerifyWithGradle": "passed; current main included, clean formatting, every Kotlin source set compiled",
+    "assemblyAndLint": "passed"
+  }
+}

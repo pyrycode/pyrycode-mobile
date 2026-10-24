@@ -1,7 +1,5 @@
 package de.pyryco.mobile.notifications
 
-import de.pyryco.mobile.data.model.Role
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.MarkdownFlavour
 import de.pyryco.mobile.ui.conversations.components.markdownPlainText
 import de.pyryco.mobile.ui.conversations.components.singleTildeRuns
@@ -36,22 +34,6 @@ internal fun notificationPreview(text: String?): String? {
     if (cleaned.isEmpty()) return null
     val result = cleaned.toString()
     return if (result.codePointCount(0, result.length) > 200) result.substring(0, result.offsetByCodePoints(0, 199)) + "…" else result
-}
-
-/** Select from certified history only: settled contiguous rows alone cannot prove an undropped tail or seam. */
-internal fun completionReply(
-    rows: List<ThreadItem>,
-    turnId: String,
-): String? {
-    val segments =
-        rows
-            .mapNotNull { (it as? ThreadItem.MessageItem)?.message }
-            .filter { it.role == Role.Assistant && it.segment?.turnId == turnId && it.parentToolUseId.isEmpty() }
-    if (segments.isEmpty() || segments.any { it.isStreaming }) return null
-    val deltas = segments.flatMap { it.segment?.deltas.orEmpty() }
-    if (deltas.isEmpty() || deltas.map { it.seq } != deltas.indices.toList()) return null
-    if (segments.any { row -> row.segment?.deltas?.sumOf { it.length } != row.content.length }) return null
-    return segments.lastOrNull { it.content.isNotBlank() }?.content
 }
 
 /** Walk the original tree once so a link label's literal characters never become block syntax. */

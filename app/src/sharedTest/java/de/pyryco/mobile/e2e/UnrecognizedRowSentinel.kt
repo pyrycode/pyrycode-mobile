@@ -1,14 +1,10 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.ThreadSnapshot
-import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.data.repository.UnrecognizedSite
-import de.pyryco.mobile.data.repository.threadSnapshots
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.onEach
 import org.junit.rules.TestRule
 import org.junit.runner.Description
@@ -232,31 +228,41 @@ private fun UnrecognizedSite.wireToken(): String =
 internal class TappingConversationRepository(
     private val delegate: ConversationRepository,
     private val tapNegotiated: Boolean = false,
-    private val observeThread: ((String, Flow<ThreadSnapshot>) -> Flow<ThreadSnapshot>)? = null,
-) : ConversationRepository by delegate,
-    ThreadSnapshotSource {
-    private val tappedNegotiated = if (tapNegotiated) delegate.negotiatedThread?.let(PassiveThreadProbe::negotiated) else null
-    override val negotiatedThread get() = if (tapNegotiated) tappedNegotiated else delegate.negotiatedThread
+) : ConversationRepository by delegate {
+    private val tappedNegotiated =
+        delegate.negotiatedThread?.let { source ->
+            val recorded =
+                object : NegotiatedThread() {
+                    override val host = source.host
+                    override val support = source.support
+                    override val store = source.store
 
-    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
+                    override fun localHistory(conversationId: String) = source.localHistory(conversationId)
 
-    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> {
-        val observed =
-            delegate.threadSnapshots(conversationId).onEach { snapshot ->
-                UnrecognizedRowRecorder.record(snapshot.rows)
-                DurableHistoryProbe.record(conversationId, snapshot.rows)
-            }
-        return observeThread?.invoke(conversationId, observed) ?: observed
-    }
+                    override fun observe(conversationId: String) =
+                        source.observe(conversationId).onEach { snapshot ->
+                            UnrecognizedRowRecorder.record(projectAuthoritativeThread(host, conversationId, snapshot).items)
+                        }
 
-    override suspend fun requestHistory(
-        conversationId: String,
-        cursor: String,
-        limit: Int,
-    ): HistoryPage {
-        DurableHistoryProbe.asked(conversationId, cursor.isEmpty())
-        return delegate.requestHistory(conversationId, cursor, limit).also { DurableHistoryProbe.received(conversationId, it) }
-    }
+                    override fun progress(
+                        conversationId: String,
+                        connection: Any,
+                    ) = source.progress(conversationId, connection)
+
+                    override suspend fun open(conversationId: String) = source.open(conversationId)
+
+                    override suspend fun acquire(
+                        conversationId: String,
+                        connection: Any,
+                    ) = source.acquire(conversationId, connection)
+
+                    override fun older(conversationId: String) = source.older(conversationId)
+
+                    override fun cancel(conversationId: String) = source.cancel(conversationId)
+                }
+            if (tapNegotiated) PassiveThreadProbe.negotiated(ThreadAcquisitionGate.negotiated(recorded)) else recorded
+        }
+    override val negotiatedThread get() = tappedNegotiated
 }
 
 /** Rows enumerated in a finding; a flood must not produce megabytes of instrumentation output. */

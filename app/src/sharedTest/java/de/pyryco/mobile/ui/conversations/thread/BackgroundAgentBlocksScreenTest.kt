@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -37,11 +39,9 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.network.Envelope
-import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.repository.BackgroundTaskProjection
-import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.AgentRunNavigationFamily
+import de.pyryco.mobile.e2e.assertFinishedAgentMarker
 import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.e2e.verifyAgentRunNavigation
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -107,7 +107,7 @@ class BackgroundAgentBlocksScreenTest {
         val content: @Composable () -> Unit = {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -171,7 +171,7 @@ class BackgroundAgentBlocksScreenTest {
                     val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a")
                     val composed = compose.onAllNodes(ownedMarker).fetchSemanticsNodes().size
                     val projected =
-                        foldBackgroundAgentBlocks(foldQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
+                        fixtureBackgroundRows(fixtureQueuedRows(state.items, state.queuedMessages), state.items, state.backgroundTasks)
                             .filterIsInstance<ThreadRow.AgentStartMarker>()
                             .single { it.agentId == "a" }
                     assertTrue("the held Agent must still be running", !projected.finished)
@@ -227,6 +227,271 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNodeWithTag("background-agent:b").assertIsNotDisplayed()
     }
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun finishedMarkerIsRemeasuredAfterLaterReplyGrowth() {
+        val reply = ThreadItem.MessageItem(Message("later-reply", "s", Role.Assistant, "Short later reply", ts, false))
+        mount(
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"), reply),
+            collapsed = true,
+            compact = true,
+        )
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var grew = false
+        compose.assertFinishedAgentMarker("a", ownedMarker, "Agent finished") { sample ->
+            println(sample)
+            if ("stage=before" in sample && !grew) {
+                grew = true
+                compose.runOnIdle {
+                    state =
+                        state.copy(
+                            items =
+                                state.items.map { item ->
+                                    if (item == reply) {
+                                        val paragraphs = (0 until 30).joinToString("\n\n") { "Later reply paragraph $it" }
+                                        reply.copy(message = reply.message.copy(content = paragraphs))
+                                    } else {
+                                        item
+                                    }
+                                },
+                        )
+                }
+                compose.waitForIdle()
+                assertTrue(
+                    "the displaced finished marker must remain in the exact Agent's projection",
+                    list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a") >= 0,
+                )
+            }
+        }
+        assertTrue("exercise late screen growth after the initial finished-marker reveal", grew)
+        val finished =
+            compose
+                .onNode(ownedMarker and hasText("Agent finished"))
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        val top =
+            compose
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val bottom =
+            compose
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertTrue("the finished marker must clear thread chrome after late growth", finished.center.y > top && finished.center.y < bottom)
+        assertTrue(
+            "revealing the marker must keep the owned run collapsed",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @Test fun anotherFinishedAgentCannotSatisfyTheOwnedMarkerCheck() {
+        mount(
+            listOf(
+                tool("b", "Agent"),
+                launch().copy(taskId = "tb", toolCallId = "b"),
+                finish().copy(taskId = "tb"),
+            ),
+            collapsed = true,
+        )
+        compose.onNodeWithText("Agent finished").assertIsDisplayed()
+        assertThrows(ComposeTimeoutException::class.java) {
+            compose.assertFinishedAgentMarker("a", hasText("Go to agent ↓") and hasText("Launch description"), "Agent finished")
+        }
+    }
+
+    @Test fun resetBeforeFinishedMarkerRevealWaitsForTheOwnedFamily() {
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(settled, collapsed = true)
+        compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+        var resetObserved = false
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        compose.assertFinishedAgentMarker("a", ownedMarker, "Agent finished") { sample ->
+            println(sample)
+            if ("event=finished_agent_readiness" in sample && "key_present=false" in sample && !resetObserved) {
+                resetObserved = true
+                compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+            }
+        }
+        assertTrue("observe the reset before allowing catch-up", resetObserved)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "the child run remains collapsed",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun generationReplacementDuringFinishedRevealUsesTheCurrentOwnedKey() {
+        var currentAgent = "a"
+        val initial =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(initial, collapsed = true, compact = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var replaced = false
+        var resolvedReplacement = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = {
+                if (currentAgent == "a-next") resolvedReplacement = true
+                currentAgent
+            },
+        ) { sample ->
+            println(sample)
+            if ("stage=before" in sample && !replaced) {
+                replaced = true
+                compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                compose.waitForIdle()
+                currentAgent = "a-next"
+                val replacement =
+                    listOf(
+                        tool(currentAgent, "Agent"),
+                        launch().copy(toolCallId = currentAgent),
+                        tool("child-next", "Read", currentAgent),
+                        tool("child2-next", "Glob", currentAgent),
+                        finish(),
+                    ) + (0 until 30).map { user("Later $it") }
+                compose.runOnIdle { state = state.copy(items = replacement, hasMessages = true) }
+                compose.waitForIdle()
+                val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                assertTrue("the previous generation's marker must be gone", index("agent-start:a") < 0)
+                assertTrue("the same owned Agent must have its new rendered key", index("agent-start:$currentAgent") >= 0)
+                compose.onNode(ownedMarker).assertIsNotDisplayed()
+            }
+        }
+        assertTrue("exercise replacement during geometry measurement", replaced)
+        assertTrue("resolve the Agent from its replacement generation", resolvedReplacement)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+    }
+
+    @Test fun generationBetweenReadinessAndScrollDoesNotDispatchAStaleKey() {
+        var currentAgent = "a"
+        mount(listOf(tool("a", "Agent"), launch(), finish(), user("Later")), collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var replaced = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = { currentAgent },
+        ) { sample ->
+            println(sample)
+            if ("event=finished_agent_readiness" in sample && "key_present=true" in sample && !replaced) {
+                replaced = true
+                currentAgent = "a-next"
+                compose.runOnIdle {
+                    state =
+                        state.copy(
+                            items = listOf(tool(currentAgent, "Agent"), launch().copy(toolCallId = currentAgent), finish(), user("Later")),
+                        )
+                }
+                val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                assertTrue("the sampled generation must be gone before scroll dispatch", index("agent-start:a") < 0)
+                assertTrue("the same owned Agent has its replacement key", index("agent-start:$currentAgent") >= 0)
+            }
+        }
+        assertTrue("replace the generation after readiness but before scroll dispatch", replaced)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+    }
+
+    @Test fun resetAfterKeyedRevealWaitsForTheOwnedFinishedMarker() {
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), finish(), user("Later"))
+        mount(settled, collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var recovered = false
+        compose.assertFinishedAgentMarker(
+            "a",
+            ownedMarker,
+            "Agent finished",
+            resolveAgentId = {
+                if (reset && !recovered) {
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                    recovered = true
+                    compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+                }
+                "a"
+            },
+        ) { sample ->
+            if ("stage=keyed-ready" in sample && !reset) {
+                reset = true
+                compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+            }
+        }
+        assertTrue("reset after atomic keyed reveal must be exercised", reset)
+        assertTrue("a new identity sample must recover the absent projection", recovered)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "revealing the finished marker must preserve collapsed child membership",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:child2") < 0,
+        )
+    }
+
+    @Test fun resetAfterKeyedRevealCannotAcceptAnotherFinishedAgent() {
+        mount(listOf(tool("a", "Agent"), launch(), finish(), user("Later")), collapsed = true)
+        val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
+        var reset = false
+        var sampledAfterReset = false
+        assertThrows(ComposeTimeoutException::class.java) {
+            compose.assertFinishedAgentMarker(
+                "a",
+                ownedMarker,
+                "Agent finished",
+                readinessTimeoutMillis = 1_000,
+                resolveAgentId = {
+                    if (reset && !sampledAfterReset) {
+                        sampledAfterReset = true
+                        compose.runOnIdle {
+                            state = state.copy(items = listOf(tool("b", "Agent"), launch().copy(toolCallId = "b"), finish()))
+                        }
+                    }
+                    "a"
+                },
+            ) { sample ->
+                if ("stage=keyed-ready" in sample && !reset) {
+                    reset = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+                }
+            }
+        }
+        assertTrue("the reset must follow successful keyed reveal", reset)
+        assertTrue("readiness must sample the replacement instead of failing an absent-list lookup", sampledAfterReset)
+        compose.onNode(ownedMarker and hasText("Agent finished")).assertIsDisplayed()
+        assertTrue(
+            "the displayed finished Agent cannot substitute for the requested identity",
+            list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("agent-start:a") < 0,
+        )
+    }
+
+    @Test fun anotherAgentsFinishedLabelCannotSatisfyTheOwnedMarkerCheck() {
+        mount(
+            listOf(
+                tool("a", "Agent"),
+                launch(),
+                tool("b", "Agent"),
+                launch().copy(taskId = "tb", toolCallId = "b", description = "Other Agent"),
+                finish().copy(taskId = "tb"),
+            ),
+            collapsed = true,
+        )
+        compose.onNodeWithText("Agent finished").assertIsDisplayed()
+        val failure =
+            assertThrows(AssertionError::class.java) {
+                compose.assertFinishedAgentMarker("a", hasText("Go to agent ↓") and hasText("Launch description"), "Agent finished")
+            }
+        assertTrue("the owned marker must itself report finished", failure.message.orEmpty().contains("Agent finished"))
+    }
+
     @Test fun removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal() {
         mount(listOf(tool("a", "Agent"), launch(), user("Newer")), true)
         val ownedMarker = hasText("Go to agent ↓") and hasClickAction() and hasText("Launch description")
@@ -239,52 +504,6 @@ class BackgroundAgentBlocksScreenTest {
                 }
             }
         assertEquals("tap target left the projected list", failure.message)
-    }
-
-    @Test fun finishedRosterReplacementKeepsMarkerAndNavigationInCollapsedRun() {
-        val tasks = BackgroundTaskProjection(FinishedBackgroundTasks().apply { mark("c", "t") })
-
-        fun rosterFrame(rows: List<String>): Envelope {
-            val payload = """{"conversation_id":"c","tasks":[${rows.joinToString(",")}],""" + """"dropped_tasks":0}"""
-            return Envelope(id = 1L, type = "background_task_roster", ts = ts.toString(), payload = MobileJson.parseToJsonElement(payload))
-        }
-        val roster =
-            rosterFrame(
-                listOf(
-                    """{"task_id":"t","tool_call_id":"a","task_type":"local_agent","description":"Launch description","truncated_fields":null}""",
-                ),
-            )
-        tasks.apply(roster)
-        state = state.copy(backgroundTasks = tasks.rosters.value["c"])
-        // Two children, so "a"'s own run ("read"+"child2") can still collapse below it -- the root "a"
-        // itself never folds into it (#1827 follow-up).
-        mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")), true)
-        compose.onNodeWithText("Agent finished").assertIsDisplayed()
-        val unrelated = """{"task_id":"other","tool_call_id":"","task_type":"local_agent","description":"","truncated_fields":null}"""
-        for (replacement in listOf(emptyList(), listOf(unrelated))) {
-            tasks.apply(rosterFrame(replacement))
-            compose.runOnIdle { state = state.copy(backgroundTasks = tasks.rosters.value["c"]) }
-            compose.onNodeWithText("Agent finished").assertIsDisplayed()
-            compose.onAllNodesWithText("Agent started, still working").assertCountEquals(0)
-            marker().performClick()
-            // "Go to agent" only scrolls (this PR); the children's run stays exactly as collapsed as
-            // before the tap.
-            compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-            compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
-            assertTrue(
-                compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top <
-                    compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top,
-            )
-        }
-        compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
-        marker().performClick()
-        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-        assertTrue(
-            compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top < compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top,
-        )
-        assertTrue(
-            compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top < compose.onNodeWithText("Later").getUnclippedBoundsInRoot().top,
-        )
     }
 
     @Test fun lateJoinPreservesExpandedRunAndToolBodyAcrossSplitAndFinish() {
@@ -509,6 +728,151 @@ class BackgroundAgentBlocksScreenTest {
             expandLabel = "Show tool uses",
             collapseLabel = "Hide tool uses",
             evidence = { println(it) },
+        )
+    }
+
+    @Test fun resetBeforeClosedRunCheckWaitsForTheSameOwnedFamily() {
+        val paragraphs =
+            (0 until 8).map { n ->
+                ThreadItem.MessageItem(Message("prose$n", "s", Role.Assistant, "Owned paragraph $n", ts, false, parentToolUseId = "a"))
+            }
+        val settled =
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a")) +
+                paragraphs + finish() + user("Later")
+        mount(settled, true)
+        // The repository can supply settled evidence immediately before a reset empties the screen.
+        compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(0)
+        println("reset unmerged_lists=${compose.onAllNodes(hasScrollToNodeAction(), useUnmergedTree = true).fetchSemanticsNodes().size}")
+        var resetObserved = false
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2") + paragraphs.map { it.message.id },
+            ownedChild = hasText("Owned paragraph", substring = true) and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            evidence = { sample ->
+                println(sample)
+                if (sample.startsWith("event=agent_run_readiness") && "ready=false" in sample && !resetObserved) {
+                    resetObserved = true
+                    // Release catch-up only after the proof actually observes the absent list.
+                    compose.runOnIdle { state = state.copy(items = settled, hasMessages = true) }
+                }
+            },
+        )
+        assertTrue("the proof must observe the reset before restoring the exact Agent", resetObserved)
+    }
+
+    @Test fun generationAfterReadinessUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = true)
+    }
+
+    @Test fun generationDuringNavigationRevealUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = false)
+    }
+
+    private fun navigationAcrossGenerationReplacement(afterReadiness: Boolean) {
+        var agent = "a"
+        var run = "child"
+        var second = "child2"
+
+        fun paragraph() =
+            ThreadItem.MessageItem(Message("prose-$agent", "s", Role.Assistant, "Owned paragraph", ts, false, parentToolUseId = agent))
+
+        fun children() = listOf(run, second, "prose-$agent")
+
+        fun ownedText() = hasText("Owned paragraph") and hasAnyAncestor(hasTestTag("background-agent-child:$agent"))
+
+        fun family() = AgentRunNavigationFamily(agent, run, children(), ownedText(), ownedChildKey = "prose-$agent")
+
+        fun items() =
+            listOf(
+                tool(agent, "Agent"),
+                launch().copy(toolCallId = agent),
+                tool(run, "Read", agent),
+                tool(second, "Glob", agent),
+                paragraph(),
+                finish(),
+            ) +
+                (0 until 35).map { user("Later $it") }
+        mount(items(), collapsed = true, compact = true)
+        val initial = family()
+        var beforeNavigation = false
+        var replaced = false
+        var usedReplacement = false
+        compose.verifyAgentRunNavigation(
+            agentId = initial.agentId,
+            runId = initial.runId,
+            childIds = initial.childIds,
+            ownedChild = initial.ownedChild,
+            ownedChildKey = initial.ownedChildKey,
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            currentFamily = {
+                if (replaced) usedReplacement = true
+                family()
+            },
+            evidence = { sample ->
+                println(sample)
+                if (sample.startsWith("event=agent_run_proof stage=before-navigation")) beforeNavigation = true
+                val boundary =
+                    if (afterReadiness) {
+                        sample.startsWith("event=agent_run_readiness") && "ready=true" in sample
+                    } else {
+                        beforeNavigation && sample.startsWith("event=question_answer_reveal stage=before")
+                    }
+                if (boundary && !replaced) {
+                    replaced = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.waitForIdle()
+                    agent = "a-next"
+                    run = "child-next"
+                    second = "child2-next"
+                    compose.runOnIdle { state = state.copy(items = items(), hasMessages = true) }
+                    compose.waitForIdle()
+                    val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                    assertTrue("the retired family's marker must be absent", index("agent-start:a") < 0)
+                    assertTrue("the same raw owned family has its replacement marker", index("agent-start:$agent") >= 0)
+                }
+            },
+        )
+        assertTrue("replace the family at the selected proof boundary", replaced)
+        assertTrue("the proof must resolve the replacement instead of reusing retired identity", usedReplacement)
+    }
+
+    @Test fun missingListCannotPassTheAgentNavigationProof() {
+        mount(emptyList(), true)
+        compose.runOnIdle { state = state.copy(hasMessages = false) }
+        assertThrows(ComposeTimeoutException::class.java) { verifyMissingAgent() }
+    }
+
+    @Test fun anotherAgentsListCannotPassTheAgentNavigationProof() {
+        mount(
+            listOf(
+                tool("b", "Agent"),
+                launch().copy(taskId = "tb", toolCallId = "b"),
+                tool("other-child", "Read", "b"),
+                tool("other-child2", "Glob", "b"),
+                user("Later"),
+            ),
+            true,
+        )
+        compose.onAllNodes(hasScrollToNodeAction()).assertCountEquals(1)
+        assertThrows(ComposeTimeoutException::class.java) { verifyMissingAgent() }
+    }
+
+    private fun verifyMissingAgent() {
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2"),
+            ownedChild = hasText("Owned paragraph") and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
         )
     }
 

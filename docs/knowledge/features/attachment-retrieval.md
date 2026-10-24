@@ -410,6 +410,42 @@ message, or a local path.
   B's remote `NotFound` probe together: a missing tile alone cannot prove storage
   isolation. See [the ladder's host-isolation evidence](../../e2e-interactive-stream.md#host-isolation-readiness-1900).
 
+### Interrupted retrieval restart replay (#2347)
+
+`RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile`
+calls the original `InteractiveStreamE2ETest` scenario. Preserve the peer-uploaded
+file, empty thread cache after graph rebuild, actual retrieval-triggered link cut,
+unnamed failed row with Retry, reconnection, exactly one ready row and matching
+open/save byte hashes. Peer turn completion does not prove phone catch-up has
+settled before restart. The [restart fence](../../recorded-tests.md#explicit-graph-restart-readiness-2347)
+keeps the old phone graph alive until its required replay work can close; production
+retrieval, the recording, strict matching and deadlines are unchanged.
+
+The macOS sweep at `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2` retained
+1815 executed, 1810 passed, 5 failed, exit 1. Its first retrieval mismatch was step
+16, `phone/host-0/0:close` with a version-20 `thread_catch_up` still required,
+through `restartApp` → `rebuildGraph` → registry disposal. This preceded the file
+cut; later reconnect/cleanup timeouts propagated the replay lifecycle failure.
+It was separate from #2219's later close races. Unchanged-main focused replay
+passed 1/1, failed/skipped 0, exit 0, which did not establish suite independence.
+
+Both controlled unfenced baselines retained 26 executed, 23 passed, 3 failed,
+0 skipped, exit 1; the stronger control actually closed the old transport while
+catch-up remained required. With the fence, connections passed 26/26, strict tape
+44/44 and supervisor 38/38, each failed/skipped 0, exit 0. At repaired source
+`5f9b2f3a1551a0ec93c44a0bb5e85fc46e0f7fa6`, retrieval and both other restart
+consumers each passed focused native replay 1/1, failed/skipped 0, exit 0.
+
+After integrating #2349's separate permission-cleanup repair, focused retrieval at
+`7f5367895698866352ef7ea10ca9b26dd48595ed` again passed 1/1, failed/skipped 0,
+exit 0 (4.793 seconds). It also executed and passed in the configured UI gate
+(3.979 seconds): 335 executed, 334 passed, 1 failed, 1 additional skipped, exit 1.
+The [complete dispatcher evidence](development-verification-gates.md#graph-restart-replay-evidence-2347)
+preserves the unrelated failures, accepted same-tree reruns, skipped cases and raw
+evidence references behind verifier PASS. These macOS native checks prove recorded
+recovery assertions; they add no current FCM, encryption or transport-timing proof.
+Linux was outside this ticket's verification scope.
+
 ## Related
 
 - UI consumer: [MessageBubble — attachment slot § Attachment slot](message-bubble-attachment-slot.md#attachment-slot-since-984) (#984) —

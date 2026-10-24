@@ -35,16 +35,7 @@ internal class TurnPhaseProjection {
      * any outcome, returns it to idle. Every other event is not a phase change and is ignored.
      */
     fun apply(event: LiveSessionEvent) {
-        val next =
-            when (event) {
-                is LiveSessionEvent.TurnState -> event.phase
-                is LiveSessionEvent.TurnEnd -> Phase.Idle
-                is LiveSessionEvent.AssistantDelta,
-                is LiveSessionEvent.ToolUse,
-                is LiveSessionEvent.ToolResult,
-                is LiveSessionEvent.ReplayGap,
-                -> return
-            }
+        val next = (event as LiveSessionEvent.TurnState).phase
         phases.update { if (next == Phase.Idle) it - event.conversationId else it + (event.conversationId to next) }
     }
 

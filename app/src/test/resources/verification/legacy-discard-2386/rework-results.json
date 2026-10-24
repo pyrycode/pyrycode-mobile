@@ -1,0 +1,42 @@
+{
+  "ticket": 2386,
+  "finding": 1,
+  "revision": "4ed26f221093f66d5be4c07d6371906154d21f96",
+  "os": "Linux x86_64, OpenJDK 21, Robolectric API 33 and managed Android 13",
+  "persistentEvidence": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2386/builder-rework-20261022-4ed26f221",
+  "deviceEntrySha256": "eb456ff40e1cef964b6a65b9921304c5705a5be708ab996c6d4d9ac4087151ac",
+  "sharedOracleSha256": "89133c846e391d1d9797b355df401094be6262a7581469afed37ecf2992d4b3e",
+  "appApkSha256": "04bdec77c7cff40b7a93fbc1a827909bd0e4c57b1a1bbc5c4bb6e6e132b3dbf6",
+  "testApkSha256": "fe44330d2662e0611972cb84a4513f431af5a89382155a3da5cc8f8139a03677",
+  "jvm": {
+    "command": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.LegacyDiscardMigrationTest --console=plain",
+    "executed": 3, "passed": 3, "failed": 0, "errors": 0, "skipped": 0, "exitCode": 0,
+    "report": "jvm-matrix.xml",
+    "sha256": "47dcb867d712b628ad84662a8220ca595e252ab27e93be4e0807bd5fc87e9480"
+  },
+  "native": {
+    "command": "python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.data.cache.LegacyDiscardMigrationDeviceTest#preservationInvariant_productionUpgradeAndFreshReopen",
+    "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "exitCode": 0,
+    "report": "native/0-TEST-pixel2Api33Atd_0-_app-.xml",
+    "sha256": "6b4eec3a090d5d8c047720e295f3b7d0ce346fe0eaf5e197aa575cd001dcb1c9",
+    "phoneLog": "native/0-logcat-de.pyryco.mobile.data.cache.LegacyDiscardMigrationDeviceTest-preservationInvariant_productionUpgradeAndFreshReopen.txt",
+    "preservationObservations": 9,
+    "coverage": "Sources 2, 11 and fresh creation; initial production open and two reopens each. The unchanged shared oracle asserts exact raw preservation, backfills and supported operations."
+  },
+  "discovery": {
+    "implementation": "scripts/android-test-gate.py device_only_classes",
+    "before": "65 classes; required native preservation entry absent; assertion failed at 5a241432f05a351f64dc6916566c4f562165dafc.",
+    "after": "66 classes; LegacyDiscardMigrationDeviceTest selected exactly once.",
+    "report": "configured-discovery.txt",
+    "executesNativeTests": false
+  },
+  "historicalConfiguredUi": {
+    "revision": "5a241432f05a351f64dc6916566c4f562165dafc",
+    "reported": 328, "executed": 327, "passed": 327, "failed": 0, "errors": 0, "skipped": 1,
+    "nativePreservationCases": 0,
+    "result": "Required configured native preservation acceptance was not met; retain the verifier FAIL and earlier results.json evidence unchanged."
+  },
+  "configuredUiAcceptance": "Pending dispatcher: the complete configured UI gate must execute LegacyDiscardMigrationDeviceTest.preservationInvariant_productionUpgradeAndFreshReopen without skipping before verifier PASS. Focused execution and discovery alone do not satisfy this acceptance.",
+  "documentation": "Pending documentation stage as listed in the plan and PR.",
+  "macos": "Outside this Linux ticket's verification scope."
+}

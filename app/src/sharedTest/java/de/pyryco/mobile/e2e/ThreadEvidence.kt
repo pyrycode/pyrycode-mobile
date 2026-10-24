@@ -5,14 +5,15 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.NegotiatedThread
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.ui.conversations.thread.ThreadRow
-import de.pyryco.mobile.ui.conversations.thread.foldBackgroundAgentBlocks
-import de.pyryco.mobile.ui.conversations.thread.foldQueuedRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureBackgroundRows
+import de.pyryco.mobile.ui.conversations.thread.fixtureQueuedRows
 import de.pyryco.mobile.ui.conversations.thread.foldToolRuns
 import de.pyryco.mobile.ui.conversations.thread.projectAuthoritativeThread
 import kotlinx.coroutines.flow.Flow
@@ -166,20 +167,28 @@ internal class ThreadEvidenceSource private constructor(
                 }
             }
 
-        fun negotiated(route: NegotiatedThread) =
-            ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
-                combine(route.support, route.observe(conversation)) { support, snapshot ->
-                    val connection =
-                        when (support) {
-                            is ThreadSupport.Supported -> support.connection
-                            is ThreadSupport.Missing -> support.connection
-                            ThreadSupport.Unverified -> route
-                        }
-                    val evidence = authoritativeThreadEvidence(route.host, conversation, connection, snapshot)
-                    if (support is ThreadSupport.Missing) ThreadEvidence(evidence.owner, emptyList(), admitted = false) else evidence
-                }
+        fun negotiated(
+            route: NegotiatedThread,
+            snapshots: (String) -> Flow<AuthoritativeThreadSnapshot> = { route.store.observe(route.host, it) },
+        ) = ThreadEvidenceSource(ThreadEvidenceKind.Authoritative) { conversation ->
+            // Evidence is passive: the destination, not its assertions, owns the cache reader lease.
+            combine(route.support, snapshots(conversation)) { support, snapshot ->
+                val connection =
+                    when (support) {
+                        is ThreadSupport.Supported -> support.connection
+                        is ThreadSupport.Missing -> support.connection
+                        ThreadSupport.Unverified -> route
+                    }
+                val evidence = authoritativeThreadEvidence(route.host, conversation, connection, snapshot)
+                if (support is ThreadSupport.Missing) ThreadEvidence(evidence.owner, emptyList(), admitted = false) else evidence
             }
+        }
     }
+}
+
+/** Controlled fixture projection only; real destinations retain passive same-store evidence. */
+internal interface SyntheticThreadEvidenceProducer {
+    fun evidenceSnapshots(conversationId: String): Flow<AuthoritativeThreadSnapshot>
 }
 
 /**
@@ -189,12 +198,17 @@ internal class ThreadEvidenceSource private constructor(
  */
 internal fun harnessThreadEvidence(repository: ConversationRepository): ThreadEvidenceSource {
     repository.negotiatedThread?.let { route ->
-        return ThreadEvidenceSource.negotiated(route)
+        // The concrete demo maps its in-memory authored fixtures lazily; it has no cache reader lease.
+        return when (repository) {
+            is SyntheticThreadEvidenceProducer -> ThreadEvidenceSource.negotiated(route, repository::evidenceSnapshots)
+            is FakeConversationRepository -> ThreadEvidenceSource.negotiated(route, route::observe)
+            else -> ThreadEvidenceSource.negotiated(route)
+        }
     }
     if (repository is RemoteConversationRepository && repository.authoritativeHost.isNotEmpty()) {
         return ThreadEvidenceSource.connection(repository)
     }
-    return ThreadEvidenceSource.legacy(null, repository, repository::observeMessages)
+    error("authoritative thread source is required")
 }
 
 /** Keep ordinary reads on the captured connection; thread evidence follows its owning host. */
@@ -212,7 +226,7 @@ internal fun legacyThreadEvidence(
     connection: Any,
     items: List<ThreadItem>,
 ): ThreadEvidence {
-    val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+    val rows = fixtureBackgroundRows(fixtureQueuedRows(items, emptyList()), items, null)
     val delivered = rows.filterIsInstance<ThreadRow.Delivered>().associateBy { (it.item as? ThreadItem.MessageItem)?.message?.id }
     val runs = toolRunIds(foldToolRuns(rows, emptySet()))
     return ThreadEvidence(

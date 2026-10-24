@@ -8,12 +8,11 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
-import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ThinkingProgress
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,6 +27,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -62,11 +63,17 @@ class ThreadViewModelTurnRecoveryTest {
 
     /** Thread rows and the thinking reading are set by the test; sends are counted. */
     private class ControlledRepository : ConversationRepository by FakeConversationRepository() {
-        val items = MutableStateFlow<List<ThreadItem>>(emptyList())
+        override val negotiatedThread = FixtureThread(HOST, CONV)
+        val items = negotiatedThread.facts
+        val sessions = MutableSharedFlow<LiveRefusalEvent>()
         val reading = MutableStateFlow<ThinkingProgress?>(null)
+        val ends = MutableSharedFlow<de.pyryco.mobile.data.repository.LiveRootTurnEnd>()
+
+        override fun observeLiveRootTurnEnds(conversationId: String) = ends
+
         var sends = 0
 
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = items
+        override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = sessions
 
         override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> = reading
 
@@ -123,7 +130,7 @@ class ThreadViewModelTurnRecoveryTest {
 
     /** Raise the context notice and check it holds. */
     private suspend fun TestScope.raise(f: Fixture) {
-        f.events.emit(contextOverflow())
+        f.repo.ends.emit(contextOverflow(f.repo.negotiatedThread))
         advanceUntilIdle()
         assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
     }
@@ -134,43 +141,37 @@ class ThreadViewModelTurnRecoveryTest {
             val f = fixture()
             assertNull(f.vm.turnOutcome.value)
 
-            f.events.emit(
-                LiveSessionEvent.TurnEnd(CONV, "t1", "end_turn", isError = true, errorCategory = "billing_error"),
+            f.repo.ends.emit(
+                de.pyryco.mobile.data.repository.LiveRootTurnEnd(
+                    true,
+                    "",
+                    "end_turn",
+                    "",
+                    "billing_error",
+                    { true },
+                    f.repo.negotiatedThread,
+                ),
             )
             advanceUntilIdle()
             assertEquals(TurnRecoveryNotice.BillingError, f.vm.turnOutcome.value)
 
-            f.events.emit(LiveSessionEvent.TurnEnd(CONV, "t2", "end_turn"))
+            f.repo.ends.emit(
+                de.pyryco.mobile.data.repository
+                    .LiveRootTurnEnd(false, "", "end_turn", "", "", { true }, f.repo.negotiatedThread),
+            )
             advanceUntilIdle()
             assertNull(f.vm.turnOutcome.value)
             assertTrue(logs.contains("event=turn_recovery_notice state=shown notice=BillingError"))
-            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=turn_end"))
+            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=canonical_turn_end"))
         }
 
     @Test
-    fun anIdleTurnState_andAReplayGap_keepIt() =
+    fun anIdleTurnState_keepsIt() =
         runTest {
             val f = fixture()
             raise(f)
 
             f.events.emit(LiveSessionEvent.TurnState(CONV, Phase.Idle))
-            f.events.emit(LiveSessionEvent.ReplayGap(CONV))
-            advanceUntilIdle()
-
-            assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun anotherConversationsEvents_leaveIt() =
-        runTest {
-            val f = fixture()
-            f.events.emit(contextOverflow(conversationId = OTHER))
-            advanceUntilIdle()
-            assertNull(f.vm.turnOutcome.value)
-
-            raise(f)
-            f.events.emit(LiveSessionEvent.TurnState(OTHER, Phase.Thinking))
-            f.events.emit(LiveSessionEvent.AssistantDelta(OTHER, "t9", 0, "hi"))
             advanceUntilIdle()
 
             assertEquals(TurnRecoveryNotice.ContextTooLong, f.vm.turnOutcome.value)
@@ -191,42 +192,6 @@ class ThreadViewModelTurnRecoveryTest {
         }
 
     @Test
-    fun anAssistantDelta_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.AssistantDelta(CONV, "t2", 0, "hi"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun aToolUse_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.ToolUse(CONV, "t2", "tool-1", "Bash", "ls"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
-        }
-
-    @Test
-    fun aToolResult_clearsIt() =
-        runTest {
-            val f = fixture()
-            raise(f)
-
-            f.events.emit(LiveSessionEvent.ToolResult(CONV, "t2", "tool-1", isError = false, resultSummary = "ok"))
-            advanceUntilIdle()
-
-            assertNull(f.vm.turnOutcome.value)
-        }
-
-    @Test
     fun aNewThinkingReading_clearsIt_butNoReadingDoesNot() =
         runTest {
             val f = fixture()
@@ -244,7 +209,7 @@ class ThreadViewModelTurnRecoveryTest {
         }
 
     @Test
-    fun aNewSessionBoundary_clearsIt() =
+    fun aLiveSessionReplacement_clearsItWithItsSuppliedDivider() =
         runTest {
             val f = fixture()
             f.repo.items.value = listOf(messageItem("m1"), boundary("s0", "s1", minute = 1), messageItem("m2"))
@@ -252,10 +217,11 @@ class ThreadViewModelTurnRecoveryTest {
             raise(f)
 
             f.repo.items.value = f.repo.items.value + boundary("s1", "s2", minute = 3)
+            f.repo.sessions.emit(LiveRefusalEvent.SessionReplaced)
             advanceUntilIdle()
 
             assertNull(f.vm.turnOutcome.value)
-            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=session_boundary"))
+            assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=session"))
         }
 
     @Test
@@ -332,23 +298,53 @@ class ThreadViewModelTurnRecoveryTest {
             assertTrue(logs.contains("event=turn_recovery_notice state=cleared reason=reconnect"))
         }
 
-    private fun contextOverflow(conversationId: String = CONV) =
-        LiveSessionEvent.TurnEnd(
-            conversationId,
-            turnId = "t1",
-            stopReason = "end_turn",
-            outcome = "success",
-            isError = true,
-            terminalReason = "prompt_too_long",
-        )
+    private fun contextOverflow(owner: Any) =
+        de.pyryco.mobile.data.repository
+            .LiveRootTurnEnd(true, "success", "end_turn", "prompt_too_long", "", { true }, owner)
 
-    private fun messageItem(id: String) = ThreadItem.MessageItem(message(id, "text $id"))
+    private fun messageItem(id: String) =
+        authoritativeItem(
+            id.removePrefix("m").toLong(),
+            "user_message",
+            order =
+                if (id ==
+                    "m1"
+                ) {
+                    10
+                } else {
+                    30
+                },
+            status = "delivered",
+            session = "s1",
+            content = buildJsonObject { put("text", "text $id") }.toString(),
+        )
 
     private fun boundary(
         previous: String,
         next: String,
         minute: Int,
-    ) = ThreadItem.SessionBoundary(previous, next, BoundaryReason.Clear, Instant.parse("2026-10-01T00:0$minute:00Z"))
+    ) = authoritativeItem(
+        100L + minute,
+        "session_divider",
+        order =
+            if (minute ==
+                0
+            ) {
+                1
+            } else if (minute == 1) {
+                20
+            } else {
+                40
+            },
+        session = next,
+        content =
+            buildJsonObject {
+                put("previous_session_id", previous)
+                put("new_session_id", next)
+                put("reason", "clear")
+                put("occurred_at", "2026-10-01T00:0$minute:00Z")
+            }.toString(),
+    )
 
     private companion object {
         const val HOST = "pyrybox"

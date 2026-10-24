@@ -3,6 +3,7 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadCoverage
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSupport
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertFalse
@@ -55,7 +56,7 @@ class RecoveredAgentFamilyTest {
         val captured = requireNotNull(launched.agentFamily(launched.owner))
         for (generation in listOf(launched.owner.generation!!, launched.owner.generation!! + 1)) {
             val current = evidence(snapshot(true).copy(generation = generation))
-            val settled = current.settledAgentAfterRecovery(launched, captured, "after1783")
+            val settled = current.settledAgentAfterRecovery(launched, captured, "after1783", ThreadSupport.Supported(connection))
             assertNotNull("the admitted same family must survive a generation reset", settled)
             assertTrue(current.settledAgentPrecedes(current.owner, requireNotNull(settled), "after1783"))
             if (generation != launched.owner.generation) {
@@ -63,6 +64,68 @@ class RecoveredAgentFamilyTest {
                 assertFalse(current.settledAgentPrecedes(launched.owner, captured, "after1783"))
             }
         }
+    }
+
+    @Test fun certifiedCurrentConnectionReconcilesTheCapturedFamilyAfterProducerGap() {
+        val launched = evidence(snapshot(false))
+        val captured = requireNotNull(launched.agentFamily(launched.owner))
+        val replacement = Any()
+        val current = evidence(snapshot(true).copy(generation = launched.owner.generation!! + 1), source = replacement)
+        assertFalse("ordinary owner matching must still reject the retired connection", current.owner.matches(launched.owner))
+        assertFalse(current.settledAgentPrecedes(launched.owner, captured, "after1783"))
+        assertNotNull(
+            "certified current facts must reconcile the durable family after connection replacement",
+            current.settledAgentAfterRecovery(launched, captured, "after1783", ThreadSupport.Supported(replacement)),
+        )
+    }
+
+    @Test fun recoveryRequiresExplicitCurrentSupportAndRejectsRetiredOrForeignEvidence() {
+        val launched = evidence(snapshot(false))
+        val captured = requireNotNull(launched.agentFamily(launched.owner))
+        val replacement = Any()
+        val supported = ThreadSupport.Supported(replacement)
+        val finished = snapshot(true).copy(generation = launched.owner.generation!! + 1)
+        val current = evidence(finished, source = replacement)
+        for (support in listOf(ThreadSupport.Unverified, ThreadSupport.Missing(replacement), ThreadSupport.Supported(connection))) {
+            assertNull(current.settledAgentAfterRecovery(launched, captured, "after1783", support))
+        }
+        val foreign =
+            listOf(
+                evidence(finished),
+                evidence(finished, source = Any()),
+                evidence(finished, host = "foreign", source = replacement),
+                evidence(finished, conversation = "foreign", source = replacement),
+            )
+        foreign.forEach { assertNull(it.settledAgentAfterRecovery(launched, captured, "after1783", supported)) }
+        assertNotNull(current.settledAgentAfterRecovery(launched, captured, "after1783", supported))
+        val foreignLaunch = evidence(snapshot(false), host = "foreign")
+        assertNull(current.settledAgentAfterRecovery(foreignLaunch, captured, "after1783", supported))
+        assertNull(
+            current.settledAgentAfterRecovery(
+                launched,
+                requireNotNull(foreignLaunch.agentFamily(foreignLaunch.owner)),
+                "after1783",
+                supported,
+            ),
+        )
+    }
+
+    @Test fun recoveryRequiresBoundSnapshotOwnershipAndGenerationForDocumentReplacement() {
+        val launched = evidence(snapshot(false).copy(incarnation = "launch-document"))
+        val captured = requireNotNull(launched.agentFamily(launched.owner))
+        val sameGeneration = snapshot(true).copy(incarnation = "replacement-document")
+        val advanced = sameGeneration.copy(generation = launched.owner.generation!! + 1)
+        val support = ThreadSupport.Supported(connection)
+        assertNull(evidence(sameGeneration).settledAgentAfterRecovery(launched, captured, "after1783", support))
+        assertNotNull(evidence(advanced).settledAgentAfterRecovery(launched, captured, "after1783", support))
+        val current = evidence(advanced)
+        for (owner in listOf(current.owner.copy(epoch = "foreign"), current.owner.copy(generation = advanced.generation - 1))) {
+            val unbound = ThreadEvidence(owner, current.records, sourceSnapshot = advanced)
+            assertNull(unbound.settledAgentAfterRecovery(launched, captured, "after1783", support))
+        }
+        val unboundLaunch =
+            ThreadEvidence(launched.owner.copy(epoch = "foreign"), launched.records, sourceSnapshot = launched.sourceSnapshot)
+        assertNull(current.settledAgentAfterRecovery(unboundLaunch, captured, "after1783", support))
     }
 
     @Test fun foreignOrUncertifiedRecoveryCannotReuseCapturedFactIds() {
@@ -97,7 +160,10 @@ class RecoveredAgentFamilyTest {
                 evidence(snapshot(false)),
             )
         bad.forEachIndexed { index, reading ->
-            assertNull("foreign or damaged candidate $index", reading.settledAgentAfterRecovery(launched, captured, "after1783"))
+            assertNull(
+                "foreign or damaged candidate $index",
+                reading.settledAgentAfterRecovery(launched, captured, "after1783", ThreadSupport.Supported(connection)),
+            )
         }
     }
 
@@ -126,18 +192,18 @@ class RecoveredAgentFamilyTest {
         val current = evidence(streamedSnapshot(true))
         assertNotNull(
             "a newer terminal revision may append to the captured active paragraph",
-            current.settledAgentAfterRecovery(launched, captured, "after1783"),
+            current.settledAgentAfterRecovery(launched, captured, "after1783", ThreadSupport.Supported(connection)),
         )
         for (bad in listOf(
             evidence(streamedSnapshot(true, "different child1827-after")),
             evidence(streamedSnapshot(true).change(3, "rev", JsonPrimitive(3))),
             evidence(streamedSnapshot(true).change(3, "active", JsonPrimitive(true))),
         )) {
-            assertNull(bad.settledAgentAfterRecovery(launched, captured, "after1783"))
+            assertNull(bad.settledAgentAfterRecovery(launched, captured, "after1783", ThreadSupport.Supported(connection)))
         }
         val completedBefore = evidence(snapshot(false))
         val completedFamily = requireNotNull(completedBefore.agentFamily(completedBefore.owner))
-        assertNull(current.settledAgentAfterRecovery(completedBefore, completedFamily, "after1783"))
+        assertNull(current.settledAgentAfterRecovery(completedBefore, completedFamily, "after1783", ThreadSupport.Supported(connection)))
     }
 
     @Test fun anOwnedFragmentCanShareAParagraphButCannotBeMissingOrDuplicated() {

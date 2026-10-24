@@ -20,10 +20,12 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — how it works, overlays, retry and the app bar](thread-screen-how-it-works-overlays-and-app-bar.md) — `Connection status placement`, `Thinking-indicator placement (post-#407)`, `Thread top overlay placement (post-#1002)`, `Interrupt-affordance placement (post-#459)`, `Stall-promotion-banner placement (post-#396, retired from the screen in #883)`, `Permission-modal overlay placement (post-#446)`, `fun retry() — non-suspend, VM owns the launch`, `connectionState: StateFlow<ConnectionState> — same lifetime as state`, `ThreadTopAppBar — Figma 16:8 chrome`, `Modifier ordering inside the body`
 - [Thread screen — testing](thread-screen-testing.md) — `Testing`
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
+- [Thread screen — expanded details](thread-screen-expanded-details.md) — body/child demand, freshness, Retry, retention and lifecycle.
+- [Thread screen — wiring](thread-screen-wiring.md) — `Wiring`, `Koin binding`, `Destination block`, and the composer topic pointer; split for #2388.
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections
-above), `## Configuration`, `## Related`.
+The sections that stay here: `## What it does`, `## How it works`, `## Configuration`,
+`## Related`, and a link to the extracted wiring topic.
 
 ## What it does
 
@@ -67,7 +69,7 @@ ordered rows. A hidden drop disappears; explicit shown unordered `lost` retains
 its text and **Lost** label without delivered styling or queue controls. Sending
 has no controls; queued items with malformed handles retain text without actions.
 Omission from a batch, disconnect, timeout and queue disappearance prove neither
-delivery nor loss. [Guarded actions](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466)
+delivery nor loss. [Guarded actions](queued-backlog.md)
 wait for admitted facts before changing rows. Capability activation and combined
 deterministic/real-daemon proof remain with #1988.
 
@@ -88,7 +90,7 @@ repository without confirmation or optimistic row movement; failure uses drop's 
 treatment. Backlog removal does not establish delivered position: the first modern delivered
 push or stored history delivery does, and a late tap can open the next turn. Parked own echoes
 read below the running turn in snapshot FIFO order, independent of temporary store reservations.
-Delayed drain snapshots cannot move an established delivery into its answering reply (#1655). See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
+Delayed drain snapshots cannot move an established delivery into its answering reply (#1655). See [queue control and ordering](queued-backlog.md)
 and [row geometry/accessibility](queued-backlog-section.md#styling).
 
 Opening or reopening a thread shows the current text of a streaming row created
@@ -124,8 +126,17 @@ and [hardware evidence](thread-screen-testing-coverage.md#testing).
 Complete thread content publishes at most once per actual display frame during
 snapshot/live bursts; unrelated composer and action state remains responsive.
 Rows and exact read evidence travel together. See
-[worker admission, pacing and cancellation](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstateinwhilesubscribed--three-upstreams-since-137)
+[worker admission, pacing and cancellation](thread-screen-how-it-works-state.md)
 and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
+
+Closed tool bodies and descendants behind omitted ancestors keep summaries until demanded. Retention, coverage and wire delivery stay independent; summaries never prove sight. See [deferred presentation probes](thread-screen-testing.md#deferred-authoritative-presentation-2375).
+
+**Expanded tool bodies and agent children.** Visible expanded rows use bounded,
+connection-owned demand. Same-owner stale contents remain beside Loading, Retry
+or offline state until validated replacement; unchanged valid details reopen
+without refetch. See [expanded details](thread-screen-expanded-details.md) for
+invalidation, first-page restart, retention and lifecycle behavior, and
+[counted #2391 evidence for #2393](../../e2e-interactive-stream.md#expanded-detail-validity-evidence-2391).
 
 **Foreground read checkpoints (#1912, #2085).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only while the destination is resumed and
@@ -316,81 +327,7 @@ prompt still use the bottom snackbar.
 
 ## Wiring
 
-### Koin binding
-
-```kotlin
-// di/AppModule.kt
-viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
-```
-
-The factory receives the entry's `SavedStateHandle` and the app-scoped
-`ComposerDraftStore` ([#789](../codebase/789.md)). It no longer receives
-`AppPreferences` — [#807](../codebase/807.md) removed the thread's last read of it
-(`defaultModel` / `defaultEffort`), so no thread-destination state reads a device
-preference any more; see [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing).
-It reads the exact `serverId` and binds a `StableConversationRepository` to that
-retained bundle's coordinator stream; `ThreadViewModel` continues to read the
-host-local `conversationId`. The bundle also supplies connection state, live
-session events, the current permission modal and its answer/cancel callbacks, and
-Stop. See [destination dependencies](dependency-injection-host-conversation-source.md#destination-ownership).
-
-Messages, sessions, queue state, Send, Reset session, queue drop, Send now and existing
-repository-backed actions stay with that owner. Switching compatibility selection
-while a thread or permission prompt is open cannot redirect reads or writes.
-Reconnect replaces the concrete repository beneath the same owner facade; an A
-outage leaves B usable. During disconnect/handshake, existing empty/default reads,
-unavailable actions and error handling remain in effect without using B as a
-fallback. Overlay Retry passes the captured bundle to the registry's
-[lifecycle-checked exact-host Retry](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle).
-
-With `useRelay = false`, the explicit `demo` destination uses the existing fake
-singleton, a connected fake connection source, empty live events, hidden modal
-state and inert default control callbacks, even with real hosts saved.
-
-### Destination block
-
-`PyryNavHost` registers `Routes.CONVERSATION_THREAD` with
-`Routes.hostArguments()`, reconstructs its `HostConversationTarget`, and calls
-`HostDestination` before resolving `koinViewModel<ThreadViewModel>()`. The guard
-waits for saved-host initialization; unknown/removed owners return to the list.
-Both route arguments survive saved back-stack restoration. Each entry owns its
-ViewModel, so equal conversation ids on A and B remain distinct. The temporary
-flat-list adapters capture selection only at entry, then consume host-qualified
-navigation; see [navigation ownership](navigation.md#how-it-works).
-
-Since [#661](question-batch-modal.md), this same destination block also collects `vm.questionModal` for the
-conversation's held [clarification batch](question-batch-modal.md). **Through #1305's plan this was drawn
-as a gate-shaped `Dialog` directly beside the `ThreadScreen` call, not a `ThreadScreen` parameter — #1305
-superseded that placement.** The batch now renders inline, inside the message stream, so it *is* a
-`ThreadScreen` parameter: `questionState = questionModal` and `onQuestionEvent = { event, generation ->
-vm.onQuestionEvent(event, generation) }` are passed straight into the `ThreadScreen(...)` call here, and the
-process-lifetime picks live in the app-scoped `QuestionDraftStore` rather than this destination's own state
-— see [Question batch modal § Placement](question-batch-modal.md#placement-inline-in-threadscreen-since-1305)
-and [§ Batch ownership](question-batch-modal.md#batch-ownership-process-lifetime-drafts-source--and-request-bound-sends).
-
-The destination collects the ViewModel's state, connection/live indicators and
-permission state with `collectAsStateWithLifecycle()`, and passes callbacks and
-error flows into the stateless `ThreadScreen`. `ThreadNavigation.PopBack` remains
-collected in `LaunchedEffect(vm)` at the route, where the `NavController` lives.
-[#883](../../specs/architecture/883-retire-literal-screen.md) removed the
-`literal_screen/{serverId}/{conversationId}` destination this block used to reach
-from the overflow menu's "Show the literal screen" item, once the daemon dropped
-the server-side screen-snapshot render path — the destination no longer collects
-`vm.isStalled` either, since that flag's only consumer was the retired stall
-promotion banner (see [Stall state](stall-state.md)).
-
-The guard also wraps the screen in `HostWorkspaceRepository`, providing
-`LocalWorkspacePickerRepository` for the route host. This covers the nested
-[WorkspacePicker](workspace-picker.md)'s own recents/folder-creation reads and
-writes as well as `vm::onWorkspacePicked`. A correct ViewModel binding alone
-cannot prevent a descendant's global Koin lookup from consulting another host.
-The facade follows reconnect and preserves the picker's existing generic failure
-UI and cancellation behavior. Production-route picker tests exercise this boundary;
-see [DI testing](dependency-injection.md#testing).
-
-### Composer drafts and attachments
-
-Split out on 2026-09-24 into [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md): `Composer draft ownership` (the `ComposerDraftStore` text map, its creation/restore/clear/eviction rules) and `Composer pending attachments` (the parallel attachment map, the `AttachmentReader` trust boundary, the [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) picker and strip, and the [#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) paste path that joins the same sink). Both subsections kept their heading and anchor.
+See [thread destination and Koin wiring](thread-screen-wiring.md#wiring).
 
 ## Configuration
 
@@ -400,7 +337,7 @@ Split out on 2026-09-24 into [Thread screen — composer drafts and attachments]
 
 ## Related
 
-- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/188.md`](../codebase/188.md) (input bar + `sendMessage`), [`../codebase/201.md`](../codebase/201.md) (ConnectionBanner wiring), [`../codebase/137.md`](../codebase/137.md) (WorkspaceChip + WorkspacePicker hosting + `ThreadUiState` widening to six fields), [`../codebase/246.md`](../codebase/246.md) (LazyColumn body filled with typed `ThreadItem` render loop + seventh `items` field on `ThreadUiState`), [`../codebase/136.md`](../codebase/136.md) (above-delimiter opacity + `itemsIndexed` migration + `mostRecentSessionBoundaryIndex` helper + `previewItemsWithBoundaries`), [`../codebase/138.md`](../codebase/138.md) (empty-state prompt + `if (!hasMessages) … else …` branch around the `LazyColumn`), [`../codebase/145.md`](../codebase/145.md) (ThreadStatusRow stacked above ThreadInputBar in bottomBar; `model`/`effort`/`tokenPercent` on ThreadUiState; the hoisted `onExpandClick` placeholder that #254 later deleted), [`../codebase/251.md`](../codebase/251.md) (sealed `ThreadEvent` + `ThreadViewModel.onOverflowEvent` dispatcher; the [`ThreadOverflowMenu`](thread-overflow-menu.md) composable lands exported but not mounted), [`../codebase/252.md`](../codebase/252.md) (mounts `ThreadOverflowMenu` inside `ThreadTopAppBar`'s `actions` slot, hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, renames `onOverflowClick` to `onOverflowEvent`, binds `vm::onOverflowEvent` at the `MainActivity` destination), [`../codebase/254.md`](../codebase/254.md) ([`StatusSheet`](status-sheet.md) shell + Model section + screen-hoisted `sheetVisible` + `onModelSelected` parameter swap), [`../codebase/141.md`](../codebase/141.md) (rename dialog wiring — `RenameDialog` composable hosted as a `Scaffold` sibling, `showRenameDialog: Boolean` field on `ThreadUiState`, `pendingRenameDialog: MutableStateFlow<Boolean>` as the fourth `combine` source, two new `ThreadEvent` cases `RenameSubmit(name)` + `RenameDismiss`, three new arms on `onOverflowEvent` that replace the [#252](../codebase/252.md) `Rename` no-op), [`../codebase/185.md`](../codebase/185.md) (streaming auto-scroll — `LazyListState` hoist + `NestedScrollConnection` user-input filter + two `LaunchedEffect`s on item 0's measured size and the bottom-anchor predicate), [`../codebase/226.md`](../codebase/226.md) ([`ChannelInfoSheet`](channel-info-sheet.md) host as a fifth `Scaffold` sibling — `channelInfoOpen` + three ingredient fields on `ThreadUiState`, `pendingChannelInfo` folded into `TransientDialogs`, `ChannelInfoDismiss` event, and the pure `toChannelInfoUiModel` mapper), [`../codebase/227.md`](../codebase/227.md) (the sheet's Archive / Delete wired — `Archive` close-and-pop, `Delete` / `DeleteConfirm` / `DeleteDismiss` + the `DeleteConfirmationDialog` sixth sibling + `deleteConfirmVisible` flag + the `ThreadNavigation` one-shot pop-back channel collected in `MainActivity`), [`../codebase/446.md`](../codebase/446.md) (the permission-modal overlay as the seventh `Scaffold` sibling — the `modalState` / `onModalOption` / `onModalCancel` params + the then-used snackbar host (removed in #1851) + the `PermissionModalOverlay` / `ModalOptionButton` / `dismissReasonText` private composables + the dialog-window `FLAG_SECURE`), [`../codebase/603.md`](../codebase/603.md) (deleted `tokenPercent` / `tokensUsed` / `tokensTotal` and the `STUB_*` constants #145 introduced, once [#601](../codebase/601.md) and [#602](../codebase/602.md) had both stopped reading them; stripped the matching arg from all five `ThreadScreen.kt` preview literals), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces), [#789](https://github.com/pyrycode/pyrycode-mobile/issues/789) (composer text ownership moved from `ThreadInputBar`'s `rememberSaveable` to the app-scoped [`ComposerDraftStore`](#composer-draft-ownership); no visual change), [#790](https://github.com/pyrycode/pyrycode-mobile/issues/790) (host-removal and conversation-deletion draft eviction — see [Composer draft ownership](#composer-draft-ownership); no visual change), [#798](https://github.com/pyrycode/pyrycode-mobile/issues/798) (the same two removals now also clear cached conversation content — see [Conversation cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) and [Caching conversation repository § delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798); no visual change), [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) (the newest-row pin — a second `LaunchedEffect` beside [`#185`](../codebase/185.md)'s streaming auto-scroll follows any new newest row into view, streaming or not, unless the reader has scrolled away; see [Thread screen — list and status row](thread-screen-how-it-works-list-and-status-row.md); no visual change)
+- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/188.md`](../codebase/188.md) (input bar + `sendMessage`), [`../codebase/201.md`](../codebase/201.md) (ConnectionBanner wiring), [`../codebase/137.md`](../codebase/137.md) (WorkspaceChip + WorkspacePicker hosting + `ThreadUiState` widening to six fields), [`../codebase/246.md`](../codebase/246.md) (LazyColumn body filled with typed `ThreadItem` render loop + seventh `items` field on `ThreadUiState`), [`../codebase/136.md`](../codebase/136.md) (above-delimiter opacity + `itemsIndexed` migration + `mostRecentSessionBoundaryIndex` helper + `previewItemsWithBoundaries`), [`../codebase/138.md`](../codebase/138.md) (empty-state prompt + `if (!hasMessages) … else …` branch around the `LazyColumn`), [`../codebase/145.md`](../codebase/145.md) (ThreadStatusRow stacked above ThreadInputBar in bottomBar; `model`/`effort`/`tokenPercent` on ThreadUiState; the hoisted `onExpandClick` placeholder that #254 later deleted), [`../codebase/251.md`](../codebase/251.md) (sealed `ThreadEvent` + `ThreadViewModel.onOverflowEvent` dispatcher; the [`ThreadOverflowMenu`](thread-overflow-menu.md) composable lands exported but not mounted), [`../codebase/252.md`](../codebase/252.md) (mounts `ThreadOverflowMenu` inside `ThreadTopAppBar`'s `actions` slot, hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, renames `onOverflowClick` to `onOverflowEvent`, binds `vm::onOverflowEvent` at the `MainActivity` destination), [`../codebase/254.md`](../codebase/254.md) ([`StatusSheet`](status-sheet.md) shell + Model section + screen-hoisted `sheetVisible` + `onModelSelected` parameter swap), [`../codebase/141.md`](../codebase/141.md) (rename dialog wiring — `RenameDialog` composable hosted as a `Scaffold` sibling, `showRenameDialog: Boolean` field on `ThreadUiState`, `pendingRenameDialog: MutableStateFlow<Boolean>` as the fourth `combine` source, two new `ThreadEvent` cases `RenameSubmit(name)` + `RenameDismiss`, three new arms on `onOverflowEvent` that replace the [#252](../codebase/252.md) `Rename` no-op), [`../codebase/185.md`](../codebase/185.md) (streaming auto-scroll — `LazyListState` hoist + `NestedScrollConnection` user-input filter + two `LaunchedEffect`s on item 0's measured size and the bottom-anchor predicate), [`../codebase/226.md`](../codebase/226.md) ([`ChannelInfoSheet`](channel-info-sheet.md) host as a fifth `Scaffold` sibling — `channelInfoOpen` + three ingredient fields on `ThreadUiState`, `pendingChannelInfo` folded into `TransientDialogs`, `ChannelInfoDismiss` event, and the pure `toChannelInfoUiModel` mapper), [`../codebase/227.md`](../codebase/227.md) (the sheet's Archive / Delete wired — `Archive` close-and-pop, `Delete` / `DeleteConfirm` / `DeleteDismiss` + the `DeleteConfirmationDialog` sixth sibling + `deleteConfirmVisible` flag + the `ThreadNavigation` one-shot pop-back channel collected in `MainActivity`), [`../codebase/446.md`](../codebase/446.md) (the permission-modal overlay as the seventh `Scaffold` sibling — the `modalState` / `onModalOption` / `onModalCancel` params + the then-used snackbar host (removed in #1851) + the `PermissionModalOverlay` / `ModalOptionButton` / `dismissReasonText` private composables + the dialog-window `FLAG_SECURE`), [`../codebase/603.md`](../codebase/603.md) (deleted `tokenPercent` / `tokensUsed` / `tokensTotal` and the `STUB_*` constants #145 introduced, once [#601](../codebase/601.md) and [#602](../codebase/602.md) had both stopped reading them; stripped the matching arg from all five `ThreadScreen.kt` preview literals), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces), [#789](https://github.com/pyrycode/pyrycode-mobile/issues/789) (composer text ownership moved from `ThreadInputBar`'s `rememberSaveable` to the app-scoped [`ComposerDraftStore`](#composer-draft-ownership); no visual change), [#790](https://github.com/pyrycode/pyrycode-mobile/issues/790) (host-removal and conversation-deletion draft eviction — see [Composer draft ownership](#composer-draft-ownership); no visual change), [#798](https://github.com/pyrycode/pyrycode-mobile/issues/798) (the same two removals now also clear cached conversation content — see [Conversation cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) and [Caching conversation repository § delete](caching-conversation-repository.md); no visual change), [#981](https://github.com/pyrycode/pyrycode-mobile/issues/981) (the newest-row pin — a second `LaunchedEffect` beside [`#185`](../codebase/185.md)'s streaming auto-scroll follows any new newest row into view, streaming or not, unless the reader has scrolled away; see [Thread screen — list and status row](thread-screen-how-it-works-list-and-status-row.md); no visual change)
 - Specs: `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/139-thread-topappbar-back-title-overflow.md`, `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/201-thread-screen-wire-connectionbanner.md`, `docs/specs/architecture/137-workspace-chip-empty-new-discussion-thread.md`, `docs/specs/architecture/246-wire-thread-items-into-lazycolumn.md`, `docs/specs/architecture/136-above-delimiter-opacity-treatment.md`, `docs/specs/architecture/138-empty-thread-state-copy-visual.md`, `docs/specs/architecture/145-thread-status-row.md`, `docs/specs/architecture/185-auto-scroll-thread-streaming.md`, `docs/specs/architecture/981-thread-pins-new-newest-row.md`, `docs/specs/architecture/252-thread-overflow-menu-mount-and-wire.md`, `docs/specs/architecture/227-channelinfosheet-archive-delete-actions.md`, `docs/specs/architecture/789-per-conversation-composer-drafts.md`, `docs/specs/architecture/790-drop-drafts-on-host-or-conversation-removal.md`, `docs/specs/architecture/843-thread-re-pair.md` (the composer status area's Re-pair action — see [overlays and app bar § trailing contextual-action slot](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643))
 - Upstream: [Navigation](navigation.md) (the `conversation_thread/{serverId}/{conversationId}` route this destination consumes), [Conversation repository](conversation-repository.md) (the `observeConversations(All)` + `observeMessages` + `changeWorkspace` surfaces the VM consumes; `sendMessage` it forwards to since #188; `observeMessages` + `changeWorkspace` added since #137), [Connection state](connection-state.md) (the `ConnectionStateSource.observe()` / `retry()` contract the VM consumes since #201), [Dependency injection](dependency-injection.md) (the host-owned `ThreadDestinationFactory` binding), [Paired server store](paired-server-store.md#wiring--usage) (the `ObservablePairedServerStore.remove` hook that evicts a host's drafts on unpair, since #790)
 - Child components: [Thread input bar](thread-input-bar.md) (the composer in `bottomBar`, landed in #188), [Slash-command type-ahead](slash-command-type-ahead.md) (composer suggestions anchored above the input bar, via [Options overlay](options-overlay.md); landed in [#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) — see [overlays and app bar § Slash-command type-ahead placement](thread-screen-how-it-works-overlays-and-app-bar.md#slash-command-type-ahead-placement-post-885)), [Thread composer footer](thread-composer-footer.md) (the model/effort buttons and Status-sheet opener below the input bar in `bottomBar`; landed as the `ThreadStatusRow` single status line in #145, tap-to-open the Status Sheet wired in #254, replaced by the two-button footer plus [Options overlay](options-overlay.md) in [#808](../codebase/808.md)), [Connection status indicator](connection-banner.md) (Connecting/Reconnecting in the composer; Offline Retry in the overlay), [WorkspaceChip](workspace-chip.md) (the empty-discussion chip between banner and list, wired in #137), [WorkspacePicker](workspace-picker.md) (rendered as Scaffold sibling, wired in #137), [StatusSheet](status-sheet.md) (rendered as Scaffold sibling gated on screen-hoisted `sheetVisible`, wired in #254 — Model section only; #229/#230 append sibling sections), [RenameDialog](rename-dialog.md) (rendered as Scaffold sibling gated on `state.showRenameDialog`, wired in [#141](../codebase/141.md); seeded with `state.displayName` as `initialName`, emits `ThreadEvent.RenameSubmit(name)` / `RenameDismiss` through `onOverflowEvent`), [ChannelInfoSheet](channel-info-sheet.md) (rendered as Scaffold sibling gated on `state.channelInfoOpen`, wired in [#226](../codebase/226.md); fed a `ChannelInfoUiModel` via the pure `state.toChannelInfoUiModel(now)` mapper, Rename / Change workspace emit-then-dismiss through `onOverflowEvent`; Archive / Delete wired in [#227](../codebase/227.md) — Archive closes-and-pops, Delete opens the `DeleteConfirmationDialog`), [DeleteConfirmationDialog](thread-screen-how-it-works-sheets.md#channelinfosheet-archivedelete--pop-back-nav-post-227) (private confirm dialog rendered as the sixth Scaffold sibling gated on `state.deleteConfirmVisible`, wired in [#227](../codebase/227.md)), [Permission-modal overlay](permission-modal-overlay.md) (the `PermissionModalOverlay` `BasicAlertDialog` rendered as the seventh Scaffold sibling when `modalState is ModalUiState.Open`, wired in [#446](../codebase/446.md); collects the hoisted app-level [`currentModal`](current-modal-state.md) from #445, dialog-window `FLAG_SECURE`, `Dismissed` → mapped-reason Default top-overlay pill; answering is #444), [EmptyThreadState](empty-thread-state.md) (the centered empty-thread prompt that occupies the `weight(1f)` slot when `!hasMessages`, wired in #138), [MessageBubble](message-bubble.md) (`MessageItem` row dispatch since #246), [SessionBoundaryDelimiter](session-boundary-delimiter.md) (`SessionBoundary` row dispatch since #246), [Model refusal row](model-refusal-row.md) (`ThreadItem.ModelRefusal` row dispatch, `listKey()` and `timestamp()` arms, wired in [#875](../codebase/875.md)), [Stopped-turn row](stopped-turn-row.md) (`ThreadItem.StoppedTurn` row dispatch, `listKey()` and `timestamp()` arms, wired in [#1356](https://github.com/pyrycode/pyrycode-mobile/issues/1356)), [ThreadOverflowMenu](thread-overflow-menu.md) (client-owned Actions overlay consuming `ThreadEvent`, hosted directly by the screen since #1666 — the screen owns `overflowExpanded` via `rememberSaveable`)

@@ -18,7 +18,10 @@ class RecordedMobileSuiteTest {
     @get:Rule(order = Int.MIN_VALUE + 1)
     val cleanup = original.sessionCleanup
 
-    @get:Rule val compose: TestRule = RecordedActivityRule(original.composeTestRule, RecordedSuiteNative::beforePhoneTeardown)
+    @get:Rule val compose: TestRule =
+        RecordedActivityRule(original.composeTestRule) {
+            RecordedSuiteNative.beforePhoneTeardown(original.sessionCleanup::endWhileActivityAlive)
+        }
 
     @get:Rule val ime = original.testIme
 
@@ -47,6 +50,9 @@ class RecordedMobileSuiteTest {
 
     @Test
     fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() = original.interactiveTurn_backgroundAgent_replyStaysUnderAgent()
+
+    @Test fun interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect() =
+        original.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect()
 
     @Test fun interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect() =
         original.interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect()

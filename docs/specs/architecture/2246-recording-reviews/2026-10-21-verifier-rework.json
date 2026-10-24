@@ -1,0 +1,85 @@
+{
+  "implementationOs": "linux",
+  "source": {
+    "mobileRevision": "2d9544c24d0a8ec63d4bfe90e1c1e21f77dc01df",
+    "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+    "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+    "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+    "testApkSha256": "b8bde17716152c9b5fc3ce549a41b8f47d112ad8e2bd5cb0d4aba77aebfb6074",
+    "claudeVersion": "2.1.280 (Claude Code)",
+    "capturedAt": "2026-10-21T12:21:16Z",
+    "presentation": "current-production",
+    "androidApi": "33"
+  },
+  "firstVerifier": {
+    "candidate": "05c9eb9b297fdae59779e75562822ab1ee18da94",
+    "result": "FAIL",
+    "findings": [
+      "recording inventory totals",
+      "finished Agent endedOrder and chronological placement"
+    ]
+  },
+  "python": {
+    "executed": 205,
+    "failed": 0
+  },
+  "focusedPlacement": {
+    "red": {
+      "executed": 9,
+      "failed": 2
+    },
+    "green": {
+      "executed": 9,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "scripted": [
+    {
+      "method": "interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect",
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "method": "interactiveTurn_seededChannel_backgroundAgentMovesAndSettles",
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "freshRestart": {
+    "scenario": "interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect",
+    "capture": {
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 39.882,
+      "nativeSeconds": 34.453,
+      "fixtureSha256": "cc0b270a3792e66adf68d67172d138b4989dbc1e837ae79dc5c475204113a451",
+      "source": {
+        "mobileRevision": "2d9544c24d0a8ec63d4bfe90e1c1e21f77dc01df",
+        "daemonRevision": "a3bfe5e360852586e4af5bf0781ebca00b5ee433",
+        "daemonBinarySha256": "29fd50a44c9bea9476363929bafb7016e61bb9418110987f0ae075a2c8c5a74e",
+        "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+        "testApkSha256": "b8bde17716152c9b5fc3ce549a41b8f47d112ad8e2bd5cb0d4aba77aebfb6074",
+        "claudeVersion": "2.1.280 (Claude Code)",
+        "capturedAt": "2026-10-21T12:21:16Z",
+        "presentation": "current-production",
+        "androidApi": "33"
+      }
+    },
+    "replay": {
+      "executed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 15.228,
+      "nativeSeconds": 14.242,
+      "fixtureSha256": "cc0b270a3792e66adf68d67172d138b4989dbc1e837ae79dc5c475204113a451",
+      "appApkSha256": "7fb85f4700410b9d3faa7b747fd65e9f458bf97a847e99a394bbf9403b78ecaf",
+      "testApkSha256": "b8bde17716152c9b5fc3ce549a41b8f47d112ad8e2bd5cb0d4aba77aebfb6074"
+    }
+  },
+  "committedRecordings": "unchanged; their existing reviewed replacements and seven-case evidence remain at the earlier source",
+  "remaining": "complete configured verifier gates and exact committed restart replay"
+}

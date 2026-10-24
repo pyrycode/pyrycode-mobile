@@ -51,20 +51,22 @@ class ThreadRowContentTypeTest {
                 PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state =
-                            ThreadUiState(
-                                conversationId = "c1",
-                                displayName = "Content types",
-                                hasMessages = true,
-                                items =
-                                    listOf(
-                                        message("single", Role.Tool),
-                                        message("first", Role.User),
-                                        message("run-first", Role.Tool),
-                                        message("run-second", Role.Tool),
-                                        message("second", Role.Assistant),
-                                    ),
-                                queuedMessages = listOf(QueuedMessage(7L, "Waiting", ts)),
-                            ),
+                            (
+                                ThreadUiState(
+                                    conversationId = "c1",
+                                    displayName = "Content types",
+                                    hasMessages = true,
+                                    items =
+                                        listOf(
+                                            message("single", Role.Tool),
+                                            message("first", Role.User),
+                                            message("run-first", Role.Tool),
+                                            message("run-second", Role.Tool),
+                                            message("second", Role.Assistant),
+                                        ),
+                                    queuedMessages = listOf(QueuedMessage(7L, "Waiting", ts)),
+                                )
+                            ).withLiteralRows(),
                         onBack = {},
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,

@@ -1,0 +1,356 @@
+{
+  "ticket": 2367,
+  "operatingSystem": "macOS",
+  "scope": "Focused builder evidence; full dispatcher acceptance pending",
+  "countOrder": [
+    "executed",
+    "passed",
+    "failed",
+    "errors",
+    "skipped"
+  ],
+  "nativeMobileRevision": "a32966895985c909b50c9900861be4abc36319ce",
+  "testFixtureCorrectionRevision": "f53860430257e066e3d90cb91dffb8aac31f4d3f",
+  "unitSourceNote": "First six classes ran on the native candidate. Corrected attention and shown-metadata fixtures used the working tree committed as f53860430; later classes ran on that commit. Production and device-test sources did not change after the native candidate. XML timestamps distinguish runs.",
+  "daemonSourceAndBinaryRevision": "fbd5f2c9cd99c2c5864f4772c4e85f74d7a8dbfe",
+  "daemonBinarySha256": "4d62d5ad4c5189315c46dd9c11232b6f8133759d17b483185aa8e5cbe15bc534",
+  "privateEvidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2367/builder-a3296689",
+  "privateManifest": "SHA256SUMS",
+  "daemonEvidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2367/harness/fault-55577a8db2c428691324be469004470c",
+  "finalUnitTotal": [
+    602,
+    602,
+    0,
+    0,
+    0
+  ],
+  "finalUnits": [
+    {
+      "report": "final-de.pyryco.mobile.data.repository.RemoteConversationRepositoryTest.xml",
+      "sha256": "9a05bbe087488167f2a36ea5e5dede6c44b7ca0e56925f6fb10612914d467889",
+      "counts": [
+        270,
+        270,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T15:59:15.580Z",
+      "classes": [
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.data.repository.ShownVersionReadMarksTest.xml",
+      "sha256": "785a813b13fd32263cbf534cee0e8bd66625d576400e83173a07c0b403260442",
+      "counts": [
+        6,
+        6,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:15:51.219Z",
+      "classes": [
+        "de.pyryco.mobile.data.repository.ShownVersionReadMarksTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.di.HostConversationSourceAttentionTest.xml",
+      "sha256": "fa9c9658007fdf6b0435d1da6bf39a8cb326c3df7263bf10cb37d7196c897de1",
+      "counts": [
+        9,
+        9,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:15:09.091Z",
+      "classes": [
+        "de.pyryco.mobile.di.HostConversationSourceAttentionTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.e2e.ProducerReplyPreviewTest.xml",
+      "sha256": "29961983d23b38aa5bcdeca12437306db93ff7f79ae9bc2045e88d69ae758d8c",
+      "counts": [
+        3,
+        3,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:02:25.076Z",
+      "classes": [
+        "de.pyryco.mobile.e2e.ProducerReplyPreviewTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.notifications.AttentionNotifierTest.xml",
+      "sha256": "b18e34454fa16875e55e934a598f7c4b93ac7fc2320b6ae2525fa2217f615b2c",
+      "counts": [
+        43,
+        43,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:16:04.743Z",
+      "classes": [
+        "de.pyryco.mobile.notifications.AttentionNotifierTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.notifications.AuthoritativeCompletionNotifierTest.xml",
+      "sha256": "f9fdfe086138c8ea3b635103ee84d4f27831e113e9b646dfcdba196c26dc96f5",
+      "counts": [
+        31,
+        31,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:18:06.053Z",
+      "classes": [
+        "de.pyryco.mobile.notifications.AuthoritativeCompletionNotifierTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.recording.SuiteReadReceiptsTest.xml",
+      "sha256": "bd36065510aafaabdbc9f00d53edf03c7d699ad85e6f8c1f9c8debd3e07a2614",
+      "counts": [
+        14,
+        14,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:00:06.273Z",
+      "classes": [
+        "de.pyryco.mobile.recording.SuiteReadReceiptsTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.ui.conversations.thread.BackgroundAgentBlocksScreenTest.xml",
+      "sha256": "8b10ca743fe11997f2e581b98379d0acf112bdc0f950d77c962da8ef1bcb7d29",
+      "counts": [
+        20,
+        20,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:23:54.890Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.BackgroundAgentBlocksScreenTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.ui.conversations.thread.NegotiatedThreadViewModelTest.xml",
+      "sha256": "fc8123b0dfa0738c994b3955f43edb4b842c53856b4155e09fc79d95215d876a",
+      "counts": [
+        6,
+        6,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T15:59:52.974Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.NegotiatedThreadViewModelTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest.xml",
+      "sha256": "0640bc07b9016dc13cbe3af619770fc12db2c74e17644f6be50013faf06669e3",
+      "counts": [
+        20,
+        20,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:20:13.994Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest.xml",
+      "sha256": "76b609f3737481614e2c4d77c6ef64e3305d3a1809d4fb1e5a40e720751a28cb",
+      "counts": [
+        170,
+        170,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T15:59:32.911Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest"
+      ]
+    },
+    {
+      "report": "final-de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTurnRecoveryTest.xml",
+      "sha256": "e65da0dd95392f7acb58a8187ca3ff1ae536c04b9c310b74bc66d9dccbd9bf77",
+      "counts": [
+        10,
+        10,
+        0,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:08:06.435Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTurnRecoveryTest"
+      ]
+    }
+  ],
+  "native": [
+    {
+      "report": "scripted-ping-gate/dispatcher.xml",
+      "sha256": "fe03944549bca71df6ff68cdd1403faa4357b6862938dc3e8331547b162c5ca8",
+      "counts": [
+        2,
+        2,
+        0,
+        0,
+        0
+      ],
+      "timestamp": null,
+      "classes": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest"
+      ],
+      "methods": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp",
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
+      ]
+    },
+    {
+      "report": "recorded-offline-attachments-gate/dispatcher.xml",
+      "sha256": "cdd2d3df49c2127e90daf9141a032e011aa83ffc42a8650d048da37a68bf3b51",
+      "counts": [
+        2,
+        2,
+        0,
+        0,
+        0
+      ],
+      "timestamp": null,
+      "classes": [
+        "de.pyryco.mobile.recording.RecordedMobileSuiteTest"
+      ],
+      "methods": [
+        "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+        "de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
+      ]
+    }
+  ],
+  "historicalDiagnostics": [
+    {
+      "report": "mixed-repo-red.xml",
+      "sha256": "3ba1ed6cfcf0f1d5e7894a8c8079c33447d5aca6f692c55f153a3dfd5ad448a2",
+      "counts": [
+        281,
+        268,
+        13,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T14:58:06.634Z",
+      "classes": [
+        "de.pyryco.mobile.data.repository.RemoteConversationRepositoryTest"
+      ]
+    },
+    {
+      "report": "mixed-vm-red.xml",
+      "sha256": "cea2c486a617041b3ea417acb373a457f5c170a4edf4c8de7179efc853dd6c68",
+      "counts": [
+        175,
+        169,
+        6,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T15:11:18.782Z",
+      "classes": [
+        "de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest"
+      ]
+    },
+    {
+      "report": "fake-authoritative-red.xml",
+      "sha256": "71326cd5603a0368e04c66ddea3a82ac7d5a1575467eead1bc7cf0a876d40e07",
+      "counts": [
+        60,
+        55,
+        5,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T15:40:16.325Z",
+      "classes": [
+        "de.pyryco.mobile.data.repository.FakeConversationRepositoryTest"
+      ]
+    },
+    {
+      "report": "attention-source-red.xml",
+      "sha256": "cf00eba97d402c690d414f659fc49b38e63ec44aae99d0256f2a8d1475cf8cdb",
+      "counts": [
+        9,
+        8,
+        1,
+        0,
+        0
+      ],
+      "timestamp": "2026-10-21T16:11:44.777Z",
+      "classes": [
+        "de.pyryco.mobile.di.HostConversationSourceAttentionTest"
+      ]
+    },
+    {
+      "report": "first-native-TEST-pixel2Api33Atd-_app-.xml",
+      "sha256": "53dbe8fab6f7c538d8b611a986f1e801be7caf26a3815460c21e932b7fc13c3b",
+      "counts": [
+        1,
+        1,
+        0,
+        0,
+        1
+      ],
+      "timestamp": "2026-10-21T14:39:40",
+      "classes": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest"
+      ]
+    },
+    {
+      "report": "enabled-durable-gap.xml",
+      "sha256": "9b268f1f5593cad39cde888891128d5c1135d169446c86e15b5de41f775eb0c9",
+      "counts": [
+        2,
+        2,
+        0,
+        0,
+        0
+      ],
+      "timestamp": null,
+      "classes": [
+        "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest"
+      ]
+    }
+  ],
+  "historicalNote": "Diagnostic failures and the first skipped durable-gap result remain historical; only fresh counted execution establishes the focused pass. Earlier working-tree unit checks are retained privately and described in the PR.",
+  "pendingFocusedClasses": [],
+  "buildChecks": {
+    "assembleDebug": "passed after last main merge",
+    "lint": "passed after last main merge",
+    "spotlessApply": "passed",
+    "preVerifyGradle": "passed on f53860430; forced spotlessCheck and every Kotlin source set compile"
+  },
+  "dispatcherGates": {
+    "status": "pending",
+    "counts": null,
+    "requiredNamedMethod": "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_durableGapCatchUp"
+  },
+  "liveEvidence": "No fresh real-Claude run claimed. Authoritative offline/reconnect observation and named live caller are unchanged; verifier must assess retained accepted evidence. Recorded replay is not live proof.",
+  "documentationStage": "pending"
+}

@@ -1,99 +1,14 @@
-# Model refusal row — `ThreadItem.ModelRefusal` / `ModelRefusalRow`
+# Model refusal row
 
-The thread's explanation for a changed model or a missing answer: claude refused a turn on one model and
-either retried it on another or did not ([#875](../codebase/875.md), split from #654). Before this ticket
-mobile dropped both `model_refusal_fallback` and `model_refusal_no_fallback` on both lanes, so a refusal
-went unexplained. Landed in the [`Banner`](banner-notice-row.md) / [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
-shape — the fourth `ThreadItem` variant carrying a wire-minted `(type, ts)` identity: one ticket for the
-type, both decode arms, and the row, because the decoder and the renderer are each other's only consumer.
+## Supplied content route
 
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`).
-File: `ModelRefusalRow.kt`. Type + wire DTOs: `data/repository/ConversationRepository.kt`
-(`ThreadItem.ModelRefusal`), `data/network/InteractivePayloads.kt` (`ModelRefusalFallbackPayloadDto`,
-`ModelRefusalNoFallbackPayloadDto`, their `toRow`). Live decode+fold: `data/repository/ThreadProjection.kt`
-(`applyModelRefusal`, `decodeModelRefusal`, `appendModelRefusal`) — since the #912–#916 repository split,
-thread writes live here, not in `RemoteConversationRepository`, which only holds the `onInbound` routing
-arm and the two `TYPE_MODEL_REFUSAL_*` constants. History decode: `data/repository/HistoryPageReducer.kt`
-(`withHistoryEntry`'s two arms, `holdsModelRefusal`). Sibling of [`BannerNoticeRow`](banner-notice-row.md)
-(reuses `bannerDisplayText`).
-
-Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`, § `model_refusal_no_fallback`,
-§ *Joining a page to the live stream* for the `(type, ts)` join key (sibling checkout). Desktop sibling:
-pyrycode-desktop `ConversationScreen.tsx`'s `ModelRefusalRow` — this row's two titles and "unknown model"
-copy are taken from it. Desktop's live-only offer to switch back to the *original* model, once out of
-scope here, is now mobile's own ([#1360](https://github.com/pyrycode/pyrycode-mobile/issues/1360), §
-Switch back below).
-
-## The thread-row type
-
-```kotlin
-sealed interface ThreadItem {
-    data class ModelRefusal(
-        val originalModel: String,
-        val fallbackModel: String?,   // non-null iff the frame was model_refusal_fallback
-        val banner: String,
-        val bannerTruncated: Boolean,
-        val occurredAt: Instant,
-    ) : ThreadItem
-}
-```
-
-- **One variant for both frames.** `fallbackModel != null` *is* the envelope type — the domain carries it
-  without a second flag, since the two frames render as one row kind with one of two titles.
-- **Identity: the frame type — `fallbackModel != null` — plus `occurredAt`**, the envelope's (or stored
-  entry's) `ts`. This is the same choice `banner` made and for the same reason: the daemon stamps one `ts`
-  per refusal and hands it to both lanes, so reusing it is what lets a refusal received live and again in a
-  history page join to one row. The type must stay part of the identity — using `ts` alone would collapse a
-  fallback and a no-fallback that happen to share one instant into one row, which
-  `modelRefusal_repeatOfOneTypeAndTimestamp_foldsOnce` and
-  `merge_theSiblingRefusalTypeAtOneTimestamp_isAdmitted` (below) both cover.
-- **Invariant: unique among a thread's refusal rows**, documented in KDoc and asserted in tests, not
-  enforced at construction (the `SessionBoundary` posture). `ThreadProjection.appendModelRefusal` and
-  `HistoryPageReducer`'s two arms both skip a refusal the thread already holds via the one
-  `holdsModelRefusal` predicate, and `ThreadRow.listKey()` keys a refusal on the same `(type, ts)`, so the
-  three readers can never disagree. A hostile daemon repeating one `(type, ts)` for two different refusals
-  loses the second — the fail-safe direction, a missing row rather than a crashed list.
-- **Every string is claude-authored, unsanitized, bounded daemon-side.** Held verbatim; stripping belongs
-  to the render boundary (`refusalModelDisplay`, `bannerDisplayText`), the same split `banner` makes.
-- **`scope` and `refusal_category` are decoded (shape-checked) and dropped by `toRow`.** They are claude's
-  open assertions and drive nothing. A field the daemon named in `dropped_fields` simply arrives empty; an
-  empty `originalModel` or `fallbackModel` reads "unknown model", an empty `banner` makes the row
-  non-expandable.
-- **`bannerTruncated` = `"banner" in truncated_fields`.** Truncation of a model identifier is not marked —
-  the acceptance criteria name only the banner.
-- **The two DTOs' fields are all strict-required with no Kotlin default** except the two report arrays
-  (`truncated_fields`, `dropped_fields`, nullable because `null` is their normal wire value), matching
-  pyrycode `internal/protocol/interactive.go`'s `ModelRefusalFallbackPayload` / `ModelRefusalNoFallbackPayload`,
-  which set no `omitempty` on the required strings.
-- **The frame is conversation-scoped with no `turn_id`, and neither opens nor closes a turn.** The row
-  drives no turn state, no status-area indicator, and no model state — `model_announced` (see
-  [Conversation repository § `model_announced` / `session_facts`](conversation-repository.md)) stays the
-  only authority for which model is running. The wire cannot identify the refused partial reply, so no
-  other row is retracted or edited.
-
-## Live lane — `ThreadProjection.applyModelRefusal`
-
-`RemoteConversationRepository.onInbound` gives both `TYPE_MODEL_REFUSAL_FALLBACK` (`"model_refusal_fallback"`)
-and `TYPE_MODEL_REFUSAL_NO_FALLBACK` (`"model_refusal_no_fallback"`) one shared arm, gated on
-`CAPABILITY_INTERACTIVE in negotiatedCapabilities()`, that does nothing but call
-`threadProjection.applyModelRefusal(envelope)` — no `liveSessionEvents` emission, no turn/stall/status/model
-write. `ThreadProjection.decodeModelRefusal(envelope)` selects the DTO by `envelope.type` (the only thing
-that tells the two frames apart), stamps `Instant.parse(envelope.ts)`, and drops the one envelope inside a
-single `try`/`catch (IllegalArgumentException)` covering both the decode and the timestamp parse — the
-`decodeBanner` idiom. `appendModelRefusal` end-appends the mapped row inside one atomic
-`threadByConversation.update` unless `holdsModelRefusal(row)` already holds; the dedup check and the write
-share the lambda, so a concurrent merge cannot slip a duplicate in between them. Nothing on this arm logs
-any field but the routing `conversation_id` — every other field is claude's.
-
-## History lane — `withHistoryEntry`'s two arms
-
-Gated the same way as the live lane (`interactive` only). Each arm decodes the entry's stored type, calls
-`toRow(occurredAt = entry.timestamp)` — the entry's own stamped timestamp, not `Clock.System.now()` — and
-skips the row via `holdsModelRefusal` before appending, inside the existing single `try` that costs only
-that entry on a malformed one. `alreadyHolds` (the predicate the history merge runs against the thread the
-live lane already has) gained an `is ThreadItem.ModelRefusal -> holdsModelRefusal(row)` arm.
-`holdsModelRefusal` is the one shared predicate: the history merge, the live lane's `appendModelRefusal`,
-and (transitively) `ThreadRow.listKey()` all agree with it.
+The existing refusal presentation is fed by daemon-built thread items. Canonical
+identity, revision, epoch and order remain supplied. Raw frame decode/fold and
+`HistoryPageReducer`/`ThreadProjection` reconstruction were removed in #2367.
+The component still renders through its existing `ThreadItem` presentation adapter;
+literal component fixtures do not recreate a production content route. See
+[store ownership](remote-conversation-repository-reads-and-thread-store.md) and
+[authoritative rendering](thread-screen-how-it-works-list-and-status-row.md#supplied-authoritative-rendering-1985).
 
 ## The row composable
 
@@ -206,13 +121,10 @@ live or was restored from a history page, the cache (§ below) or a reopened thr
 `ThreadUiState.items`. It is armed from a sibling signal, `ConversationRepository.observeLiveRefusalEvents
 (conversationId): Flow<LiveRefusalEvent>` (defaulted to `emptyFlow()`, so the many repository test fakes
 need no change, the same posture as `observeAnnouncedModel`), emitted only from the live decode path:
-`ThreadProjection.applyModelRefusal` returns the decoded `(conversationId, LiveRefusalEvent.Refused)` pair
-alongside folding the row, and `RemoteConversationRepository` pushes it into a private hot
-`MutableSharedFlow` (`replay = 0`, `DROP_OLDEST`) that `observeLiveRefusalEvents` filters by id;
-`StableConversationRepository` passes it through with `flatMapLatest`. A `TYPE_SESSION_TRANSITION` frame
-emits `LiveRefusalEvent.SessionReplaced` on the same flow. History and cache code paths never touch this
-flow, so a restored or cached refusal row can be on screen with no offer under it — that is the point, not
-a bug to chase.
+Fresh required-thread canonical refusal effects arm current-owner recovery;
+cache/query replay cannot manufacture a new offer. The ViewModel checks the exact
+connection, epoch, generation and stored fact before an action. Removed raw refusal
+frames cannot authorize switching models.
 
 **The reducer** (`ThreadViewModel.onLiveRefusalEvent`, after desktop's table):
 
@@ -299,35 +211,21 @@ be made to refuse on demand. See [the scripted-scenario entry](../../e2e-interac
 in the e2e doc for the fixture and the daemon round trip it proves (a fresh settings reading naming the
 original model, not just the button disappearing).
 
-## `ThreadRow` / `ThreadScreen` wiring
+## Presentation and persistence
 
-All the exhaustive `when`s over `ThreadItem` gained a `ModelRefusal` arm:
-
-- **`ThreadRow.listKey()`** — `"refusal:fallback:$occurredAt"` when `fallbackModel != null`, else
-  `"refusal:no-fallback:$occurredAt"` — unique because `holdsModelRefusal` is.
-- **`ThreadScreen`'s `LazyColumn` render** — `ModelRefusalRow(item = item, agent = state.agent)` (`agent`
-  since #1113). Not a session boundary for `mostRecentSessionBoundaryIndex` — unchanged.
-- **`ThreadItem.timestamp()`** — `occurredAt`.
-- **`HistoryPageReducer.alreadyHolds`** — `holdsModelRefusal(row)`.
-- **`FileConversationCache.toRecord`** — maps to `CachedRefusal(originalModel, fallbackModel, banner,
-  bannerTruncated, occurredAt)` (#1353).
-- **`RemoteConversationRepositoryTest.threadShape()`** — the test-fixture helper outside production code
-  that also needs every `ThreadItem` arm to keep compiling.
-
-## Cache — persisted (#1353)
-
-`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) keeps `ThreadItem.ModelRefusal`
-alongside `Banner` and `CompactionBoundary`; only `ThreadItem.UnrecognizedMessage` still never reaches
-app-private disk — its KDoc forbids persisting raw model-adjacent JSON. The model names and the banner
-text are claude-authored and stored verbatim, the same posture message content already has; the render
-path owns stripping either way. Before #1353 this row was dropped here and restored only by history
-replay after a cold start or a fresh cache (#875); once history loads only on the user's request, that
-replay stopped running on a routine reopen, so the row had to be cached instead. `occurredAt` plus
-`fallbackModel != null` is the row's dedupe key both ways — `ThreadRow.listKey()` for the `LazyColumn`,
-`HistoryPageReducer.holdsModelRefusal` for the merge, and `decodeThread` for rejecting a document that
-repeats it for one frame type.
+The supplied renderer selects this component using canonical item identity/revision.
+It does not join live/history rows by `(type, ts)` or reconstruct content from raw
+frames. Authoritative cache persistence retains supplied facts and certification;
+dormant serialized row support remains for #2364. Component styling, text spans and
+gestures remain unchanged.
 
 ## Testing
+
+The dedicated raw DTO/reducer/live-history tests listed in the original coverage
+below were retired in #2367. These references document historical coverage; current
+supported fixtures supply authoritative facts or literal rows and retain presentation,
+privacy, viewport and control assertions.
+
 
 - `ModelRefusalDisplayTest` (JVM, new): the stripping-set coverage listed above.
 - `RemoteConversationRepositoryTest`, `modelRefusal_*` block: `modelRefusal_bothFramesFoldOneRowEachCarryingValuesVerbatim`
@@ -443,5 +341,32 @@ repeats it for one frame type.
   persistence).
 
 ## Required daemon thread identity
+
+Accepted delivery identity must be established before the daemon publishes the delivery item.
+Core [PR #3726](https://github.com/pyrycode/pyrycode/pull/3726) supplies the committed acceptance
+reference in `operatorMessageHistory`; `Fold.deliverSend` preserves that permanent identity and
+removes the intermediate written outcome in both inline and source-backed folds. Otherwise a
+later delivery link can remove an already published row, require a baseline and retire the peer
+before its live refusal reaches Mobile. Genuine-gap retirement remains required. Controlled
+separate/coalesced publication regressions prove the repaired boundary; a passing phone retry
+against the old daemon cannot validate it. See the
+[#2374 diagnosis](../../specs/architecture/2374-refusal-publication-proof.md) and
+[counted Linux phone proof](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366).
+The historical reset fits this defect, but missing raw segments leave its exact batching unknown.
+
+The [#2380 reconciliation](../../specs/architecture/2380-refusal-occurrence-reconciliation.md)
+adds the #2246 and #2373 Linux sightings: each original exact-method execution failed once,
+then its exact retry passed once, all with zero skips. Both old-daemon traces show
+`baseline_required` and teardown 4414, consistent with the controlled defect. Original
+publication boundaries and which half of the combined reply/control predicate timed out
+remain unknown; retries prove intermittency only. Matching source and refusal inputs allow
+reuse of #2374's repaired-source native proof, without a duplicate producer repair. See the
+[scripted scenario evidence](../../e2e-interactive-stream.md#scenarios-454) for counts,
+retained failures, missing captures and #2380's accepted configured-gate result. No distinct
+residual Mobile defect was demonstrated.
+
+Restoring the refusal row after a continuity reset proves content recovery only. A new Switch back
+offer still requires fresh live refusal delivery on the current owner; history restoration must
+never compensate for a lost live effect by authorizing a model write.
 
 The production daemon thread route arms Switch back only from a fresh accepted refusal notice. Its occurrence key contains the host, conversation, epoch and item identity. Rendering and acknowledgement use that same key. Equal display timestamps cannot merge two notices, and an older acknowledgement cannot clear a newer offer. Restored history and repeated additions never rearm an action. An already armed offer survives a reconnect within the same session. Session replacement clears that offer. Reconnecting clears transient turn recovery. The older timestamp mechanism above remains for the legacy route. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).

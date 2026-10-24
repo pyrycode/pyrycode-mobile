@@ -26,10 +26,10 @@ class ReadCheckpointRetries(
         source: StateFlow<ConversationRepository?>,
         conversation: String,
         checkpoint: ULong,
-        owner: ConversationRepository? = null,
-        isQualified: (() -> Boolean)? = null,
+        owner: ConversationRepository,
+        isQualified: () -> Boolean,
     ) {
-        if (owner != null && (source.value !== owner || isQualified?.invoke() != true)) return
+        if (source.value !== owner || !isQualified()) return
         hosts.computeIfAbsent(source) { Host(it) }.qualify(conversation, checkpoint, owner, isQualified)
     }
 
@@ -37,8 +37,8 @@ class ReadCheckpointRetries(
 
     private class Pending(
         val checkpoint: ULong,
-        val owner: ConversationRepository?,
-        val isQualified: (() -> Boolean)?,
+        val owner: ConversationRepository,
+        val isQualified: () -> Boolean,
     )
 
     private inner class Host(
@@ -47,27 +47,18 @@ class ReadCheckpointRetries(
         private val pending = MutableStateFlow<Map<String, Pending>>(emptyMap())
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val observed = ConcurrentHashMap.newKeySet<String>()
-        private val confirmed = ConcurrentHashMap<String, ULong>()
 
         fun qualify(
             conversation: String,
             checkpoint: ULong,
-            owner: ConversationRepository?,
-            isQualified: (() -> Boolean)?,
+            owner: ConversationRepository,
+            isQualified: () -> Boolean,
         ) {
-            if (owner == null && checkpoint <= (confirmed[conversation] ?: 0uL)) return
-            pending.update { work ->
-                val previous = work[conversation]
-                if (owner == null && previous != null && (previous.owner != null || previous.checkpoint >= checkpoint)) {
-                    work
-                } else {
-                    work + (conversation to Pending(checkpoint, owner, isQualified))
-                }
-            }
+            pending.update { work -> work + (conversation to Pending(checkpoint, owner, isQualified)) }
             if (!observed.add(conversation)) return
             scope.launch {
                 source.collectLatest { repository ->
-                    pending.update { work -> work.filterValues { it.owner == null || it.owner === source.value } }
+                    pending.update { work -> work.filterValues { it.owner === source.value } }
                     if (repository == null || source.value !== repository) return@collectLatest
                     var attempted: Pending? = null
                     // Facts can arrive after connection publication; support is never inferred from cache.
@@ -81,7 +72,7 @@ class ReadCheckpointRetries(
                                 val highest = pending.value[conversation] ?: return@withLock
                                 if (source.value !== repository ||
                                     highest === attempted ||
-                                    (highest.owner != null && (highest.owner !== repository || highest.isQualified?.invoke() != true))
+                                    (highest.owner !== repository || !highest.isQualified())
                                 ) {
                                     return@withLock
                                 }
@@ -103,7 +94,6 @@ class ReadCheckpointRetries(
             conversation: String,
             stored: ULong,
         ) {
-            confirmed.merge(conversation, stored, ::maxOf)
             pending.update { work -> if ((work[conversation]?.checkpoint ?: ULong.MAX_VALUE) <= stored) work - conversation else work }
         }
     }

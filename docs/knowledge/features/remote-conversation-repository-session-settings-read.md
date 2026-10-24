@@ -108,7 +108,7 @@ fun bumpSettingsRevision(conversationId: String) { /* … */ }
   reads them until a later context-figure ticket; carried now because the all-zero/dormant reply naming
   their zero state as decodable is part of this ticket's acceptance.
 - **`StableConversationRepository`** delegates `observeSessionSettings` through `switchToLive<SessionSettings?>(null)`
-  (the [`observeLastMessage`](remote-conversation-repository-reads-and-thread-store.md#observelastmessageconversationid--the-live-last-message-preview-329)
+  (the [`observeLastMessage`](remote-conversation-repository-reads-and-thread-store.md)
   shape) — here the connection switch **is** the host-isolation mechanism, not just plumbing:
   `flatMapLatest` drops the previous connection's read the instant the connection changes. `refreshSessionSettings`
   is routed through `currentRepository.value?.refreshSessionSettings(id)`, deliberately **not** through the
@@ -170,6 +170,23 @@ that supplied the session, avoiding a retired session paired with a replacement 
 Freshness is independent of contents: an actual correlated reply omitting `effective_effort`
 is returned unchanged for `appliedEffortFooter` to reject. Saved `effort` never substitutes
 for applied `effectiveEffort`; response-wording assertions remain unchanged.
+
+Successful admission establishes the reading at that inbound turn, not its lifetime until
+a later sheet assertion (#2507). A subsequent authoritative minimal notification can replace
+`Applied(high)` with `Unavailable`. In recorded replay, the following complete correlated
+snapshot updates the polling cache without itself emitting to the repository. Thus the
+independent `freshSettings` result can be correct while the sheet's current reading has
+already changed; neither correlation nor section-local semantics matching repairs that
+ordering.
+
+The inherited-effort scenario fences its final independent read only in offline replay.
+It waits for this action's captured settings to be released by their actual causal requests,
+then for scheduled delivery and the exact current phone pump's downstream consumption.
+Queue emptiness alone cannot prove release or consumption. The fence rejects owner closure
+or replacement, inspects no expected value and sends no traffic. The original correlated
+read and exact sheet assertions follow it; omitted applied effort still fails. See
+[settings observation and macOS evidence](../../recorded-tests.md#inherited-effort-settings-observation-2507)
+for the controlled reproduction, counted acceptance and historical phone-log limit.
 
 `SettingsReadProbeTest` uses controlled request IDs and delivery with the real repository,
 covering immediate/equal replies, earlier snapshots, conflicting legacy metadata, missing

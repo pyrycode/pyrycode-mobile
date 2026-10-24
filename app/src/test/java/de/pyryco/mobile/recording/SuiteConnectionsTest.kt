@@ -3,18 +3,24 @@ package de.pyryco.mobile.recording
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TransportEvent
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -23,6 +29,364 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    private var savedLogSink = RelayLog.sink
+
+    @Before fun muteDecoderLogs() {
+        savedLogSink = RelayLog.sink
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreDecoderLogs() {
+        RelayLog.sink = savedLogSink
+    }
+
+    @Test fun phoneTeardownRetainsRequiredWorkBeforeTestEnd() =
+        runTest {
+            val owner = "phone/host/1"
+            val query = frame(13, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":28}""")
+            val reply =
+                frame(
+                    48,
+                    "thread_items",
+                    """{"conversation_id":"chat","epoch":"epoch","version":28,"items":[],"final":true,"from_version":28}""",
+                    13,
+                )
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("daemon", owner, reply, delayMs = 1000),
+                        SuiteStep("client", "control", frame(4, "test-control:test-end", """{"body":""}""")),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                        SuiteStep("client", "control", frame(5, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                // The scenario has asserted its rows; its asynchronous query has not sent yet.
+                val foreground = async { hub.beforePhoneTeardown() }
+                runCurrent()
+                if (foreground.isCompleted) {
+                    // Activity destruction permits the delayed process stop to close the phone.
+                    transport.close()
+                    hub.awaitIdle()
+                }
+                assertFalse("Activity teardown must keep the pending query producer alive", foreground.isCompleted)
+                assertTrue(pump.send(query.copy(id = 90)))
+                runCurrent()
+                advanceTimeBy(20)
+                runCurrent()
+                assertFalse("Matching the request does not deliver its queued reply", foreground.isCompleted)
+                advanceTimeBy(100)
+                runCurrent()
+                foreground.await()
+                assertEquals(reply.copy(inReplyTo = 90), pump.inbound.first())
+                // The foreground fence did not consume test-end or the physical close.
+                // Send directly through the strict tape: control() uses a blocking bridge, which
+                // cannot drive this test's virtual delivery dispatcher while awaiting its barrier.
+                assertTrue(tape.send("control", frame(90, "test-control:test-end", """{"body":""}""")).accepted)
+                transport.close()
+                runCurrent()
+                hub.checkpoint("scenario-complete")
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun automaticPeerApprovalWaitsForTheActualPhoneSend() =
+        runTest {
+            val peer = "peer/host/0"
+            val phone = "phone/host/0"
+            val checkpoint = frame(1, "test-control:checkpoint", """{"body":"phone-send"}""")
+            val send = frame(1, "send_message", """{"text":"controlled release"}""")
+            val approval = frame(1, "modal_answer", """{"modal_id":"prompt","option_id":"allow_once","answer_token":"captured"}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", peer),
+                        SuiteStep("open", peer),
+                        SuiteStep("connect", phone),
+                        SuiteStep("open", phone),
+                        SuiteStep("client", "control", checkpoint),
+                        SuiteStep("client", phone, send),
+                        SuiteStep("client", peer, approval),
+                        SuiteStep("close", peer),
+                        SuiteStep("inbound_end", peer),
+                        SuiteStep("close", phone),
+                        SuiteStep("inbound_end", phone),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val peerTransport = hub.transport(peer) { error("Live transport started") }
+                val phoneTransport = hub.transport(phone) { error("Live transport started") }
+                val peerPump = hub.pump(peerTransport) { error("Live pump started") }
+                val phonePump = hub.pump(phoneTransport) { error("Live pump started") }
+                peerPump.start()
+                phonePump.start()
+                peerTransport.connect()
+                phoneTransport.connect()
+                runCurrent()
+                val waiting = async { hub.beforePeerPermission(peerPump, "prompt", 1000) }
+                runCurrent()
+                assertFalse(waiting.isCompleted)
+                assertTrue(tape.send("control", checkpoint.copy(id = 10)).accepted)
+                advanceTimeBy(20)
+                runCurrent()
+                assertFalse("the phone checkpoint cannot replace its actual send", waiting.isCompleted)
+                assertTrue(phonePump.send(send.copy(id = 11)))
+                assertFalse("the phone pump cannot borrow the peer action", hub.peerPermissionReady(phonePump, "prompt"))
+                advanceTimeBy(10)
+                runCurrent()
+                waiting.await()
+                assertTrue(peerPump.send(approval.copy(id = 12)))
+                assertFalse(hub.peerPermissionReady(peerPump, "prompt"))
+                peerTransport.close()
+                phoneTransport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun deliveredQueryCertificateReschedulesLiveProgressWithoutAnotherPhoneRequest() =
+        runTest {
+            val owner = "phone/host/0"
+            val initial = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":0}""")
+            val tail = frame(3, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, initial),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                2,
+                                "thread_items",
+                                """{"conversation_id":"chat","epoch":"epoch","version":20,"items":[],"final":true,"lower_order":0,"upper_order":0,"continuation":0,"older_exists":false}""",
+                                reply = 1,
+                            ),
+                        ),
+                        SuiteStep("client", owner, tail),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                4,
+                                "thread_item_added",
+                                """{"conversation_id":"chat","epoch":"epoch","version":21,"item":{"id":1,"order":1,"rev":21,"kind":"assistant_message","session":"session","turn":"turn","status":"done","active":false,"shown":true,"summary":"reply","content":{"text":"controlled reply"}}}""",
+                            ),
+                        ),
+                        SuiteStep(
+                            "daemon",
+                            owner,
+                            frame(
+                                5,
+                                "thread_items",
+                                """{"conversation_id":"chat","epoch":"epoch","version":21,"items":[],"final":true,"from_version":20}""",
+                                reply = 3,
+                            ),
+                        ),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val savedLogSink = RelayLog.sink
+            RelayLog.sink = { _, _, _ -> }
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                val live = backgroundScope.async { pump.inbound.first { it.type == "thread_item_added" } }
+                runCurrent()
+                assertTrue(pump.send(initial.copy(id = 90)))
+                runCurrent()
+                hub.awaitIdle()
+                assertTrue("delivered certificate must release live progress without another request; ${tape.progress()}", live.isCompleted)
+                assertFalse("the catch-up remains required", tape.closeReady(owner))
+                assertTrue(pump.send(tail.copy(id = 91)))
+                runCurrent()
+                transport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+                RelayLog.sink = savedLogSink
+            }
+        }
+
+    @Test fun phoneRestartWaitsForCurrentQueriesWithoutWaitingForFuturePhonesOrPeers() =
+        runTest {
+            val old = "phone/host/0"
+            val next = "phone/host/1"
+            val peer = "peer/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val reply = frame(2, "thread_items", reply = 1)
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", peer),
+                        SuiteStep("open", peer),
+                        SuiteStep("connect", old),
+                        SuiteStep("open", old),
+                        SuiteStep("client", old, query),
+                        SuiteStep("daemon", old, reply, delayMs = 1000),
+                        SuiteStep("close", old),
+                        SuiteStep("inbound_end", old),
+                        SuiteStep("connect", next),
+                        SuiteStep("open", next),
+                        SuiteStep("client", next, query),
+                        SuiteStep("daemon", next, reply),
+                        SuiteStep("close", next),
+                        SuiteStep("inbound_end", next),
+                        SuiteStep("client", peer, frame(1, "list_conversations")),
+                        SuiteStep("close", peer),
+                        SuiteStep("inbound_end", peer),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val peerTransport = hub.transport(peer) { error("Live transport started") }
+                val peerPump = hub.pump(peerTransport) { error("Live pump started") }
+                peerPump.start()
+                peerTransport.connect()
+                val first = hub.transport(old) { error("Live transport started") }
+                val firstPump = hub.pump(first) { error("Live pump started") }
+                val received = CompletableDeferred<Envelope>()
+                val firstCollector = backgroundScope.launch { firstPump.inbound.collect { received.complete(it) } }
+                firstPump.start()
+                first.connect()
+                runCurrent()
+                val restarting =
+                    async {
+                        hub.beforePhoneRestart()
+                        assertTrue("the old phone consumer must survive its close fence", firstCollector.isActive)
+                        first.close()
+                    }
+                runCurrent()
+                assertFalse("restart released before its required catch-up; ${tape.progress()}", restarting.isCompleted)
+                assertTrue(firstPump.send(query.copy(id = 90)))
+                runCurrent()
+                assertFalse("restart released before queued reply delivery", restarting.isCompleted)
+                advanceTimeBy(200)
+                runCurrent()
+                restarting.await()
+                assertEquals(reply.copy(inReplyTo = 90), received.await())
+                runCurrent()
+
+                // A second restart must select the replacement, without reusing the retired owner.
+                val replacement = hub.transport(next) { error("Live transport started") }
+                val pump = hub.pump(replacement) { error("Live pump started") }
+                val replacementReply = CompletableDeferred<Envelope>()
+                val replacementCollector = backgroundScope.launch { pump.inbound.collect { replacementReply.complete(it) } }
+                pump.start()
+                replacement.connect()
+                runCurrent()
+                val secondRestart = async { hub.beforePhoneRestart() }
+                runCurrent()
+                assertFalse(secondRestart.isCompleted)
+                assertTrue(pump.send(query.copy(id = 91)))
+                advanceTimeBy(20)
+                runCurrent()
+                secondRestart.await()
+                assertEquals(reply.copy(inReplyTo = 91), replacementReply.await())
+                assertTrue("the replacement consumer must survive its close fence", replacementCollector.isActive)
+                replacement.close()
+                assertTrue(peerPump.send(frame(90, "list_conversations")))
+                peerTransport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun phoneRestartCannotOmitARequiredQuery() =
+        runTest {
+            val owner = "phone/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("close", owner),
+                    ),
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val restarting = async { runCatching { hub.beforePhoneRestart() } }
+                advanceTimeBy(30001)
+                runCurrent()
+                assertTrue(restarting.await().exceptionOrNull() is kotlinx.coroutines.TimeoutCancellationException)
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
+    @Test fun phoneRestartStillRejectsAChangedQuery() =
+        runTest {
+            val owner = "phone/host/0"
+            val query = frame(1, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":20}""")
+            val hub =
+                SuiteConnections.replaying(
+                    backgroundScope,
+                    RecordedSuiteTape(
+                        listOf(
+                            SuiteStep("connect", owner),
+                            SuiteStep("open", owner),
+                            SuiteStep("client", owner, query),
+                            SuiteStep("close", owner),
+                        ),
+                        literalProducerIdentities = true,
+                    ),
+                )
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val restarting = async { runCatching { hub.beforePhoneRestart() } }
+                runCurrent()
+                assertThrows(IllegalStateException::class.java) {
+                    pump.send(frame(90, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":21}"""))
+                }
+                advanceTimeBy(20)
+                runCurrent()
+                assertTrue(restarting.await().exceptionOrNull() is IllegalStateException)
+                assertThrows(IllegalStateException::class.java) { hub.assertComplete() }
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun anUpcomingDisconnectCannotHideAnUnexpectedRequestOnAnOpenConnection() =
         runTest {
             val owner = "phone/host/0"
@@ -156,6 +520,8 @@ class SuiteConnectionsTest {
                 val replacement = hub.transport(next) { error("Live transport started") }
                 val pump = hub.pump(replacement) { error("Live pump started") }
                 pump.start()
+                var received: Envelope? = null
+                backgroundScope.launch { pump.inbound.collect { received = it } }
                 replacement.connect()
                 runCurrent()
                 advanceTimeBy(10)
@@ -166,6 +532,7 @@ class SuiteConnectionsTest {
                 advanceTimeBy(20)
                 runCurrent()
                 closing.await()
+                assertEquals(90L, received?.inReplyTo)
                 hub.checkpoint("scenario-complete")
                 runCurrent()
                 hub.assertComplete()
@@ -354,6 +721,8 @@ class SuiteConnectionsTest {
             val pump = hub.pump(transport) { error("Live pump started") }
             pump.start()
             runCurrent()
+            var received: Envelope? = null
+            backgroundScope.launch { pump.inbound.collect { received = it } }
             val closing = async { hub.beforeClose("phone") }
             runCurrent()
             assertFalse(closing.isCompleted)
@@ -363,7 +732,7 @@ class SuiteConnectionsTest {
             advanceTimeBy(120)
             runCurrent()
             closing.await()
-            assertEquals(90L, pump.inbound.first().inReplyTo)
+            assertEquals(90L, received?.inReplyTo)
             pump.close()
             hub.assertComplete()
             hub.close()

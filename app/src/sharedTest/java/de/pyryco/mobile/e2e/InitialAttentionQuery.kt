@@ -1,0 +1,189 @@
+package de.pyryco.mobile.e2e
+
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.NegotiatedThread
+import de.pyryco.mobile.data.repository.ThreadSupport
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeout
+import java.io.Closeable
+
+/** Fresh offscreen conversations must finish their attention query before the scenario acquires them. */
+internal suspend fun awaitInitialAttentionQuery(snapshots: Flow<AuthoritativeThreadSnapshot>) {
+    snapshots.first(::hasInitialQueryCertificate)
+}
+
+private fun hasInitialQueryCertificate(snapshot: AuthoritativeThreadSnapshot): Boolean =
+    !snapshot.epoch.isNullOrEmpty() &&
+        snapshot.checkpoint > 0 &&
+        snapshot.coverage != null &&
+        !snapshot.repairNeeded &&
+        !snapshot.resetNeeded
+
+/** Only the armed scenario delays acquisition; destination setup and all provider admission stay real. */
+internal class ThreadAcquisitionGate private constructor(
+    private val host: String,
+    private val conversation: String,
+    private val connection: Any,
+    private val generation: Long,
+    private val timeoutMillis: Long,
+    private val monotonicMillis: () -> Long,
+) : Closeable {
+    private val startedAt = monotonicMillis()
+    private val acquired = CompletableDeferred<ThreadQueryReadiness.Receipt>()
+    private val closed = MutableStateFlow(false)
+
+    val finished get() = acquired.isCompleted
+
+    suspend fun awaitAcquired() = acquired.await()
+
+    fun remainingMillis(): Long {
+        val remaining = timeoutMillis - (monotonicMillis() - startedAt)
+        if (remaining <= 0) throw CancellationException("Thread acquisition deadline expired")
+        return remaining
+    }
+
+    suspend fun awaitNextQuery(): ThreadQueryReadiness.Receipt =
+        withTimeout(remainingMillis()) {
+            val receipt = awaitAcquired().awaitNext()
+            check(receipt.isCurrent()) { "Reopened thread query owner changed" }
+            remainingMillis()
+            receipt
+        }
+
+    override fun close() {
+        closed.value = true
+        synchronized(Companion) {
+            if (active === this) active = null
+        }
+        acquired.cancel(CancellationException("Thread acquisition scope closed"))
+    }
+
+    companion object {
+        private var active: ThreadAcquisitionGate? = null
+
+        @Synchronized fun arm(
+            thread: NegotiatedThread,
+            conversation: String,
+            timeoutMillis: Long,
+            monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+        ): ThreadAcquisitionGate {
+            check(active == null) { "thread acquisition already armed" }
+            val connection = checkNotNull((thread.support.value as? ThreadSupport.Supported)?.connection)
+            return ThreadAcquisitionGate(
+                thread.host,
+                conversation,
+                connection,
+                thread.store.current(thread.host, conversation).generation,
+                timeoutMillis,
+                monotonicMillis,
+            ).also { active = it }
+        }
+
+        fun negotiated(delegate: NegotiatedThread): NegotiatedThread =
+            object : NegotiatedThread() {
+                override val host = delegate.host
+                override val support = delegate.support
+                override val store = delegate.store
+
+                override fun localHistory(conversationId: String) = delegate.localHistory(conversationId)
+
+                override fun observe(conversationId: String) = delegate.observe(conversationId)
+
+                override fun progress(
+                    conversationId: String,
+                    connection: Any,
+                ) = delegate.progress(conversationId, connection)
+
+                override suspend fun open(conversationId: String) = delegate.open(conversationId)
+
+                override fun older(conversationId: String) = delegate.older(conversationId)
+
+                override fun cancel(conversationId: String) = delegate.cancel(conversationId)
+
+                override suspend fun acquire(
+                    conversationId: String,
+                    connection: Any,
+                ): Closeable? {
+                    val gate =
+                        synchronized(Companion) {
+                            active?.takeIf { it.host == host && it.conversation == conversationId && it.connection === connection }
+                        }
+                    if (gate == null) return delegate.acquire(conversationId, connection)
+                    try {
+                        return withTimeout(gate.remainingMillis()) {
+                            var receipt: ThreadQueryReadiness.Receipt? = null
+                            while (receipt == null) {
+                                val ready =
+                                    coroutineScope {
+                                        val observation =
+                                            async(start = CoroutineStart.UNDISPATCHED) {
+                                                ThreadQueryReadiness.awaitCurrent(host, conversationId)
+                                                awaitInitialAttentionQuery(
+                                                    store.observe(host, conversationId).filter { it.generation == gate.generation },
+                                                )
+                                            }
+                                        val retired =
+                                            async(start = CoroutineStart.UNDISPATCHED) {
+                                                combine(support, gate.closed) { verdict, closed ->
+                                                    closed || (verdict as? ThreadSupport.Supported)?.connection !== connection
+                                                }.first { it }
+                                            }
+                                        try {
+                                            select<Boolean> {
+                                                observation.onAwait { true }
+                                                retired.onAwait { false }
+                                            }
+                                        } finally {
+                                            observation.cancel()
+                                            retired.cancel()
+                                        }
+                                    }
+                                val snapshot = store.current(host, conversationId)
+                                val refusal =
+                                    when {
+                                        !ready -> "connection or scope retired"
+                                        synchronized(Companion) { active !== gate } -> "scope replaced"
+                                        (support.value as? ThreadSupport.Supported)?.connection !== connection -> "connection retired"
+                                        snapshot.generation != gate.generation -> "generation changed"
+                                        else -> null
+                                    }
+                                if (refusal != null) {
+                                    gate.acquired.cancel(CancellationException("Thread acquisition rejected: $refusal"))
+                                    return@withTimeout null
+                                }
+                                // Joining observers may advance completion or start another query.
+                                // Capture only after that cleanup, without yielding before acquisition.
+                                if (hasInitialQueryCertificate(snapshot)) receipt = ThreadQueryReadiness.current(host, conversationId)
+                            }
+                            val lease = delegate.acquire(conversationId, connection)
+                            if (lease == null) {
+                                gate.acquired.cancel(CancellationException("Thread acquisition delegate refused its lease"))
+                            } else {
+                                try {
+                                    gate.remainingMillis()
+                                } catch (failure: Exception) {
+                                    lease.close()
+                                    throw failure
+                                }
+                                gate.acquired.complete(receipt)
+                            }
+                            lease
+                        }
+                    } catch (failure: Exception) {
+                        gate.acquired.completeExceptionally(failure)
+                        throw failure
+                    }
+                }
+            }
+    }
+}

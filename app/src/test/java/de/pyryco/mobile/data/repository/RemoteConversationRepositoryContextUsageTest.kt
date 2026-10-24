@@ -1,8 +1,11 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.SessionProvenance
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,9 +18,11 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -27,6 +32,16 @@ import org.junit.Test
  * `docs/protocol-mobile.md` § `context_usage` and § "Asking for a context usage reading on demand".
  */
 class RemoteConversationRepositoryContextUsageTest {
+    private val previousSink = RelayLog.sink
+
+    @Before fun silencePlatformLogging() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restorePlatformLogging() {
+        RelayLog.sink = previousSink
+    }
+
     // ---- push and reply ---------------------------------------------------------------------------
 
     @Test
@@ -265,12 +280,12 @@ class RemoteConversationRepositoryContextUsageTest {
     // ---- session_transition ---------------------------------------------------------------------------
 
     @Test
-    fun sessionTransition_clearsTheReading_sendsNothing_andTheNextTurnFillsIt() =
+    fun ownedSessionReplacementClearsAndCurrentReadingRefillsWithoutLegacyRequests() =
         runTest {
-            val (pump, repo) = repo()
+            val (pump, repo) = repo(authoritative = true)
             val readings = collect(repo.observeContextUsage("c1"))
             runCurrent()
-            pump.push(contextUsage("c1", total = 150_000, max = 200_000, percentage = 75, id = 1L))
+            pump.push(contextUsage("c1", total = 150_000, max = 200_000, percentage = 75, id = 1L).owned("c1", "s1"))
             runCurrent()
 
             pump.push(sessionTransition("c1", id = 2L))
@@ -278,14 +293,14 @@ class RemoteConversationRepositoryContextUsageTest {
             assertEquals(listOf(null, expectedUsage(150_000, 200_000, 75, asOf = null), null), readings)
             assertTrue(pump.sent.isEmpty())
 
-            pump.push(probe("turn_state", """{"conversation_id":"c1","state":"thinking"}""", id = 3L))
-            pump.push(probe("turn_end", """{"conversation_id":"c1","turn_id":"replacement-turn","stop_reason":"end_turn"}""", id = 4L))
-            // Preserve the actual legacy push bytes; session ownership needs a verified read.
+            pump.push(probe("turn_state", """{"conversation_id":"c1","state":"thinking"}""", id = 3L).owned("c1", "s2"))
+            pump.push(probe("turn_state", """{"conversation_id":"c1","state":"idle"}""", id = 4L).owned("c1", "s2"))
+            // An obsolete unowned push cannot certify a reading or trigger a fallback request.
             pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 5L))
             runCurrent()
-            val ask = pump.sent.single { it.type == "request_context_usage" }
             assertNull(readings.last())
-            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 6L, inReplyTo = ask.id))
+            assertTrue(pump.sent.isEmpty())
+            pump.push(contextUsage("c1", total = 9_000, max = 200_000, percentage = 4, id = 6L).owned("c1", "s2"))
             runCurrent()
             assertEquals(expectedUsage(9_000, 200_000, 4, asOf = null), readings.last())
         }
@@ -293,8 +308,8 @@ class RemoteConversationRepositoryContextUsageTest {
     @Test
     fun sessionTransition_ofAnUnobservedConversation_clears() =
         runTest {
-            val (pump, repo) = repo()
-            pump.push(contextUsage("c1", total = 150_000, max = 200_000, percentage = 75, id = 1L))
+            val (pump, repo) = repo(authoritative = true)
+            pump.push(contextUsage("c1", total = 150_000, max = 200_000, percentage = 75, id = 1L).owned("c1", "s1"))
             val watcher = backgroundScope.launch { repo.observeContextUsage("c1").collect {} }
             runCurrent()
             watcher.cancel()
@@ -313,13 +328,14 @@ class RemoteConversationRepositoryContextUsageTest {
     @Test
     fun anotherConversationsFrameOrTransition_neverTouchesThisReading() =
         runTest {
-            val (pump, repo) = repo()
+            val (pump, repo) = repo(authoritative = true)
             val c1 = collect(repo.observeContextUsage("c1"))
             runCurrent()
-            pump.push(contextUsage("c1", total = 50_000, max = 200_000, percentage = 25, id = 1L))
+            pump.push(contextUsage("c1", total = 50_000, max = 200_000, percentage = 25, id = 1L).owned("c1", "s1"))
             runCurrent()
 
-            pump.push(contextUsage("c2", total = 190_000, max = 200_000, percentage = 95, id = 2L))
+            pump.push(sessionCleared("c2", "s1", 10L))
+            pump.push(contextUsage("c2", total = 190_000, max = 200_000, percentage = 95, id = 2L).owned("c2", "s1"))
             pump.push(sessionTransition("c2", id = 3L))
             runCurrent()
 
@@ -388,10 +404,43 @@ class RemoteConversationRepositoryContextUsageTest {
             },
     )
 
-    private fun TestScope.repo(): Pair<FakeSessionPump, RemoteConversationRepository> {
+    private fun TestScope.repo(authoritative: Boolean = false): Pair<FakeSessionPump, RemoteConversationRepository> {
         val pump = FakeSessionPump()
-        return pump to RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+        val repo =
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = {
+                    if (authoritative) {
+                        setOf(
+                            CAPABILITY_INTERACTIVE,
+                            CAPABILITY_THREAD,
+                        )
+                    } else {
+                        setOf(CAPABILITY_INTERACTIVE)
+                    }
+                },
+                authoritativeHostId = if (authoritative) "host" else "",
+            )
+        if (authoritative) pump.push(sessionCleared("c1", "s1", 10L))
+        return pump to repo
     }
+
+    private fun Envelope.owned(
+        conversation: String,
+        session: String,
+        cleared: Boolean = false,
+    ) = copy(
+        conversationId = JsonPrimitive(conversation),
+        sessionProvenance = SessionProvenance(JsonPrimitive(session)),
+        sessionStateCleared = JsonPrimitive(cleared),
+    )
+
+    private fun sessionCleared(
+        conversation: String,
+        session: String,
+        id: Long,
+    ) = Envelope(id, "context_usage", TS, JsonObject(emptyMap())).owned(conversation, session, cleared = true)
 
     private fun <T> TestScope.collect(flow: Flow<T>): MutableList<T> {
         val emissions = mutableListOf<T>()
@@ -425,13 +474,7 @@ class RemoteConversationRepositoryContextUsageTest {
     private fun sessionTransition(
         conversationId: String,
         id: Long,
-    ): Envelope =
-        probe(
-            "session_transition",
-            """{"conversation_id":"$conversationId","previous_session_id":"s1","new_session_id":"s2",""" +
-                """"reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
-            id,
-        )
+    ): Envelope = sessionCleared(conversationId, "s2", id)
 
     private fun refusal(
         inReplyTo: Long,
