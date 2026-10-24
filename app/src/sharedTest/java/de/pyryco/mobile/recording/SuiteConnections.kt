@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
@@ -54,6 +55,7 @@ internal class SuiteConnections private constructor(
     private val pumps = mutableMapOf<String, ReplayPump>()
     private val waiting = mutableMapOf<String, MutableList<SuiteStep>>()
     private val pending = AtomicInteger()
+    private val progress = MutableStateFlow(0L)
     private val failure = AtomicReference<Throwable?>()
     private val controls = AtomicLong()
     private val controlReplies = java.util.concurrent.ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
@@ -118,6 +120,7 @@ internal class SuiteConnections private constructor(
         owner: String,
         frame: Envelope,
     ): Boolean {
+        progress.value += 1
         val result = checkNotNull(tape).send(owner, frame)
         beforeRequestEnqueue()
         enqueue(result.deliveries)
@@ -128,6 +131,7 @@ internal class SuiteConnections private constructor(
         direction: String,
         owner: String,
     ) {
+        progress.value += 1
         if (capture != null) {
             capture.observe(SuiteStep(direction, owner))
         } else {
@@ -136,6 +140,7 @@ internal class SuiteConnections private constructor(
     }
 
     @Synchronized private fun route(step: SuiteStep) {
+        progress.value += 1
         if (step.direction == "settings_snapshot") {
             enqueue(checkNotNull(tape).deliveredSnapshot(step))
             pending.decrementAndGet()
@@ -366,6 +371,33 @@ internal class SuiteConnections private constructor(
         failure.get()?.let { throw IllegalStateException("Recorded suite delivery failed", it) }
     }
 
+    /** Settle this action's settings traffic before a fresh read supplies a UI expectation. */
+    suspend fun beforeSettingsObservation(owner: String) {
+        check(tape != null) { "Settings observation requires replay" }
+        val pump = synchronized(this) { checkNotNull(pumps[owner]) { "Settings observation phone missing" } }
+
+        fun checkOwner() {
+            check(pumps[owner] === pump && !pump.connection.localClose.get() && pump.state.value is PumpState.Open) {
+                "Settings observation phone changed or closed"
+            }
+        }
+        withTimeout(30000) {
+            while (true) {
+                val observedProgress = synchronized(this@SuiteConnections) { progress.value }
+                awaitIdle()
+                synchronized(this@SuiteConnections) { checkOwner() }
+                pump.awaitConsumedPrefix()
+                val settled =
+                    synchronized(this@SuiteConnections) {
+                        checkOwner()
+                        pending.get() == 0 && pump.consumptionCaughtUp() && tape.settingsObservationReady(owner)
+                    }
+                if (settled) return@withTimeout
+                progress.first { it != observedProgress }
+            }
+        }
+    }
+
     suspend fun awaitReaders() {
         val caller = currentCoroutineContext()[Job]
         readers.filter { it != caller }.forEach { it.join() }
@@ -533,6 +565,8 @@ internal class SuiteConnections private constructor(
             val boundary = queuedFrames.get()
             while (consumedFrames.get() < boundary) delay(10)
         }
+
+        fun consumptionCaughtUp(): Boolean = consumedFrames.get() >= queuedFrames.get()
 
         override fun start() {
             if (started.compareAndSet(false, true)) register(this)

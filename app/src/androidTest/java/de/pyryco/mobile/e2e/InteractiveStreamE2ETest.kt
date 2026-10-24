@@ -4109,6 +4109,8 @@ class InteractiveStreamE2ETest {
 
             openChatRow(name)
             awaitOwnedPhoneReply(twoHostArg(ARG_SERVER_ID), chat.id) { sendFromPhone(PING_PROMPT) }
+            // Replay snapshots update the polling cache; later minimal notifications still reach the app.
+            RecordedSuiteNative.beforeSettingsObservation(twoHostArg(ARG_SERVER_ID))
             val fresh = freshSettings(chat.id)
             val (label, note) = appliedEffortFooter(fresh.effectiveEffort)
             val mode = fresh.permissionMode
