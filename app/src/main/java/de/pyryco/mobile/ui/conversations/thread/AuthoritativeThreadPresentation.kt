@@ -64,7 +64,8 @@ class AuthoritativeThreadPresentation internal constructor(
         sourceSnapshot.expansionItems
             .filter {
                 it.id in sourceSnapshot.detailValidity.bodies ||
-                    sourceSnapshot.detailValidity.staleFullBodies[it.id] == it.rev && !sourceSnapshot.hasToolBody(it)
+                    sourceSnapshot.detailValidity.staleFullBodies[it.id] == it.rev &&
+                    !sourceSnapshot.hasToolBody(it)
             }.mapTo(HashSet()) { "msg:$scope:${it.id}" }
 
     internal fun bodyItem(key: String): ThreadItemDto? = bodyItems[key]
