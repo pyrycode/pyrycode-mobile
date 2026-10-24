@@ -694,6 +694,74 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Inherited-effort settings observation (#2507)
+
+Successful settings polling and current product state are separate boundaries. A complete
+correlated reply can pass `SettingsReadProbe`'s synchronous admission check, then a later
+captured minimal `session_settings` notification can replace the repository's applied
+effort with `Unavailable`. The following complete snapshot updates the replay polling
+cache without emitting to the app. If the sheet's poll ran before that minimal notification,
+its selection and note can remain unavailable even though the independent read succeeded.
+See [native test reads](knowledge/features/remote-conversation-repository-session-settings-read.md#native-test-reads-2305).
+
+Only `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` uses
+`RecordedSuiteNative.beforeSettingsObservation` before its final `freshSettings` in replay.
+`SuiteConnections.beforeSettingsObservation` waits for three boundaries: the current
+action's captured settings have been released by their actual causal requests, scheduled
+delivery has drained, and the exact current phone pump has consumed the delivered prefix
+downstream. `RecordedSuiteTape.settingsObservationReady` checks the frontier before the
+next command without releasing it. An empty queue can still have settings held behind a
+query; a routed frame can still await downstream consumption. Progress notifications
+resume the frontier check, and closure or replacement fails rather than borrowing another
+owner's progress. The fence is bounded by 30 seconds, reads no expected settings contents
+and issues no request or reply. Genuine captures and ordinary live execution are unchanged.
+
+The subsequent read retains current-owner correlation. The scenario still clears remembered
+effort, uses no saved override, completes an owned phone turn and checks the exact applied
+effort label/note and reported permission mode. Missing applied effort remains a failure.
+Strict request payload matching, complete tape consumption and the original 30-second
+sheet deadline remain required; extra polls or expected-value filtering cannot replace
+the observation boundary.
+
+`InheritedEffortReplayTest` drives the real replay hub, authoritative repository and read
+probe. It demonstrates the independent applied reading being replaced, holds downstream
+consumption, holds settings behind their causal query, repeats observation, rejects a closed
+owner and keeps a final omitted applied field unavailable. The original four-control JVM
+run executed four and failed four, with zero skips. The later causal-query control executed
+once and failed once against the initial fence, with zero skips: delivery alone was insufficient.
+
+The [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2525#issuecomment-6380015470)
+accepted `3a625ea826f00a6b773d54f7a6b824939866f8bc` on macOS, with these counted results:
+
+| Check | Source | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Final five JVM controls | `e30328514` plus plan-only update | 5 | 5 | 0 | 0 |
+| Focused native five controls and exact recorded method | `8de1d65fe` | 6 | 6 | 0 | 0 |
+| Affected `SuiteConnectionsTest` | `8de1d65fe` | 29 | 29 | 0 | 0 |
+| Configured JVM gate | reviewed candidate | 5547 | 5547 | 0 | 0 |
+| Configured UI gate | reviewed candidate | 250 | 247 | 3 | 0 |
+| Configured scripted-all gate | reviewed candidate | 24 | 21 | 3 | 0 |
+
+The exact inherited-effort recorded method executed once and passed in both the focused
+native run and the configured UI gate. All five controls passed in the configured JVM gate.
+The UI gate's three unrelated failures passed a three-test rerun; the three scripted failures
+also failed on main and were accepted under #2353 and #2521. Those original failures remain
+failures; the verifier accepted their triage. Later test-source changes from the focused
+native revision to the reviewed candidate were whitespace only. Linux is outside this
+ticket's verification scope. These offline checks establish no fresh provider compatibility.
+
+Raw failed/repaired evidence was retained under
+`$AGENTS_REPO_PATH/logs/evidence/2507/builder-macos-20261023/` and
+`manual-continuation-20261024/`; the latter's `evidence/native/ui-lfkh7xqn/` holds focused
+XML and phone logs. These are retention locations at review time. The unchanged genuine
+fixture hashes to `d0e4202a296a688f5e94cddb0f0b39f430ff06c956d44272aa8239f0622cc69c`.
+The original #2493 macOS failure at `52e6085278` retained stderr showing Effort present,
+selection/note mismatched, no pending marker and a 30000 ms timeout. It had 333 executed,
+332 passed and one failed, plus one skipped test. Its retained bundle lacked the original
+phone log. The listed preceding scenarios were model change, reconnect footer, interrupted
+upload and send queued now; the controlled reproduction requires neither that sequence
+nor machine load. The exact historical interleaving and any load contribution remain inferred.
+
 ### Shared current-query acquisition
 
 The same test-only acquisition gate also protects reopening X in the model-isolation

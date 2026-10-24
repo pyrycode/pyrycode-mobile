@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.flow.flow
@@ -34,6 +35,7 @@ internal class OwnedReplyObservation(
     val before: ThreadEvidence,
     private val legacyProducer: Boolean = false,
     private val knownSession: String? = null,
+    producerSnapshot: AuthoritativeThreadSnapshot? = null,
 ) {
     private var pump: Any? = null
     private var pumpCurrent: () -> Boolean = { true }
@@ -85,7 +87,7 @@ internal class OwnedReplyObservation(
     private val threadStore =
         if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
             AuthoritativeThreadStore().also { store ->
-                before.sourceSnapshot?.let { store.restore(host, before.owner.conversation, it, 0) }
+                (producerSnapshot ?: before.sourceSnapshot)?.let { store.restore(host, before.owner.conversation, it, 0) }
                 if (store.current(host, before.owner.conversation).epoch == null) {
                     val facts = before.records.mapNotNull { it.fact }
                     store.applyBatch(
@@ -370,6 +372,19 @@ internal class OwnedReplyObservation(
         current: Any?,
     ): CompletedReplyObservation? {
         checkCurrent(current)
+        return admit(evidence)
+    }
+
+    /** Producer recovery treats a lost source as unavailable, keeping strict screen checks separate. */
+    @Synchronized fun admittedIfCurrent(
+        evidence: ThreadEvidence,
+        current: Any?,
+    ): CompletedReplyObservation? {
+        if (current !== before.owner.connection || closed || !pumpCurrent()) return null
+        return admit(evidence)
+    }
+
+    private fun admit(evidence: ThreadEvidence): CompletedReplyObservation? {
         val expected = if (queryWitness == null) before.owner else queryWitness.owner() ?: return null
         if (!producerCompleted() || !evidence.admitted || !expected.matches(evidence.owner)) return null
         val produced = if (producerStore != null) authoritativeReply() else null

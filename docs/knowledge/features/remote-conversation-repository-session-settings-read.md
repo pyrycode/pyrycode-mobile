@@ -171,6 +171,23 @@ Freshness is independent of contents: an actual correlated reply omitting `effec
 is returned unchanged for `appliedEffortFooter` to reject. Saved `effort` never substitutes
 for applied `effectiveEffort`; response-wording assertions remain unchanged.
 
+Successful admission establishes the reading at that inbound turn, not its lifetime until
+a later sheet assertion (#2507). A subsequent authoritative minimal notification can replace
+`Applied(high)` with `Unavailable`. In recorded replay, the following complete correlated
+snapshot updates the polling cache without itself emitting to the repository. Thus the
+independent `freshSettings` result can be correct while the sheet's current reading has
+already changed; neither correlation nor section-local semantics matching repairs that
+ordering.
+
+The inherited-effort scenario fences its final independent read only in offline replay.
+It waits for this action's captured settings to be released by their actual causal requests,
+then for scheduled delivery and the exact current phone pump's downstream consumption.
+Queue emptiness alone cannot prove release or consumption. The fence rejects owner closure
+or replacement, inspects no expected value and sends no traffic. The original correlated
+read and exact sheet assertions follow it; omitted applied effort still fails. See
+[settings observation and macOS evidence](../../recorded-tests.md#inherited-effort-settings-observation-2507)
+for the controlled reproduction, counted acceptance and historical phone-log limit.
+
 `SettingsReadProbeTest` uses controlled request IDs and delivery with the real repository,
 covering immediate/equal replies, earlier snapshots, conflicting legacy metadata, missing
 applied fields, replacement, cancellation, termination and same-owner rereads. See
