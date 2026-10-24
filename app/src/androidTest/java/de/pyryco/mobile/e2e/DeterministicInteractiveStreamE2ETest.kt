@@ -491,7 +491,11 @@ class DeterministicInteractiveStreamE2ETest {
                 threadEnabled = true,
             )
         DurableGapIsolation(
-            restore = ::restoreLink,
+            restore = {
+                android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=restoration_attempt")
+                restoreLink()
+                android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=restored")
+            },
             closePeer = {
                 peer.close()
                 cleaned("peer")

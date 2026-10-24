@@ -68,3 +68,7 @@ None.
 ## Documentation handoff
 
 Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Scripted ping durable-gap proof (#1842),” with failure-path restoration, preserved primary failures, counted isolation proof and its boundary against normal configured acceptance. Preserve historical failures.
+
+## Revisions
+
+- 2026-10-24: retain the content-free counted summary under `scripts/e2e-fixtures/durable-gap-isolation-2514/` rather than packaging evidence in test assets. This keeps evidence publication from changing the tested APK identity. Raw captures remain on the persistent evidence volume. The native legacy-cleanup control at `7a6f00ebc` executed/failed one method at the original 30000 ms fresh-connection bound after logging the injected primary failure; all nine JVM controls also failed as expected.

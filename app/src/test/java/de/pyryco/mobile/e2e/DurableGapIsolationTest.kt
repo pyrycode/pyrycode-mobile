@@ -16,21 +16,30 @@ class DurableGapIsolationTest {
 
     @Test fun failureAfterSeverRestoresAndPreservesPrimary() {
         val primary = AssertionError("after sever")
-        val thrown = assertThrows(AssertionError::class.java) {
-            fixture().run {
-                sever { events += "sever" }
-                throw primary
+        val thrown =
+            assertThrows(AssertionError::class.java) {
+                fixture().run {
+                    sever { events += "sever" }
+                    throw primary
+                }
             }
-        }
         assertSame(primary, thrown)
         assertEquals(listOf("sever", "restore", "peer", "probe"), events)
     }
 
     @Test fun disconnectFailureStillRestoresAndCleans() {
         val primary = AssertionError("disconnect")
-        assertSame(primary, assertThrows(AssertionError::class.java) {
-            fixture().run { sever { events += "disconnect_attempt"; throw primary } }
-        })
+        assertSame(
+            primary,
+            assertThrows(AssertionError::class.java) {
+                fixture().run {
+                    sever {
+                        events += "disconnect_attempt"
+                        throw primary
+                    }
+                }
+            },
+        )
         assertEquals(listOf("disconnect_attempt", "restore", "peer", "probe"), events)
     }
 
@@ -38,13 +47,16 @@ class DurableGapIsolationTest {
         listOf("offline_production", "daemon_restart").forEach { stage ->
             events.clear()
             val primary = AssertionError(stage)
-            assertSame(primary, assertThrows(AssertionError::class.java) {
-                fixture().run {
-                    sever { events += "sever" }
-                    events += stage
-                    throw primary
-                }
-            })
+            assertSame(
+                primary,
+                assertThrows(AssertionError::class.java) {
+                    fixture().run {
+                        sever { events += "sever" }
+                        events += stage
+                        throw primary
+                    }
+                },
+            )
             assertEquals(listOf("sever", stage, "restore", "peer", "probe"), events)
         }
     }
@@ -53,13 +65,16 @@ class DurableGapIsolationTest {
         listOf(false, true).forEach { alreadyReconnected ->
             events.clear()
             val primary = AssertionError("catch-up")
-            assertSame(primary, assertThrows(AssertionError::class.java) {
-                fixture().run {
-                    sever { events += "sever" }
-                    if (alreadyReconnected) events += "normal_restore"
-                    throw primary
-                }
-            })
+            assertSame(
+                primary,
+                assertThrows(AssertionError::class.java) {
+                    fixture().run {
+                        sever { events += "sever" }
+                        if (alreadyReconnected) events += "normal_restore"
+                        throw primary
+                    }
+                },
+            )
             assertEquals(
                 listOf("sever") + (if (alreadyReconnected) listOf("normal_restore") else emptyList()) + listOf("restore", "peer", "probe"),
                 events,
@@ -72,16 +87,33 @@ class DurableGapIsolationTest {
         val restoration = AssertionError("failure-path restoration")
         val peer = AssertionError("peer close")
         val probe = AssertionError("probe end")
-        assertSame(primary, assertThrows(AssertionError::class.java) {
-            fixture(
-                restore = { events += "restore"; throw restoration },
-                peer = { events += "peer"; throw peer },
-                probe = { events += "probe"; throw probe },
-            ).run {
-                sever { events += "sever" }
-                throw primary
-            }
-        })
+        var attempts = 0
+        val reconnect = {
+            attempts++
+            if (attempts == 1) throw primary
+            events += "restore"
+            throw restoration
+        }
+        assertSame(
+            primary,
+            assertThrows(AssertionError::class.java) {
+                fixture(
+                    restore = reconnect,
+                    peer = {
+                        events += "peer"
+                        throw peer
+                    },
+                    probe = {
+                        events += "probe"
+                        throw probe
+                    },
+                ).run {
+                    sever { events += "sever" }
+                    reconnect()
+                }
+            },
+        )
+        assertEquals("one proof attempt and one failure-path attempt", 2, attempts)
         assertEquals(listOf(restoration, peer, probe), primary.suppressed.toList())
         assertEquals(listOf("sever", "restore", "peer", "probe"), events)
     }
@@ -105,21 +137,30 @@ class DurableGapIsolationTest {
     @Test fun cleanupFailureRemainsVisible() {
         val primary = AssertionError("peer close")
         val secondary = AssertionError("probe end")
-        assertSame(primary, assertThrows(AssertionError::class.java) {
-            fixture(peer = { throw primary }, probe = { events += "probe"; throw secondary }).run { }
-        })
+        assertSame(
+            primary,
+            assertThrows(AssertionError::class.java) {
+                fixture(peer = { throw primary }, probe = {
+                    events += "probe"
+                    throw secondary
+                }).run { }
+            },
+        )
         assertEquals(listOf(secondary), primary.suppressed.toList())
         assertEquals(listOf("probe"), events)
     }
 
     @Test fun sameThrowableDoesNotPreventRemainingCleanup() {
         val primary = AssertionError("same failure")
-        assertSame(primary, assertThrows(AssertionError::class.java) {
-            fixture(restore = { throw primary }, peer = { throw primary }).run {
-                sever { }
-                throw primary
-            }
-        })
+        assertSame(
+            primary,
+            assertThrows(AssertionError::class.java) {
+                fixture(restore = { throw primary }, peer = { throw primary }).run {
+                    sever { }
+                    throw primary
+                }
+            },
+        )
         assertEquals(emptyList<Throwable>(), primary.suppressed.toList())
         assertEquals(listOf("probe"), events)
     }
