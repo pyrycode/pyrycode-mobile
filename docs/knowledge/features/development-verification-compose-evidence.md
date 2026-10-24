@@ -105,6 +105,18 @@ A chrome pointer node can exclude underlying siblings without consuming child
 movement; gradual attachment swipes and composer selection drags must cross touch
 slop successfully. A tap-only test misses cancellation of those recognizers.
 
+For attachment open/save replay (#2526), use `attachmentActionTarget` before the single physical
+gesture: semantic placement can leave a restored deferred row under the composer even while the
+Activity is resumed. The helper reuses `questionAnswerTarget`; permanent header/open and
+composer/save controls retain exactly one action. Diagnose the failing phase before cleanup using
+content-free bounds, request/load/open events and intent-monitor answers. Empty phases and zero
+monitor answers distinguish the controlled lost tap from incomplete retrieval or missed intent
+observation; teardown snapshots alone cannot. Keep the original deadlines, strict recordings,
+restart, URI/read-grant and byte-digest assertions. See the
+[attachment scenario and counted acceptance](../../e2e-interactive-stream.md#verification-status)
+for causal red/green, five fresh starts, shared consumers, original configured UI execution and
+historical-attribution limits. Accepted evidence does not establish the cause of every older flake.
+
 A settled repository reply and an earlier geometry sample do not fence later layout.
 Proof-entry readiness and the earlier finished-marker reveal are separate boundaries.
 For generation-scoped markers, resolve the same raw Agent from current admitted evidence
