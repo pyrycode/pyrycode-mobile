@@ -87,6 +87,129 @@ class ProducerThreadObservationTest {
         assertFalse(target.completed(query.id))
     }
 
+    private fun refuse(
+        target: ProducerThreadObservation,
+        query: Envelope,
+        retryable: Boolean = true,
+    ) {
+        target.received(
+            source,
+            Envelope(
+                999,
+                "error",
+                "",
+                buildJsonObject {
+                    put("code", "thread.query_failed")
+                    put("message", "thread query could not complete")
+                    put("retryable", retryable)
+                },
+                inReplyTo = query.id,
+            ),
+        )
+    }
+
+    @Test fun retryableQueryRefusalRestartsFromCertifiedCheckpointWithoutPartialFacts() {
+        val target = observer()
+        baseline(target)
+        val failed = request(target)
+        target.received(source, batch(failed, listOf(item(2, text = "uncertified")), 2))
+        refuse(target, failed)
+        assertFalse(target.completed(failed.id))
+        assertTrue(target.answered(failed.id))
+        assertNull(target.evidence())
+        val next = checkNotNull(target.queryIfCurrent())
+        assertEquals(ThreadQueryRequest.CatchUp("chat", "epoch", 1uL).payload(), next.payload())
+        val fresh = request(target)
+        target.received(source, batch(failed, listOf(item(2, text = "late uncertified")), 2))
+        target.received(source, batch(failed, emptyList(), 2, final = true))
+        assertFalse(target.answered(failed.id))
+        assertFalse(target.answered(fresh.id))
+        assertFalse(target.completed(fresh.id))
+        assertNull(target.evidence())
+        finish(target, fresh, listOf(item(3, text = "certified")), 3)
+        val snapshot = checkNotNull(target.evidence()).sourceSnapshot
+        assertNotNull(snapshot)
+        assertFalse(checkNotNull(snapshot).items.any { it.id == 2L })
+        assertTrue(snapshot.items.any { it.id == 3L })
+        assertTrue(target.completed(fresh.id))
+        assertFalse(target.completed(failed.id))
+        assertTrue(target.diagnostic().contains("query_failed"))
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun repeatedRetryableQueryRefusalsKeepTheOriginalDeadlineAndNeverSend() =
+        runTest {
+            val target = observer()
+            baseline(target)
+            var reads = 0
+            var sends = 0
+            val waiting =
+                async {
+                    runCatching {
+                        target.awaitReplyAfterPost("missing", 90_000, catchUp = {
+                            val query = request(target)
+                            reads++
+                            refuse(target, query)
+                            assertFalse(target.completed(query.id))
+                            assertNull(target.evidence())
+                            kotlinx.coroutines.delay(50)
+                        }, send = { sends++ })
+                    }.exceptionOrNull()
+                }
+            runCurrent()
+            advanceTimeBy(89_999)
+            assertFalse(waiting.isCompleted)
+            advanceTimeBy(1)
+            runCurrent()
+            assertTrue(waiting.await() is kotlinx.coroutines.TimeoutCancellationException)
+            assertTrue(reads > 1)
+            assertEquals(0, sends)
+        }
+
+    @Test fun refusedQueryCannotReuseAnEndedOwnerOrRepeatTheAcceptedSend() {
+        val target = observer()
+        baseline(target)
+        send(target)
+        val failed = request(target)
+        refuse(target, failed)
+        assertNull(target.produced())
+        current = false
+        assertNull(target.queryIfCurrent())
+        val replacement = Any()
+        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+        assertNull(target.evidence())
+        assertNull(target.produced())
+        val query = target.queryIfCurrent()!!
+        assertEquals(ThreadQueryRequest.CatchUp("chat", "epoch", 1uL).payload(), query.payload())
+        assertFalse(target.answered(failed.id))
+        val fresh = Envelope(failed.id, query.type, "", query.payload())
+        target.sending(replacement, fresh)
+        target.sent(replacement, fresh, true)
+        // The old physical producer cannot certify the replacement, even with its request ID.
+        target.received(source, batch(fresh, reply(), 4))
+        target.received(source, batch(fresh, emptyList(), 4, final = true))
+        assertFalse(target.completed(fresh.id))
+        assertNull(target.produced())
+        target.received(replacement, batch(fresh, reply(), 4))
+        target.received(replacement, batch(fresh, emptyList(), 4, final = true))
+        assertTrue(target.completed(fresh.id))
+        assertEquals("ping", checkNotNull(target.produced()).text)
+    }
+
+    @Test fun nonretryableQueryRefusalStillRejectsTheProducer() {
+        val target = observer()
+        baseline(target)
+        val failed = request(target)
+        refuse(target, failed, retryable = false)
+        assertThrows(IllegalStateException::class.java) { target.queryIfCurrent() }
+        assertThrows(IllegalStateException::class.java) {
+            target.replaceConnection(Any(), setOf("thread", "interactive")) { true }
+        }
+        assertNull(target.evidence())
+        assertFalse(target.completed(failed.id))
+    }
+
     private fun item(
         id: Int,
         kind: String = "assistant_message",
