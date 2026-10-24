@@ -162,7 +162,10 @@ class CompactTaskAssociationTest {
                 val beforeRestore = store.current("h", "c")
                 assertEquals(
                     "same-owner restore: generation=${beforeRestore.generation}, reset=${beforeRestore.resetNeeded}, " +
-                        "epoch=${beforeRestore.epoch}, incarnationMatches=${beforeRestore.incarnation == saved.incarnation}",
+                        "epoch=${beforeRestore.epoch}, incarnationMatches=${beforeRestore.incarnation == saved.incarnation}, " +
+                        "version=${saved.toSnapshot().completedVersion}, saved=${saved.toSnapshot().items.map { listOf(it.id, it.rev, it.kind, it.parent, it.order, it.endedOrder) }}, " +
+                        "roots=${beforeRestore.compactRoots.values.map { listOf(it.id, it.kind, it.parent) }}, " +
+                        "children=${beforeRestore.childPages.values.flatMap { it.items }.map { listOf(it.id, it.kind, it.parent) }}",
                     AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0),
                 )
             }
