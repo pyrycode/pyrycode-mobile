@@ -172,3 +172,70 @@ synchronized, passive and test-only, with fixed labels and scalar values. It gra
 no authority and changes no requests, identities, deadlines or certification. The
 reused cleanup preserves the primary throwable and independently closes resources;
 its integration remains subject to independent review. Raw evidence stays private.
+
+### 2026-10-24: bounded diagnostic result and owning proposal
+
+The continuation preserves #2514 candidate `87135e971da5af043567eb7f9f30a53185697b2b`
+and merges current main `00dbea8e033aa78b750d05b54dc56d0e5fdc46e3`. Native-tested
+source is clean `7b755c27b0665f93b55d18b4f53cf90375b46155`; later evidence-only
+commits do not represent another native execution.
+
+The passive producer diagnostic's empty implementation failed 1/1 as intended.
+The first implemented class run passed 20/21; its new test incorrectly compared
+fresh evidence wrappers by equality. Correcting that assertion to require identity
+of the underlying immutable snapshot produced 21/21 passes. Integrated
+`DurableGapIsolationTest` passed 10/10. Both selector checks passed after the merge.
+Baseline lint, debug assembly and instrumented compilation passed with unchanged
+production sources. On the pushed merged source, `pre-verify.py --gradle` passed
+Spotless and every Kotlin source-set compilation. All failed results are retained.
+
+Fresh normal macOS `scripted ping`, gate `scripted-y5u1b3ku`, exited 1. Raw XML:
+2 executed, 1 passed, 1 failed, zero errors/skips. At 12:41:29.324 local time,
+durable-gap received a correlated query failure. Its terminal passive observation
+at 12:42:59.130 reported `rejection=query_failed`, `last_query=3`,
+`completed_query=2`, `items=2`, `checkpoint=2`, `completed_version=2`,
+`post_observed=false`, `produced=false`, `rejected=true`, `retired=true`,
+`pending=false`, `older=false`, `repair=false`, `reset=false`. This fixed category
+maps only to wire `thread.query_failed`; it does not identify the Core refusal path.
+The original 90000 ms timeout remains the primary failure.
+
+Exceptional cleanup logged restoration attempt, restored, peer closed and probe
+ended before the following ping. That ping passed, including the controlled
+replacement, exact current reply certification, unread and peer-read assertions.
+Its final read sample reported a retired captured connection, a different current
+owned connection, checkpoint 12, exact reply id/revision 9/10, authoritative shown
+9, confirmed 9 and `proved=true`. The former secondary send-before-render failure
+was absent in this run. This focused pass does not explain the two historical
+configured final-read failures and does not accept #2514's Linux requirements.
+
+Private evidence is retained in this continuation workspace under
+`work/evidence/native-diagnostic`: 27 manifest entries verified, plus all 4 nested
+harness manifest entries. Manifest SHA-256:
+`c487f00419d4fc427f75e689b932d5c28c687d1959502fb7136746474efc24e6`.
+The bundle includes raw device XML/protobufs, both phone logs, daemon/control/relay
+logs, gate phases ending in `finished`, source metadata, and both built APKs.
+Built app SHA-256 is
+`685ba7a6d63ae5c1f0572fd3a1aaf217a4901a04213e67f6372fac3609e3d5da`;
+built instrumented APK SHA-256 is
+`064cc5c5ad092b61c9c36f8aea35e1483c7a6e6d4493f03a7e222b3be5d6ec0e`.
+These are built-byte identities, not installed-byte readback. Debug metadata is
+fixed (`GIT_SHA=dev`, version code 999999); source is established by the clean Git
+state and harness revision. Retained daemon/relay hashes and their differing
+revision provenance remain exactly as recorded above; no product deployment occurred.
+
+Owning proposal: correlate the durable producer's physical peer/query 3 and
+checkpoint 2 with Core `admitThreadQuery`, `runThreadQuery`, `sendThreadReply` and
+`cancelThreadQuery` in `internal/relay/v2session_catchup.go`. These paths share the
+same fixed refusal code. Use a gated test of offline post publication overlapping
+the next producer query, recording admission, provider usability/error,
+cancellation and selected-reply/delivery cuts without payloads. The post command
+return is not evidence that asynchronous publication has settled. Reuse existing
+ordered-output barriers; preserve newer/foreign-epoch cancellation and truthful
+unavailable guards. Establish failing-before/passing-after evidence in the owning
+Core scope before proposing a repair. No unchanged native retry, deadline change,
+failed read retry, stale certificate or weakened assertion is justified here.
+
+Draft PR #2531 is the concrete handoff. The required native pair remains short of
+2/2; manual hold, independent review, configured acceptance and documentation stay
+pending. #2514 retains separate Linux 2/2 and configured acceptance. #2469 retains
+occurrence reconciliation; no dependency edge or workflow label was changed.
