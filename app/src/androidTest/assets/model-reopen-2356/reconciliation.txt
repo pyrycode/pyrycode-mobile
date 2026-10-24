@@ -217,3 +217,28 @@ repair is demonstrated or claimed. The retained configured XML places interrupte
 retrieval immediately before the unfinished ping case. The two-method sequence
 question requires shared investigation assessment; an isolated pass does not
 clear it or authorize a wider run. Raw ping XML/logcat/phases are in ping-focused.
+
+Clean repaired-source focused native checks at
+4574645e3a2227ffcef12f74ca912ae42c51ac8f:
+- Reconnect-footer ui-i9vpl8y9: exit 0, 1/1 executed/passed in 5.602 seconds,
+  zero failures/errors/skips. Readiness was false before navigation on physical
+  phone/host-0/1. After the existing gate completed, request 8/checkpoint 14 was
+  matched and consumed, query-pending=[] and first-failure=null. The remaining
+  terminal/context/close work then completed normally with full tape consumption.
+- Exact model-isolation ui-mr9ozxgz: exit 0, 1/1 executed/passed in 8.920 seconds,
+  zero failures/errors/skips. All seven diagnostic records reconstructed from
+  complete numbered chunks. Final Y: selected=true, pending=false,
+  note_matches=true, confirmation_matches=true, confirmation_evaluated=true;
+  Sonnet selected, Fable/Opus/Haiku unselected. Original isolation/restoration and
+  strict full consumption passed. The retained source patch is empty.
+Raw XML/logcat/phases, input hashes and verified manifests are in reconnect-repaired
+and model-focused. Acquisition/readiness sources match the earlier green attempts;
+ping's only subsequent IME changes are Spotless import ordering and line wrapping.
+No source, fixture, payload assertion or original deadline was relaxed.
+
+Formatting, lint, debug APK assembly and native Kotlin compilation exited 0.
+Final configured UI/scripted acceptance, independent review and assessment of the
+interrupted-retrieval-to-ping sequence remain pending through the normal routes.
+The PR carries the investigation request and final verification results. Neither
+this focused model pass nor the original configured model pass supplies the
+missing complete configured gate. Linux remains outside scope.
