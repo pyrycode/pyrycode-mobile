@@ -15,6 +15,8 @@ into its own document:
 - [Development verification — Compose evidence](development-verification-compose-evidence.md) —
   `Compose evidence`, `Probe the evidence itself`; `Compose evidence` also covers the shared
   `ViewportRule` / `@Viewport` and the `design-1220/` capture harness (#1430)
+- [Focused API35 capture selection](development-verification-api35-selection.md) —
+  bounded selectors, loaded-policy identity and pending real-system-bar evidence (#2435, #2418)
 - [Development verification — test scheduling and harnesses](development-verification-test-scheduling.md) —
   `Test scheduling and harnesses`
 - [Development verification — JVM logging, emulator and real evidence](development-verification-emulator-evidence.md) —
