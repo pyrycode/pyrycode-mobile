@@ -242,3 +242,56 @@ interrupted-retrieval-to-ping sequence remain pending through the normal routes.
 The PR carries the investigation request and final verification results. Neither
 this focused model pass nor the original configured model pass supplies the
 missing complete configured gate. Linux remains outside scope.
+
+Admitted two-method sequence, 2026-10-24
+Recovery preserved candidate 5395dc663 and verified the earlier retained hashes.
+Base 26dfc30b0 merges documentation-only main changes. Plan d5850927e precedes
+diagnostic source f3a893188519b7282ba8306467c5f6adf2240da0. TestImeRule now starts
+its bounded passive stack watcher before settings/service reads and retains it
+through restoration. Static phases cover shell submission/completion, idle sync
+and ping's existing first Compose wait. It adds no synchronization, diagnostic
+binder reads, requests, fixture changes or altered assertions/deadlines.
+
+Command: UI_SHARDS=1 python3 scripts/android-test-gate.py ui --tests
+de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile,de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread
+Run ui-rpi61zn3, macOS 26.6.2 arm64, pixel2Api33Atd_0, exit 0:
+2 executed, 2 passed, 0 failed/errors/skipped. Raw XML records retrieval 9.562s
+and ping 25.660s. TestRunner confirms actual ordered execution on PID 2452,
+instrumentation TID 2498: retrieval finished at phone time 15:03:43.226, then
+ping started at 15:03:43.231 and finished at 15:04:08.997. No process restart
+separates these methods. The original interrupted gate remains 40 completed,
+39 passed/1 failed, with ping unfinished in original PID 2502.
+
+Ping selection took 326ms including its original settings/service reads, shell
+completion and idle sync. The first Compose wait took 857ms and returned.
+One bounded sample at the later test_body phase captured instrumentation waiting
+in the owned-reply Compose wait and main running coroutine work. This is a sample
+within an eventually passing method, not proof of deadlock or the original stall.
+Restoration disabled/deleted the original absent IME selection, completed at
+15:04:07.561 and cancelled diagnostics at 15:04:07.562. Strict tape consumption,
+all original scenario assertions and settings restoration passed.
+
+Raw XML/logcat/phases, full console, phase/stack review and verified manifests:
+$AGENTS_REPO_PATH/logs/evidence/2356/sequence-macos-20261024/pair-focused/
+The parent directory retains console and review. checked-result.json binds the
+exact revision, all 76 earlier input identities plus wrapper/build/APK inputs.
+74/76 earlier inputs match; differences are the IME diagnostics and the passive
+observer around ping's first existing wait. Model/reconnect methods, acquisition
+helpers/controls and every recording byte are unchanged. Their earlier focused
+passes remain applicable after this explicit difference review. APK hashes
+identify built files, not independent installed-byte readback.
+
+The pair supplies no IME/lifecycle repair or cleared transient cause. Keep the
+remaining original-sequence/load question pending for shared assessment before
+any widening. The PR identifies the assessment request and final checks.
+Complete configured dispatcher UI/scripted acceptance, the exact model method
+in that candidate's UI gate, independent review and documentation remain pending.
+No wider diagnostic was executed. Linux remains outside scope.
+
+Fresh causal controls on this diagnostic candidate: InitialAttentionQueryTest
+executed/passed 18/18 and ThreadQueryReadinessTest executed/passed 12/12, both
+exit 0 with zero failures/errors/skips. Their separate invocations, raw XML,
+source identities and evidence-only working patches are retained beside the
+pair under acquisition-controls/ and readiness-controls/. These reruns preserve
+the cached-checkpoint, consumed-terminal, replacement/retirement, ownership and
+single monotonic deadline obligations; no duplicate regression was introduced.
