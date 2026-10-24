@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -41,6 +43,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -582,6 +585,97 @@ class ConversationTreeRowsTest {
                             hasContentDescription(string(R.string.cd_tree_host_update, "Pyrybox")),
                         useUnmergedTree = true,
                     ).assertCountEquals(if (relay is RelayLinkStatus.UpdateRequired) 1 else 0)
+            }
+        }
+    }
+
+    @Test
+    fun hostRow_controlCentersMatchTheirStateFrame_andPointerEdgesKeepTheirOwnActions() {
+        val states =
+            listOf(
+                RelayLinkStatus.Connected,
+                RelayLinkStatus.Offline,
+                RelayLinkStatus.PairingRejected,
+                RelayLinkStatus.UpdateRequired(null),
+            )
+        val width = mutableStateOf(372.dp)
+        val edits = IntArray(states.size)
+        val reconnects = IntArray(states.size)
+        val folds = IntArray(states.size)
+        var density = Density(1f)
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.value, 892.dp))) {
+                density = LocalDensity.current
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    Column(Modifier.width(width.value)) {
+                        states.forEachIndexed { index, relay ->
+                            TreeHostRow(
+                                serverId = "placement-$index",
+                                hostName = "Host $index",
+                                connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected),
+                                expanded = true,
+                                onToggleExpanded = { folds[index]++ },
+                                onEditTapped = { edits[index]++ },
+                                onReconnectTapped = { reconnects[index]++ },
+                                modifier = Modifier.testTag("placement-row-$index"),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        listOf(372.dp, 280.dp).forEachIndexed { pass, contentWidth ->
+            width.value = contentWidth
+            states.forEachIndexed { index, relay ->
+                val row = composeTestRule.onNodeWithTag("placement-row-$index").getUnclippedBoundsInRoot()
+                val edit = composeTestRule.onNodeWithTag(treeHostEditTestTag("placement-$index"))
+                val pen = edit.getUnclippedBoundsInRoot()
+                val terminal = index != 0
+                // ForcedSize changes density, so use that composition's physical-pixel tolerance.
+                assertEquals(contentWidth.value, row.width.value, with(density) { 1.toDp() }.value)
+                // Preserve the accepted connected 12 dp slot; native pixels compare it with 15:8's
+                // 10 dp target. ForcedSize's fractional density can round that 2 dp boundary outward.
+                assertEquals(
+                    "$relay pen inset at $contentWidth",
+                    if (terminal) 24f else 12f,
+                    (row.right - (pen.left + pen.right) / 2).value,
+                    2f,
+                )
+                assertEquals("$relay pen band center", (row.top + 14.dp).value, ((pen.top + pen.bottom) / 2).value, 2f)
+                if (terminal) {
+                    val tag =
+                        if (relay is RelayLinkStatus.UpdateRequired) {
+                            treeHostUpdateTestTag(
+                                "placement-$index",
+                            )
+                        } else {
+                            treeHostReconnectTestTag("placement-$index")
+                        }
+                    val status = composeTestRule.onNodeWithTag(tag)
+                    val bounds = status.getUnclippedBoundsInRoot()
+                    assertEquals("$relay status inset at $contentWidth", 48f, (row.right - (bounds.left + bounds.right) / 2).value, 2f)
+                    assertEquals("$relay status band center", (row.top + 14.dp).value, ((bounds.top + bounds.bottom) / 2).value, 2f)
+                    status.performTouchInput { click(Offset(1f, center.y)) }
+                    status.performTouchInput { click(Offset(center.x * 2 - 1f, center.y)) }
+                    assertEquals((pass + 1) * 2, reconnects[index])
+                    assertEquals(pass * 2, edits[index])
+                    assertEquals(pass, folds[index])
+                }
+                edit.performTouchInput { click(Offset(1f, center.y)) }
+                edit.performTouchInput { click(Offset(center.x * 2 - 1f, center.y)) }
+                assertEquals((pass + 1) * 2, edits[index])
+                assertEquals(pass, folds[index])
+                // The fold surface ends immediately before the 4 dp gap to the first control.
+                composeTestRule
+                    .onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Host $index")))
+                    .performTouchInput { click(Offset(center.x * 2 - 1f, center.y)) }
+                assertEquals((pass + 1) * 2, edits[index])
+                assertEquals(if (terminal) (pass + 1) * 2 else 0, reconnects[index])
+                assertEquals(pass + 1, folds[index])
+                states.indices.filter { it > index }.forEach { other ->
+                    assertEquals("no action routed to host $other", pass * 2, edits[other])
+                }
             }
         }
     }
