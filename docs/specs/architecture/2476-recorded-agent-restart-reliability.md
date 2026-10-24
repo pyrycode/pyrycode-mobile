@@ -201,7 +201,262 @@ The earlier pending recovery assessment supplied the missing stderr rather than 
 new native execution. Complete configured acceptance, including counted execution of
 the named method in the dispatcher UI gate, and independent review remain pending.
 
+### 2026-10-23 — reopened generation-0 rotation boundary
+
+The newly published #2462 verifier bundle
+`db5461c8f6c2f795f941b095d278cb092cf3f6c602d586d56879963b8dcda166`
+(digest `6a6b24f31c0b914c6968c7d6cc0f1f10d35cc296709078899f7aaf85ad89e193`)
+has 138 verified manifest entries. Its reviewed source is
+`2db93ebd8a8280d25c7c071fc11b2af4da55b198`. The initial configured UI run
+executed 333 methods: 331 passed, two failed, zero errors, one additional skip.
+The separate same-candidate rerun passed both methods without skips. This
+occurrence's primary error is a 30000 ms timeout; cleanup then records step 41's
+`background-fixture` mismatch. The pending work is generation 0's request 35,
+checkpoint 81, before graph replacement. Request 30/checkpoint 77 matched and
+its replies make the session divider visible. The failed stderr is
+`logs/verifier-gate__2462_5.stderr.log.failure-1792716578639.log`; the rerun is
+`logs/2026-10-23T00-49-38-642Z_verifier-gate-rerun__2462.log`.
+
+This differs from the repaired lexical close (generation 2), the earlier
+checkpoint-87-versus-0 mismatch, and #2483's pre-rotation run lookup. The original
+phone log and effective APK hashes are not included in this bundle; do not claim
+their identity or historical load/order beyond the retained reports.
+
+Source exposes a bounded rotation race to test: `authoritativeThreadEvidence`
+admits live divider facts before the catch-up terminal certifies them. Reopening
+the destination at that point calls `AuthoritativeThreadQueries.acquire` while
+the preceding query is active; `enqueue` coalesces the reopen. After its terminal,
+no new query remains to supply the recorded checkpoint-81 catch-up. The restart
+fence cannot create missing application demand. Test this mechanism before
+changing readiness; no product query-coalescing change is intended.
+
+Extract the existing next-session lookup into test-only
+`SessionRotationReadiness.certifiedNextSession`. A real-repository regression
+holds the rotation terminal while the live divider is already visible, then
+reopens through the same lookup and requires the next exact-checkpoint query.
+Run the old lookup red before requiring certification of the observed live
+version. The repaired lookup must stay unready until the same owned snapshot
+has a checkpoint covering its completed version, then reopen once. Keep passive
+observation, all original assertions and matching, no retries, recording edits
+or deadline changes. Add missing/stale/foreign rotation negatives as needed.
+
+Files additionally read: `AuthoritativeThreadQueries.acquire`, `enqueue` and
+`accept`; `ThreadEvidence.authoritativeThreadEvidence`;
+`SuiteCloseConsumptionTest`; `SuiteConnections.beforePhoneRestart` and
+`beforeClose`; current #2462 and #2483 branch diffs. #2462 changes the later
+placement sampler and process-stop fence; #2175 contains the superseded proof.
+Keep this earlier rotation edit local. Forecast under 650 newly written lines,
+no production exports or signature migrations, one reliability behavior with its
+causal regression. If the controlled test does not establish this mechanism,
+retain its result and revise the diagnosis before implementing a repair.
+
+| Event | Regression |
+| --- | --- |
+| Live session divider precedes its query terminal and destination reopen | `rotationReopenWaitsForCertificationBeforeAcquiringItsQuery` |
+| Missing, stale or unrelated rotation evidence | Focused readiness negatives beside the causal regression |
+| Actual graph/cache replacement and settlement | Three fresh Linux invocations of the unchanged recorded method |
+
+The unchanged Linux baseline at `a48e9ced0e9bc7e9193445d576afb6fb498a7b99`
+is queued for shared admission, zero tests executed so far. Complete configured
+acceptance remains dispatcher-owned; historical macOS failures remain failed.
+
+### 2026-10-23 — retain controlled omission; historical attribution pending
+
+The unchanged recorded method passed on Linux in `ui-suzgk2r4`: one executed,
+one passed, zero failures/errors/skips, exit 0. Its base is
+`a5d7e3adb7203bd1f29a426947f9c9bc66bd83fd`, with an unused shared-test lookup
+extraction and the new JVM diagnostic present. The native caller and scenario
+are unchanged. App APK SHA-256 is
+`207d419cd215b34ffbdc0caa0f8d735eec0434f8cc52d5fb42e3662f92905ff0`;
+test APK SHA-256 is
+`c2af6ca0a175538e867b6e15b7c7d7e1665634b941506774d725487af90cb622`.
+The receipt, full input hashes, patch, raw XML/phone log and completion phases
+are retained in `baseline-linux` (19 verified manifest entries). This is a
+diagnostic pass, not repaired-candidate acceptance.
+
+The first JVM fixture attempt executed once and failed before the intended
+boundary: its repository sent before the replay pump reached Open, leaving
+checkpoint zero. Preserve `rotation-fixture-red-1` as a setup failure, not causal
+proof. The corrected fixture drives Open before constructing the repository.
+It then holds the real checkpoint-77 query's terminal while the admitted
+session divider and completed version 81 are visible with checkpoint 77.
+The original readiness lookup reopens at this point. After terminal release,
+the actual request payloads contain only checkpoints 0 and 77, omitting 81.
+`rotationReopenWaitsForCertificationBeforeAcquiringItsQuery` fails that exact
+request assertion: one executed/failed, zero errors/skips, exit 1.
+`rotation-controlled-red` retains six verified files, including raw XML/binary
+reports, the exact patch/extraction and receipt. A terminal advancing to 84
+prevents normalization from substituting for the missing final query.
+
+This establishes query coalescence in the controlled interleaving. It does not
+distinguish coalescence from cancellation or an overlapping reader in the
+historical occurrence. That occurrence's original phone traces, effective APK
+identities and cleanup receipts for `ui-q2ll4ly_` and `ui-7b4oc0t5` are absent
+from the newest bundle and its pointers. Do not infer those binary hashes from
+the earlier builder's source-equivalent pass. The original generation-0
+checkpoint-81 omission and separate rerun remain retained and distinct from all
+earlier failure boundaries.
+
+Recovery assessment
+`845d55f150984a3ca26ce592d4315befdef365a8558bd5db1c65e094e3d2731d`
+is queued with zero executed tests. It requests recovery of those existing
+artifacts first; its maximum proposed execution scope is the exact named
+method at `2db93ebd8a8280d25c7c071fc11b2af4da55b198`, never a complete
+suite or macOS verification. The request and all new private evidence are under
+agents `logs/evidence/2476/builder-recurrence-20261023/`; the original bundle is
+in `original-2462`, with all 138 manifest entries verified. The request uses
+this ticket's verified refiner bundle
+`ea45570c450701d2d663caac33f3dcf9916c823e8a163f570afdcb09bb997074`
+as provenance, and names the newly recovered verifier bundle explicitly.
+
+No certification guard has been added and the extraction is not wired into
+the native proof. The new diagnostic remains deliberately red on the branch;
+no assertion is skipped or retried. Before selecting a synchronization repair,
+recover the original reader/query trace and establish whether the demonstrated
+coalescing mechanism explains it. Then complete controlled red/green, the three
+fresh repaired Linux invocations, affected regression checks and normal final
+gates. No new implementation PR or acceptance claim is made in this blocked
+diagnostic handoff. Historical host load and preceding non-recorded test effects
+remain unestablished; the retained XML names the same three preceding recorded
+methods as the earlier investigation, without proving their causality.
+
+### 2026-10-23 — resume certified rotation repair
+
+The preserved controlled red establishes a useful repair despite the unresolved
+historical coalescence/cancellation distinction. Require `certifiedNextSession`
+to match the current authoritative owner and exact current snapshot, reject
+repair/reset/incomplete evidence, and require its checkpoint to cover both the
+completed version and the projected rotation fact. Wire that lookup into
+`proveNegotiatedAgentRestart` before reopening the destination. Preserve all
+later graph, family, navigation, settlement and cleanup assertions.
+
+The repository serializes `accept` and `acquire` on the same query monitor.
+Certification publishes during `accept`, before retirement; the reopening
+destination must acquire after that terminal finishes, rather than recursively
+inside publication. Extend the controlled test to retain terminal consumption
+and query lifecycle ordering, and require the exact checkpoint-81 request and
+its subsequent checkpoint-84 certification. Readiness negatives cover partial,
+missing, stale, reset and foreign ownership, and an unrelated divider. No
+production synchronization or query coalescing changes are planned.
+
+One behavior and its causal regression remain the deliverable, under 650 new
+written lines (under 1600 total branch work), no production exports or API
+migration. Overlaps with #2462 are later placement sampling and process-stop
+fencing; #2483 changes the earlier tool-run lookup. Neither is a dependency.
+The original phone logs, APK identities and cleanup receipts for `ui-q2ll4ly_`
+and `ui-7b4oc0t5` remain missing; preserve that limitation and emit bounded
+content-free rotation owner/checkpoint receipts in the three focused Linux runs.
+
+### 2026-10-23 — certified rotation wired; controlled green
+
+The guarded lookup is now wired before the original `openThread`. It compares
+the current owner and exact store snapshot, requires checkpoint coverage of its
+completed version, and retains exactly one boundary from the previous session
+to a different session. The accepted reading supplies the session identity;
+later updates cannot make a second lookup fail after readiness was established.
+The native owner receipt now includes completed version and a bounded
+`certified_rotation` stage. No production source or recording changed.
+
+At `c12e2c03a350df018f09799b12253c78f8edb9d3`, the unchanged pre-repair
+control executed once and failed on the missing checkpoint-81 payload. Its
+six-file manifest verifies in `logs/evidence/2476/builder-certified-rotation-20261023/rotation-red-current`.
+After the guard, `SuiteCloseConsumptionTest` passed 4/4 and
+`SessionRotationReadinessTest` passed 7/7, both with zero failures/errors/skips.
+Their exact dirty-source patches, raw XML, binary reports and input hashes are
+retained in `rotation-green` and `focused-SessionRotationReadinessTest` beneath
+that evidence root. The causal fixture preserves the original exact-payload
+assertion and adds a post-emission terminal-consumption receipt and an assertion
+that partial divider facts leave reopening pending. It then observes the real
+checkpoint-81 request, subsequent checkpoint-84 certification and complete tape
+consumption. The three existing consumption/ownership controls remain enabled.
+
+| Event | Focused regression |
+| --- | --- |
+| Partial rotation before its terminal | `rotationReopenWaitsForCertificationBeforeAcquiringItsQuery`, `visibleDividerCannotReplaceItsMissingTerminal` |
+| Current snapshot replaced, even within one generation | `aRetainedSnapshotCannotCertifyTheCurrentReading` |
+| Connection, host, conversation, epoch or generation changes | `foreignOwnersCannotCertifyRotation`, `receiptMustDescribeItsOwnSnapshotEpochAndGeneration` |
+| Reset, missing or unadmitted evidence | `resetRepairAndUnadmittedReadingsCannotCertifyRotation` |
+| Unrelated, duplicate or self-referential divider | `unrelatedSelfAndAmbiguousDividersCannotSupplyTheNextSession` |
+
+The historical first boundary is resolved; its precise coalescence/cancellation
+interleaving, original effective APK identities and cleanup receipts remain
+unestablished. The controlled interleaving establishes the readiness defect,
+without attributing historical host load or preceding tests. Native repaired
+acceptance and the remaining focused classes are still pending at this commit.
+
+### 2026-10-23 — repaired Linux focused evidence complete
+
+The seven focused JVM classes passed 119 executed tests, zero failures/errors/skips:
+consumption 4, readiness 7, passive observation 3, query coordination 23,
+connections 28, tape 49 and cleanup ownership 5. The latter five receipts identify
+implementation `796d479f4bc1a1e2c7ae4c417e4b03ddef141b6b`; the first two retain
+their exact pre-commit patches. Each class ran in its own managed invocation.
+The earlier multi-class selection refusal executed zero tests and is retained
+separately as `selection-refusal.json`.
+
+After a clean merge of main, including the accepted #2483 pre-restart lookup
+repair, pushed source `76f9b235b845cc65f1ce6b1ad7d89f71828a2c02` passed the
+exact original recorded method in three independent fresh Linux invocations:
+
+| Attempt | Gate | Executed / passed / failed / errors / skipped |
+| --- | --- | --- |
+| Native 1 | `ui-6dv8xoii` | 1 / 1 / 0 / 0 / 0 |
+| Native 2 | `ui-wcxanwkz` | 1 / 1 / 0 / 0 / 0 |
+| Native 3 | `ui-0q5wzbgs` | 1 / 1 / 0 / 0 / 0 |
+
+Every command exited zero, with a clean executable tree. Each `native-N` folder
+under agents `logs/evidence/2476/builder-certified-rotation-20261023/` retains
+18 verified manifest entries: raw XML/native reports and phone logs, source/input
+identities, effective APK hashes and managed-image/completion phases. All three
+cleanup receipts finish successfully. Each phone observes certified checkpoint
+81/completed version 81 before reopening, then graph/cache reconstruction and
+replacement-connection settlement. App APK SHA-256 is
+`207d419cd215b34ffbdc0caa0f8d735eec0434f8cc52d5fb42e3662f92905ff0`;
+test APK SHA-256 is
+`f1bb8fa3a5fc3eaf08ed8fb8282d4b4345a244563d459f9b6bd6583341fd4835`.
+Both hashes and the source revision are identical across all three attempts.
+
+Lint, debug assembly and instrumented Kotlin compilation passed after that last
+main merge. Final pre-verify remains the next builder check. Complete configured
+acceptance, including counted execution of this named method in the dispatcher
+UI gate, and independent review remain pending. Historical artifact gaps and
+the accepted #2478 repair retain their separate status. No macOS test, complete
+suite or genuine Claude turn was launched for this unchanged recording.
+
+### 2026-10-23 — historical acceptance finding routed for refinement
+
+Verifier finding 1 at `6720222f055e2985e2d3722fccb466f13c4416d0`
+remains unresolved. The historical first boundary is identified, but its cause
+and effective APK identities are not established. The controlled readiness
+defect does not distinguish coalescing, cancellation or another reader in the
+original occurrence. No historical identity is inferred from the repaired runs.
+
+The authoritative verifier record `c6f33e1223c15230ce8b0f476e7e86d0fc6c34a3f6131998949fdeddacca5ac3`
+accepts the implementation and its focused evidence. Its Linux configured UI
+gate executed/passed 333 methods, including the exact restart method, with zero
+failures/errors and one additional skip. The JVM gate passed 5,365 methods;
+scripted acceptance retains its unrelated #2442 failure and separate passing
+rerun. These results do not satisfy the missing historical diagnosis.
+
+Rechecked all 138 original recurrence manifest entries and retrieved the latest
+retained recovery assessment and #2462 builder/refiner bundles. None supplies
+the original `ui-q2ll4ly_` / `ui-7b4oc0t5` phone traces, effective APK identity
+receipts or cleanup phases. Recovery assigned the useful certification repair
+without changing acceptance criterion 1. The criterion therefore remains open.
+
+Artifact-recovery assessment
+`76eec13279d1e25036333c00ca0eeec63be1f18b2ce94614418894bed6dcc244`
+is queued with zero executed tests. It references the retained verifier finding
+and original failure, requests only recovery of existing artifacts, and asks
+for an explicit refinement decision if they cannot be recovered. No new native
+execution or wider suite is requested: a later pass cannot recover historical
+binary identities or prove that occurrence's interleaving. Preserve PR #2492,
+its repair and all counted evidence while resolving this requirement through
+refinement. No source, recording, assertion, deadline or acceptance criterion
+changed in this handoff; no new tests ran.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/recorded-tests.md`, “Explicit graph-restart readiness (#2347)”: replacement Activity ownership through ordered cleanup, with causal regression evidence.
 - Pending documentation stage: `docs/e2e-interactive-stream.md`, “Negotiated Agent restart and settlement (#2246)”: counted repaired Linux invocations and dispatcher acceptance status.
+- Pending documentation stage, both sections above: add the demonstrated partial-rotation/certification defect and its guarded reopen regression, together with the fresh counted Linux evidence. Preserve the original failure and separate rerun, missing historical phone/APK/cleanup artifacts, and accepted #2478 results; qualify each completion claim to the cause actually proved.

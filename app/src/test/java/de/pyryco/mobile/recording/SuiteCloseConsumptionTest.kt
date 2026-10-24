@@ -10,6 +10,8 @@ import de.pyryco.mobile.data.repository.AuthoritativeThreadStoreTest.Companion.i
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
 import de.pyryco.mobile.e2e.LiveSessionCleanupRule
+import de.pyryco.mobile.e2e.authoritativeThreadEvidence
+import de.pyryco.mobile.e2e.certifiedNextSession
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,7 +19,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -45,6 +49,120 @@ class SuiteCloseConsumptionTest {
     @After fun restoreLogs() {
         RelayLog.sink = previousSink
     }
+
+    @Test fun rotationReopenWaitsForCertificationBeforeAcquiringItsQuery() =
+        runTest {
+            val diagnosticLogs = mutableListOf<String>()
+            RelayLog.sink = { _, _, message -> diagnosticLogs += message }
+            val owner = "phone/host/0"
+            val divider =
+                """{"id":78,"kind":"session_divider","order":78,"rev":78,"session":"session-a","status":"done","active":false,"shown":true,"summary":"","content":{"cause":"operator_reset","previous_session_id":"session-a","new_session_id":"session-b"}}"""
+            val rotationBatch =
+                frame(
+                    175,
+                    "thread_items",
+                    """{"conversation_id":"chat","epoch":"epoch","version":81,"items":[$divider],"final":false}""",
+                    30,
+                )
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner, capabilities = capabilities),
+                        SuiteStep("client", owner, query(1, 0)),
+                        SuiteStep("daemon", owner, batch(2, 1, version = 77)),
+                        SuiteStep("daemon", owner, terminal(3, 1, version = 77)),
+                        SuiteStep("client", owner, query(30, 77)),
+                        SuiteStep("daemon", owner, rotationBatch),
+                        SuiteStep("daemon", owner, terminal(176, 30, from = 77, version = 81)),
+                        SuiteStep("client", owner, query(35, 81)),
+                        // Advance the boundary: terminal-tail normalization cannot replace this query.
+                        SuiteStep("daemon", owner, terminal(181, 35, from = 81, version = 84)),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            val connectionScope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[kotlinx.coroutines.Job]))
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                val releaseTerminal = CompletableDeferred<Unit>()
+                val enteredTerminal = CompletableDeferred<Unit>()
+                val consumedTerminal = CompletableDeferred<Unit>()
+                val requests = mutableListOf<Envelope>()
+                val observed =
+                    object : SessionPump by pump {
+                        override val inbound =
+                            pump.inbound.transform {
+                                if (it.id == 176L) {
+                                    enteredTerminal.complete(Unit)
+                                    releaseTerminal.await()
+                                }
+                                emit(it)
+                                if (it.id == 176L) consumedTerminal.complete(Unit)
+                            }
+
+                        override fun send(envelope: Envelope): Boolean {
+                            requests += envelope
+                            return pump.send(envelope)
+                        }
+                    }
+                val store = AuthoritativeThreadStore()
+                store.reset("host", "chat", "epoch")
+                val repository = repository(observed, connectionScope, store)
+                assertTrue(repository.openAuthoritativeThread("chat"))
+                runCurrent()
+                assertEquals("${tape.progress()} logs=$diagnosticLogs", 77L, store.current("host", "chat").checkpoint)
+                assertTrue(repository.openAuthoritativeThread("chat"))
+                runCurrent()
+                assertTrue(enteredTerminal.isCompleted)
+                val partial = store.current("host", "chat")
+                assertEquals(81L, partial.completedVersion)
+                assertEquals(77L, partial.checkpoint)
+                assertTrue(
+                    "the actual divider is already admitted",
+                    authoritativeThreadEvidence("host", "chat", repository, partial).admitted,
+                )
+                val reopening =
+                    async {
+                        store.observe("host", "chat").first {
+                            val reading = authoritativeThreadEvidence("host", "chat", repository, it)
+                            val current = authoritativeThreadEvidence("host", "chat", repository, store.current("host", "chat"))
+                            reading.certifiedNextSession("session-a", current) == "session-b"
+                        }
+                        assertTrue(
+                            "terminal retirement and downstream consumption precede destination acquisition",
+                            consumedTerminal.isCompleted,
+                        )
+                        requireNotNull(repository.acquireAuthoritativeThread("chat"))
+                    }
+                runCurrent()
+                assertFalse("partial divider facts cannot reopen the destination", reopening.isCompleted)
+                releaseTerminal.complete(Unit)
+                runCurrent()
+                val destination = reopening.await()
+                runCurrent()
+                assertEquals(
+                    "reopen must retain the required post-rotation query instead of coalescing it with the active query",
+                    listOf(query(1, 0).payload, query(30, 77).payload, query(35, 81).payload),
+                    requests.map { it.payload },
+                )
+                assertEquals(84L, store.current("host", "chat").checkpoint)
+                hub.beforeClose(owner)
+                destination.close()
+                transport.close()
+                runCurrent()
+                hub.assertComplete()
+            } finally {
+                connectionScope.cancel()
+                hub.close()
+            }
+        }
 
     @Test fun replacementActivitySurvivesResetQueryAndOrderedSessionCleanup() =
         runTest {
