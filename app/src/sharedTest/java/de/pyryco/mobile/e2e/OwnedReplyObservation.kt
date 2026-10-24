@@ -437,6 +437,20 @@ internal class OwnedReplyObservation(
 
 /** Passive phone-boundary tap; settings correlation and recording contracts remain in their own decorators. */
 internal object OwnedReplyProbe {
+    @Volatile var readTrace: ((Any, Envelope, Boolean) -> Unit)? = null
+
+    private fun traceRead(
+        connection: Any,
+        frame: Envelope,
+        sending: Boolean,
+    ) {
+        try {
+            readTrace?.invoke(connection, frame, sending)
+        } catch (_: IllegalArgumentException) {
+            // Malformed passive diagnostics cannot interrupt the repository's normal admission.
+        }
+    }
+
     private val hosts = WeakHashMap<RelayTransport, String>()
 
     @Volatile private var active: OwnedReplyObservation? = null
@@ -492,6 +506,7 @@ internal object OwnedReplyProbe {
                     flow {
                         try {
                             delegate.inbound.collect { frame ->
+                                traceRead(connection, frame, false)
                                 ContextResetProbe.before(host, connection, frame)
                                 AuthoritativeHistoryProbe.received(host, connection, frame)
                                 observers().forEach { it.phoneReceived(connection, frame) }
@@ -509,6 +524,7 @@ internal object OwnedReplyProbe {
                     }
 
                 override fun send(envelope: Envelope): Boolean {
+                    traceRead(connection, envelope, true)
                     val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
                     val observers = observers()
                     AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
