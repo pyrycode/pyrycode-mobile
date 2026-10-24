@@ -591,6 +591,7 @@ class DeterministicInteractiveStreamE2ETest {
             }
         }
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
+        severAndRestoreLink()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             runBlocking {
                 val current = coordinator.currentRepository.value as? de.pyryco.mobile.data.repository.RemoteConversationRepository
