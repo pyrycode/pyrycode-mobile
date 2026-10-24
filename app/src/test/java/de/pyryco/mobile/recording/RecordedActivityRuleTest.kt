@@ -8,10 +8,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -49,14 +51,17 @@ class RecordedActivityRuleTest {
             val transport = hub.transport(owner) { error("Replay cannot open a real transport") }
             val pump = hub.pump(transport) { error("Replay cannot launch a real pump") }
             pump.start()
+            val received = CompletableDeferred<Envelope>()
+            scope.launch { pump.inbound.collect { received.complete(it) } }
             transport.connect()
             runBlocking { withTimeout(1000) { pump.state.first { it is PumpState.Open } } }
             val guardEntered = CompletableDeferred<Unit>()
             val sent = AtomicBoolean()
+            val request = frame(90, "list_conversations")
             val query =
                 scope.launch {
                     guardEntered.await()
-                    assertTrue(pump.send(frame(90, "list_conversations")))
+                    assertTrue(pump.send(request))
                     sent.set(true)
                 }
             val activity =
@@ -91,6 +96,9 @@ class RecordedActivityRuleTest {
                 withTimeout(1000) {
                     query.join()
                     hub.awaitIdle()
+                    val response = received.await()
+                    assertEquals(request.id, response.inReplyTo)
+                    assertEquals("conversations", response.type)
                 }
             }
             hub.control("checkpoint", "scenario-complete") { error("Replay cannot call a producer") }

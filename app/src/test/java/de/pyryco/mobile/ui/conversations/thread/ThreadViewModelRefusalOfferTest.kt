@@ -151,10 +151,12 @@ class ThreadViewModelRefusalOfferTest {
                 )
             val vm = collectedVm()
 
+            val presentation = requireNotNull(vm.state.value.authoritativeThread)
             assertTrue(
-                requireNotNull(vm.state.value.authoritativeThread)
-                    .items
-                    .any { it is ThreadItem.ModelRefusal },
+                presentation
+                    .demandRows(presentation.rows, emptySet())
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .any { it.item is ThreadItem.ModelRefusal },
             )
             assertNull(vm.switchBackOffer.value)
         }
@@ -551,8 +553,6 @@ class ThreadViewModelRefusalOfferTest {
         override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announced
 
         override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = refusals
-
-        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = error("legacy rows must not supply refusal evidence")
 
         override fun refreshSessionSettings(conversationId: String) {
             refreshes++

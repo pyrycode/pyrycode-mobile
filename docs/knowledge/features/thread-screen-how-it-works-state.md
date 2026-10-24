@@ -6,44 +6,19 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 The `.orEmpty()` is a **type-system narrowing, not a defensive fallback** — Compose Navigation guarantees the `navArgument("conversationId") { type = NavType.StringType }` is present before the destination composes. Post-#139 the `conversationId` is lifted to a `private val` field on the VM so the `map { … }` body and the `stateIn(initialValue = …)` both reference one source of truth; before #139 the inline `savedStateHandle.get<String>("conversationId").orEmpty()` lived directly in the `MutableStateFlow(...)` constructor. The narrowing collapses `String?` to `String` so the `data class` field reads cleanly and the title `Text` is non-null at every callsite.
 
-### `combine(observeConversations, observeMessages, pendingWorkspacePicker).stateIn(WhileSubscribed)` — three upstreams since #137
+### Authoritative content and separate controls
 
-The current `state` combines shared conversations, complete `threadContent`, the
-workspace picker, transient dialogs and run configuration. Confirmed read marks
-and other action/status readings join independently. The historical three-arm
-shape became this content carrier as rows, queue and history grew; it no longer
-reads `observeMessages` directly or joins received evidence separately.
+The ViewModel observes the owning negotiated thread and derives presentation from
+complete supplied items, current progress and pending local sends. Raw snapshot
+subscription, `ThreadFold` intake, legacy gap/coverage work and checkpoint fallback
+were removed in #2367. Off-worker presentation and frame pacing retain complete
+values; skipped/pending versions grant no sight. Composer, prompts, actions and
+configuration remain independent of content delivery.
 
-`threadContent` carries rows, queued messages, history tail, markers and exact
-read evidence. Since #1968, both demo and relay destination factories inject
-`ThreadContentScheduling`: sequential `ThreadFold.reduce` and `render` run on
-`Dispatchers.Default`, and complete content waits for Compose's Android UI frame
-clock backed by Choreographer. At each frame with completed pending work, the
-latest complete value publishes once. Initial nonempty content and the final
-burst value need no further input. Composer, dialogs, actions and confirmed read
-marks remain outside this pacing arm. Row folds still run in composition; this
-bounds content-driven updates rather than establishing measured scrolling gains.
-
-Raw snapshot/live admission preserves each source's order before any conflation.
-The unbounded buffer directly after `merge` fuses with its intake channel, ahead
-of worker suspension. A bounded send can delay even bookkeeping placed before
-reduction and push pressure back into the repository's 64-slot dropping live
-source. Shallow probes with suspending sources miss that loss. Only complete
-accumulated display values may replace one another; the raw backlog can grow
-while the worker is behind and is released on collection cancellation.
-`noteNewestBoundary` stays on main at snapshot admission, and matching live deltas
-establish the nonempty baseline there. Clearing after queued reduction could
-erase a later turn outcome even when the boundary's display version is skipped.
-
-A single snapshot subscription supplies both rows and evidence. Each sequential
-fold carries its latest snapshot evidence through `presentedAs(rows)` into the
-complete content value; synthetic live text cannot borrow unrelated snapshot
-claims. History-gap overlays wait for `historySeed`. Pending or skipped versions
-grant no sight, and a later presented version can qualify without another
-subscription or backfill. Keep restored-row, unknown-id and gap barriers alongside
-[lifecycle, viewport and reveal qualification](thread-screen.md#what-it-does).
-See [frame/read probes](thread-screen-testing.md#frame-paced-content-1968) and the
-[#1968 plan](../../specs/architecture/1968-frame-paced-thread-content.md).
+Read qualification requires exact current owner/generation/revision and supplied
+shown metadata. Receipt, restored text and terminal facts alone cannot mark content
+seen. The qualified retry path remains host-owned. Markdown reveal, grouping,
+follow-newest, scrolling and Agent pinning remain supported.
 
 Workspace labels use `workspaceDisplayName(cwd, label)`, with the daemon's domain
 property `Conversation.workspaceLabel` passed as the label. The former private
@@ -106,31 +81,12 @@ The fallback strings are **Kotlin literals**, not `stringResource(R.string.untit
 
 When #141's rename success path eventually calls `repository.rename(conversationId, newName)`, the fake's `MutableStateFlow<State>` updates; `observeConversations(All)` re-emits a list with the renamed conversation; the `.map { … }` recomputes `displayName`; `stateIn` publishes the new `ThreadUiState`; `collectAsStateWithLifecycle()` triggers recomposition. The `state_displayName_reemitsOnRename` test pins this — #141's only TopAppBar-related work is wiring the dialog's success path to `repository.rename(...)`; the live-title-update is already wired. Out-of-scope item from #139's ticket body ("plumbing a live rename back into the title without re-navigating — covered when #141 lands") is actually **already free** post-#139.
 
-### `items` and `queuedMessages` stay two `ThreadUiState` fields — the join with the backlog is render-time, not VM-time (#782)
+### Queue presentation and controls
 
-`threadContent: Flow<ThreadContent>` (introduced by #461, widened by #778) combines
-the folded row/evidence reading, `repository.observeQueue(conversationId)`,
-`historyDemand`, host availability and seeded history coverage into one
-`ThreadContent(items, queued, historyTail, historyMarkers, evidence)` carrier — the pre-combiner that keeps the outer
-five-arm `combine(...)` at its typed arity ceiling (`observeConversations`, `threadContent`,
-`pendingWorkspacePicker`, `transientDialogs`, `runConfigFlow`). `ThreadUiState` publishes `content.items`
-and `content.queued` as two **separate** fields, `items: List<ThreadItem>` and
-`queuedMessages: List<QueuedMessage>` — #782 does not touch this VM, this combine, or either field's
-shape.
-
-What #782 added lives entirely downstream, in [`ThreadScreen`](thread-screen-how-it-works-list-and-status-row.md):
-`foldQueuedRows(state.items, state.queuedMessages)` joins the two fields into the `ThreadRow` list the
-screen actually renders. The join is deliberately **not** a third VM-owned projection — `queue_state` is
-daemon state (server SSOT pyrycode#720), not part of the `ThreadFold` turn-stream reducer that produces
-`threadItems`, so folding it in here would blur a line the architecture keeps on purpose: the VM surfaces
-two independent, still-separately-observable signals, and only the view is allowed to know that one of
-them sometimes annotates the other. It is also why a replacing `queue_state` snapshot needs no
-reconciliation logic anywhere in this file — `content.queued` is replaced wholesale by the next
-`observeQueue` emission exactly as it always was, and the screen's `remember`-cached fold re-derives every
-row from whatever `items` / `queuedMessages` pair is current. See
-[Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782) for
-the fold's five correlation rules and [the list section](thread-screen-how-it-works-list-and-status-row.md)
-for where it is called.
+Queue/task placement and lifecycle come from authoritative items. Local pending
+sends remain until accepted by exact device/message identity. Runtime queue matching,
+roster inference and raw echo settlement are removed. Current recorded-target
+controls require the active presentation owner; stale literal controls are inert.
 
 ### The model-menu agent filter (#1110)
 

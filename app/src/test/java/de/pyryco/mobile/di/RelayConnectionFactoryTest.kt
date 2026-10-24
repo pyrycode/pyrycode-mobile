@@ -61,6 +61,7 @@ import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
+import de.pyryco.mobile.ui.conversations.thread.ThreadRow
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.listKey
 import kotlinx.coroutines.CompletableDeferred
@@ -330,8 +331,6 @@ class RelayConnectionFactoryTest {
                 ta.emit(turn(31))
                 tb.emit(turn(72))
                 runCurrent()
-                assertEquals(31L, a.coordinator.replayCursor.latest)
-                assertEquals(72L, b.coordinator.replayCursor.latest)
                 a.supervisor.close()
                 b.supervisor.close()
                 runCurrent()
@@ -394,8 +393,6 @@ class RelayConnectionFactoryTest {
                 assertNull(secondA.cursor())
                 secondA.emit(envelope("resync", "{}"))
                 runCurrent()
-                assertNull(a.coordinator.replayCursor.latest)
-                assertEquals(202L, b.coordinator.replayCursor.latest)
                 a.supervisor.close()
                 runCurrent()
                 a.supervisor.connect()
@@ -416,7 +413,6 @@ class RelayConnectionFactoryTest {
                 assertEquals("list_conversations", firstB.outbound.single().type)
                 firstB.emit(turn(303))
                 runCurrent()
-                assertEquals(303L, b.coordinator.replayCursor.latest)
                 assertEquals(2, firstB.collectors)
             } finally {
                 a.close()
@@ -766,7 +762,6 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertSame(repoB, b.coordinator.currentRepository.value)
                 assertEquals(modalB, b.coordinator.hostModals.value)
-                assertEquals(7L, b.coordinator.replayCursor.latest)
                 assertFalse(tb.closed)
                 tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single().id))
                 runCurrent()
@@ -1160,8 +1155,11 @@ class RelayConnectionFactoryTest {
     @Test
     fun destinationCacheUsesConfiguredWorker() =
         runTest {
-            val f = Fixture(this)
+            val f = Fixture(this).also { it.threadSupport = true }
+            f.store.save(f.a.record)
             val registry = f.registry()
+            registry.connect()
+            runCurrent()
             val dispatches = AtomicInteger()
             val dispatcher = StandardTestDispatcher(testScheduler)
             val worker =
@@ -1181,13 +1179,17 @@ class RelayConnectionFactoryTest {
                     fake = FakeConversationRepository(),
                     store = f.store,
                     decorateRepository = { it },
-                    cache = InertConversationCache,
+                    cache = FileConversationCache(temporary.root, worker),
                     attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
                     contentScheduling = ThreadContentScheduling(worker),
                 )
             try {
-                val rows = destinations.repository("A").observeMessages("c").first()
-                assertTrue(rows.isEmpty())
+                val route = requireNotNull(destinations.repository("A").negotiatedThread)
+                val seen = mutableListOf<de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot>()
+                val reader = backgroundScope.launch { route.observe("c").collect { seen += it } }
+                runCurrent()
+                assertTrue(seen.last().items.isEmpty())
+                reader.cancel()
                 assertTrue("The destination cache must dispatch to its configured worker", dispatches.get() > 0)
             } finally {
                 registry.dispose()
@@ -1838,8 +1840,13 @@ class RelayConnectionFactoryTest {
                     requireNotNull(vm.state.value.authoritativeThread) {
                         "No production presentation; A=${bundleState(registry, "A")} B=${bundleState(registry, "B")}"
                     }
-                assertEquals("A newer", (presentation(a).items.single() as ThreadItem.MessageItem).message.content)
-                assertEquals("B saved", (presentation(b).items.single() as ThreadItem.MessageItem).message.content)
+
+                fun contents(vm: ThreadViewModel) =
+                    presentation(vm).let { current ->
+                        current.demandRows(current.rows, emptySet()).filterIsInstance<ThreadRow.Delivered>().map { it.item }
+                    }
+                assertEquals("A newer", (contents(a).single() as ThreadItem.MessageItem).message.content)
+                assertEquals("B saved", (contents(b).single() as ThreadItem.MessageItem).message.content)
                 assertNotEquals(presentation(a).scope, presentation(b).scope)
                 val oldSight = presentation(a).shownRowRevisions
                 f.store.save(f.a.record)
@@ -1922,7 +1929,7 @@ class RelayConnectionFactoryTest {
                 finish(third, page, 40, listOf(item(1, 5, 5, text = "stale")), lower = 1)
                 runCurrent()
                 val final = presentation(a)
-                assertEquals(1, final.items.filterIsInstance<ThreadItem.MessageItem>().count { it.message.content == "settle once" })
+                assertEquals(1, contents(a).filterIsInstance<ThreadItem.MessageItem>().count { it.message.content == "settle once" })
                 assertEquals(
                     31L,
                     bundle.coordinator.authoritativeThreads
@@ -1942,7 +1949,7 @@ class RelayConnectionFactoryTest {
                 val marks = ConversationReadMarks(0u, null, 31u, true)
                 assertNull(final.readCheckpoint(final.newestReadKey, marks, oldSight))
                 assertEquals(31uL, final.readCheckpoint(final.newestReadKey, marks, final.shownRowRevisions))
-                assertEquals("B saved", (presentation(b).items.single() as ThreadItem.MessageItem).message.content)
+                assertEquals("B saved", (contents(b).single() as ThreadItem.MessageItem).message.content)
             } finally {
                 release.complete(Unit)
                 owners.clear()
@@ -2205,16 +2212,25 @@ class RelayConnectionFactoryTest {
 
         fun sight(vm: ThreadViewModel): Any {
             val presentation = requireNotNull(vm.state.value.authoritativeThread)
+            val rendered = presentation.demandRows(presentation.rows, emptySet()).filterIsInstance<ThreadRow.Delivered>()
+            val newest = rendered.single { it.listKey(0) == presentation.newestReadKey }
+            val seen =
+                rendered.associate { row ->
+                    val key = row.listKey(0)
+                    val revision = presentation.shownRowRevisions.getValue(key)
+                    assertTrue(presentation.matchesReadContents(key, row.item, revision))
+                    key to revision
+                }
             val binding = Any()
             vm.onOverflowEvent(ThreadEvent.AuthoritativeThreadPresented(presentation, binding))
             vm.onOverflowEvent(
                 ThreadEvent.NewestContentPresented(
-                    presentation.items.last(),
+                    newest.item,
                     5u,
                     presentation,
                     binding,
-                    presentation.rows.last().listKey(0),
-                    presentation.shownRowRevisions,
+                    newest.listKey(0),
+                    seen,
                 ),
             )
             return binding

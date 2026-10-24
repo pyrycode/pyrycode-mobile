@@ -17,6 +17,25 @@ import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
+    data class AgentChildrenDemand(
+        val presentation: AuthoritativeThreadPresentation,
+        val keys: Set<String>,
+        val binding: Any,
+        val retry: String? = null,
+        val more: String? = null,
+    ) : ThreadEvent {
+        override fun toString() = "AgentChildrenDemand(redacted)"
+    }
+
+    data class ToolBodyDemand(
+        val presentation: AuthoritativeThreadPresentation,
+        val keys: Set<String>,
+        val binding: Any? = null,
+        val retry: String? = null,
+    ) : ThreadEvent {
+        override fun toString() = "ToolBodyDemand(<redacted>)"
+    }
+
     data class AuthoritativeQueueAction(
         val target: de.pyryco.mobile.data.repository.AuthoritativeQueueTarget,
         val sendNow: Boolean,
@@ -197,10 +216,10 @@ data class ThreadUiState(
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
     val authoritativeThread: AuthoritativeThreadPresentation? = null,
-    val readEvidence: de.pyryco.mobile.data.repository.ThreadReadEvidence? = null,
     val readUpTo: ULong? = null,
     val readMarks: de.pyryco.mobile.data.repository.ConversationReadMarks? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(),
+    internal val displayRows: List<ThreadRow>? = null,
     val channelInfoOpen: Boolean = false,
     val deleteConfirmVisible: Boolean = false,
     val workspacePath: String = "",
@@ -218,7 +237,6 @@ data class ThreadUiState(
     // its failures: the screen asks, the VM decides whether the ask is honoured, and a second copy of that
     // decision in Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
-    val historyMarkers: List<ThreadHistoryMarker> = emptyList(),
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
     val absentActions: Set<ComposerAction> = emptySet(),

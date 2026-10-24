@@ -7,9 +7,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.network.ReplayCursor
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -284,36 +282,31 @@ class RemoteConversationRepositoryReplySuggestionTest {
     @Test
     fun suggestions_neverAppendRowsOpenTurnsEmitLiveEventsOrAdvanceReplay() =
         runTest {
-            val cursor = ReplayCursor()
-            val (pump, repo) = remote(cursor = cursor)
-            val rows = collect(repo.observeMessages(C1))
+            val (pump, repo) = remote()
+            val rows = collect(repo.observeAuthoritativeThread(C1))
             val turns = collect(repo.observeTurnPhase(C1))
             val live = collect(repo.liveSessionEvents)
             runCurrent()
             pump.push(frame(1, "state only"))
             pump.push(frame(2, null))
             runCurrent()
-            assertTrue(rows.all { it.isEmpty() })
+            assertTrue(rows.all { it.items.isEmpty() })
             assertTrue(turns.all { it == LiveSessionEvent.TurnState.Phase.Idle })
             assertTrue(live.isEmpty())
             pump.push(frame(3, "must not replay").copy(eventId = 100))
-            val history = async { repo.requestHistory(C1, "", 10) }
-            runCurrent()
-            val request = pump.sent.last { it.type == "request_history" }
             pump.push(
                 raw(
                     """{"entries":[{"id":1,"type":"reply_suggestion","ts":"$TS","payload":${payload(
                         "99",
                         "\"history\"",
                     )}}],"cursor":"","at_start":true}""",
-                ).copy(type = "history_page", inReplyTo = request.id),
+                ).copy(type = "history_page", inReplyTo = 999),
             )
             runCurrent()
-            assertEquals(1, history.await().entries.size)
+            assertTrue(pump.sent.none { it.type in setOf("request_history", "backfill_since") })
             assertEquals(2uL, repo.observeReplySuggestion(C1, S1).first()?.revision)
             assertNull(repo.observeReplySuggestion(C1, S1).first()?.suggestedReply)
-            assertNull(cursor.latest)
-            assertTrue(rows.all { it.isEmpty() })
+            assertTrue(rows.all { it.items.isEmpty() })
             assertTrue(live.isEmpty())
         }
 
@@ -338,15 +331,15 @@ class RemoteConversationRepositoryReplySuggestionTest {
                         conversationId: String,
                     ): Result<Unit> = error("unexpected cache removal")
 
-                    override suspend fun readThread(
+                    override suspend fun readAuthoritativeThread(
                         serverId: String,
                         conversationId: String,
-                    ): List<ThreadItem> = error("unexpected thread read")
+                    ): de.pyryco.mobile.data.cache.SavedAuthoritativeThread? = error("unexpected thread read")
 
-                    override suspend fun writeThread(
+                    override suspend fun writeAuthoritativeThread(
                         serverId: String,
                         conversationId: String,
-                        rows: List<ThreadItem>,
+                        saved: de.pyryco.mobile.data.cache.SavedAuthoritativeThread,
                     ): Result<Unit> = error("unexpected thread write")
                 }
             val wrapper = CachingConversationRepository(StableConversationRepository(delegates), cache, "host-A")
@@ -389,7 +382,6 @@ class RemoteConversationRepositoryReplySuggestionTest {
     private fun TestScope.remote(
         interactive: Boolean = true,
         held: HostReadings = HostReadings(),
-        cursor: ReplayCursor = ReplayCursor(),
     ): Pair<Pump, RemoteConversationRepository> {
         val pump = Pump()
         return pump to
@@ -398,7 +390,6 @@ class RemoteConversationRepositoryReplySuggestionTest {
                 backgroundScope,
                 negotiatedCapabilities = { if (interactive) setOf(CAPABILITY_INTERACTIVE) else emptySet() },
                 hostReadings = held,
-                replayCursor = cursor,
             )
     }
 

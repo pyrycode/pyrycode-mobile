@@ -21,6 +21,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadRunConfig
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
+import de.pyryco.mobile.ui.conversations.thread.withLiteralRows
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -46,19 +47,21 @@ class SendNowPhoneTest {
                 PyrycodeMobileTheme {
                     ThreadScreen(
                         state =
-                            ThreadUiState(
-                                conversationId = "c",
-                                displayName = "Send now regression",
-                                hasMessages = true,
-                                items = history,
-                                queuedMessages = listOf(QueuedMessage(42L, "In your final reply include this marker", time)),
-                                runConfig =
-                                    ThreadRunConfig(
-                                        sessionId = "s",
-                                        settingsAvailable = true,
-                                        capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
-                                    ),
-                            ),
+                            (
+                                ThreadUiState(
+                                    conversationId = "c",
+                                    displayName = "Send now regression",
+                                    hasMessages = true,
+                                    items = history,
+                                    queuedMessages = listOf(QueuedMessage(42L, "In your final reply include this marker", time)),
+                                    runConfig =
+                                        ThreadRunConfig(
+                                            sessionId = "s",
+                                            settingsAvailable = true,
+                                            capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
+                                        ),
+                                )
+                            ).withLiteralRows(),
                         onBack = {},
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,

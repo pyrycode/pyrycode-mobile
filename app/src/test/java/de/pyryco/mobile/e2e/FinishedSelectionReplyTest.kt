@@ -4,7 +4,6 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
-import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.FixtureThread
 import de.pyryco.mobile.ui.conversations.thread.authoritativeItem
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,12 +33,13 @@ class FinishedSelectionReplyTest {
         RelayLog.sink = oldSink
     }
 
-    private class Source : ConversationRepository by FakeConversationRepository() {
+    private class Source :
+        ConversationRepository by FakeConversationRepository(),
+        SyntheticThreadEvidenceProducer {
         override val negotiatedThread = FixtureThread("selection-host", "chat")
         val rows get() = negotiatedThread.facts
 
-        override fun observeMessages(conversationId: String): kotlinx.coroutines.flow.Flow<List<ThreadItem>> =
-            error("legacy content must not satisfy selection")
+        override fun evidenceSnapshots(conversationId: String) = negotiatedThread.observe(conversationId)
     }
 
     private fun reply(

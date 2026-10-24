@@ -265,7 +265,7 @@ conversation still
 announces unavailable only until the open thread's first ask or the next turn end resolves it, whichever comes
 first — no longer only the latter. See [Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md)
 and [Remote conversation repository — live stream, modal seams and the replay cursor §
-`context_usage`](remote-conversation-repository-live-stream-and-modals.md#context_usage--the-context-usage-reading-945)
+`context_usage`](remote-conversation-repository-live-stream-and-modals.md)
 for the wire contract.
 
 **Live-test trap: the #1411 fallback can satisfy a check meant to prove the ask fired.** Since #1411 the

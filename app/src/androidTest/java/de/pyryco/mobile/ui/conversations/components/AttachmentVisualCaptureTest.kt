@@ -38,6 +38,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.design.PerTicketDeviceTest
 import de.pyryco.mobile.design.Viewport
 import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
@@ -72,6 +73,7 @@ class AttachmentVisualCaptureTest {
     private var screenView: View? = null
     private var draft by mutableStateOf("My message")
 
+    @PerTicketDeviceTest
     @Test
     fun fileArtworkAndLabels_haveReadableContrastOnBothBubblesAndThread() {
         val id = "file-1"

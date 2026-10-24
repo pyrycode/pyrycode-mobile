@@ -18,30 +18,19 @@ explains required strings, empty clear, reset and failed results.
 
 Split into [ConversationRepository — data-layer contract — Conventions](conversation-repository-conventions.md) on 2026-09-23 to keep this document under the 50000-byte cap the docs guard enforces. That section moved there verbatim, headings and anchors intact.
 
-## `ThreadItem` — why a sealed wrapper
+## Content and presentation
 
-The thread screen renders messages chronologically and inserts a horizontal-rule delimiter at each session boundary (`/clear`, idle-evict, workspace change — see CLAUDE.md → "Conversations model"). Since #1578 the delimiter draws only its rule / label / rule row, at full opacity like every other row; the memory-plugin install affordance stays in the thread overflow menu and the channel info sheet, not on the boundary itself.
+The exact host's `NegotiatedThread` supplies authoritative snapshots and query
+admission. Metadata/live-state/control methods stay on `ConversationRepository`.
+Runtime `observeMessages`, raw history/snapshot APIs and inference are removed;
+there is no empty-success fallback. [Thread-store ownership](remote-conversation-repository-reads-and-thread-store.md)
+and [screen demand](thread-screen-oldest-end-history-demand.md) describe the route.
 
-The stream interleaves both kinds of row in order, so the consumer never paginates manually across `sessionHistory`. Design notes:
-
-- `MessageItem` **wraps** `Message` rather than having `Message` implement `ThreadItem` directly — keeping a `data/repository/` type out of `data/model/`'s parent chain preserves the layer direction.
-- `SessionBoundary` carries both `previousSessionId` and `newSessionId`. Previous anchors the delimiter to the messages above it; new identifies the session the thread continues into.
-- `SessionBoundary`'s identity is `(previousSessionId, newSessionId, occurredAt)`, not the session pair
-  alone — invariant, unique within a thread ([#775](../codebase/775.md)). `ThreadScreen`'s `LazyColumn`
-  keys a boundary row on exactly these three fields, so a duplicate triple crashes it; the pair alone is
-  not unique, because an idle-evicted session keeps its id and every eviction of it is `A->A`. Uniqueness
-  is a producer obligation, not construction-enforced — both thread writers (the live lane's
-  `appendSessionBoundary` and the history merge's `holdsBoundary`) skip a boundary the thread already
-  holds — documented in KDoc and asserted in tests, the same posture as `UnrecognizedMessage.id`.
-- `BoundaryReason` lists exactly the three triggers CLAUDE.md names. No speculative `Manual` / `Other` / `Unknown` — add a value if and when a fourth trigger lands.
-- `SessionBoundary.workspaceCwd` (#192) carries the new workspace path on the `WorkspaceChange` variant only. Same defaulted-nullable-last-field pattern as `Message.toolCall` (#191); see [`../codebase/192.md`](../codebase/192.md).
-
-## What `observeMessages` does not do
-
-- **No `PagingData`.** "Paginates transparently" in the ticket AC means the consumer doesn't drive pagination; it does not mean lazy windowing in the contract. The Phase 1 fake emits the full list; Phase 4 can window internally and emit a growing prefix without changing the signature. If the channel list or thread grows past hundreds of rows in practice, switching to Paging 3 is a contract change at that point.
-- **No `Flow<Result<…>>`.** Element type is `ThreadItem`, not `Result<ThreadItem>`. Failures terminate the flow.
-- **No eager boundary emission from `startNewSession` / `changeWorkspace`.** Mutators still mint new sessions without writing an authored `SessionBoundary` to storage; the projection still derives boundaries from message session-id deltas. The two non-derived inputs that *do* exist (since #192) are seed-side: each `SeedSession` declares the `nextBoundaryReason` (and, on `WorkspaceChange`, the `nextWorkspaceCwd`) of the boundary that follows it, flattened into a per-record `boundariesBySessionId: Map<String, AuthoredBoundary>` keyed by **successor session id** and consulted by `buildThreadItems`. Mutator-minted sessions and the `initialMessages` constructor path produce no map entries; the projection falls back to `BoundaryReason.Clear` + `workspaceCwd = null` for those — same observable behaviour as pre-#192 for those paths. The deferred follow-up (lifting `mintNewSession` to accept `(reason, workspaceCwd)` and write `boundariesBySessionId[newSessionId] = AuthoredBoundary(...)` inside the existing `state.update { ... }` block) is unchanged in scope — but its target shape is now in place, so it stays a pure-additive change when it lands.
-- **No `.distinctUntilChanged()`.** Consistent with `observeConversations`. Both projections re-emit on every `state.update {}` — even mutations that don't affect the observed slice. If a future chatty mutator (per-token streaming append) makes this matter, fix with a subtype-aware dedupe in the projection, not a sibling state holder.
+`ThreadItem` remains a sealed presentation/storage value for messages, supplied
+session dividers and notices. Supported rendering consumes authored daemon facts;
+literal component fixtures can prepare rows without invoking raw reduction. The
+[delimiter](session-boundary-delimiter.md) still draws rule / label / rule only.
+Dormant serialized legacy types remain until #2364, without runtime readers.
 
 ## Dependency wiring
 

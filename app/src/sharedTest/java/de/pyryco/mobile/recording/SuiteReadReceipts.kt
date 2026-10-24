@@ -25,17 +25,22 @@ internal class SuiteReadReceipts(
         val action: Int,
     )
 
+    private data class CapturedRead(
+        val readUpTo: ULong,
+        val snapshot: Envelope,
+        val precedingQueries: Set<Long>,
+    )
+
     private data class Group(
         val required: ULong,
         val maxRequested: ULong,
-        val snapshot: Envelope,
+        val snapshots: List<CapturedRead>,
         var confirmed: ULong = 0u,
         var lastRequested: ULong = 0u,
     )
 
     private val groups = linkedMapOf<Key, Group>()
     private val metadata = mutableMapOf<Pair<String, String>, JsonObject>()
-    private val shown = mutableMapOf<Pair<String, String>, ULong>()
     private val confirmed = mutableMapOf<Pair<String, String>, ULong>()
     private val lastRequests = mutableMapOf<Pair<String, String>, ULong>()
     private val guardedSnapshots = mutableListOf<Triple<String, JsonElement, ULong>>()
@@ -45,11 +50,7 @@ internal class SuiteReadReceipts(
     private fun phone(owner: String) = owner == "phone" || owner.startsWith("phone/")
 
     private val threadReceipts = SuiteThreadReadReceipts(source)
-    private val historyRequests = mutableMapOf<Pair<String, Long>, String>()
-    private val delivered = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
-    private val phoneHistory = mutableMapOf<Pair<String, String>, MutableSet<ULong>>()
     private val normalizedRequests = mutableSetOf<Pair<String, Long>>()
-    private val snapshots = mutableMapOf<String, MutableSet<JsonElement>>()
     private val nextIds = mutableMapOf<String, Long>()
     private var action = 0
     val steps: List<SuiteStep>
@@ -104,9 +105,23 @@ internal class SuiteReadReceipts(
                 require(previous == null || target > previous.maxRequested && stored >= previous.required) {
                     "Recorded read progress is not monotonic"
                 }
-                groups[key] = Group(stored, target, response)
+                val precedingQueries =
+                    source
+                        .take(index)
+                        .filter { prior ->
+                            val query = prior.message
+                            prior.owner == step.owner &&
+                                prior.direction == "client" &&
+                                prior.accepted &&
+                                (
+                                    query?.type == "list_conversations" ||
+                                        query?.type in setOf("thread_catch_up", "thread_page") &&
+                                        query?.payload?.jsonObject?.get("conversation_id") == JsonPrimitive(conversation)
+                                )
+                        }.map { checkNotNull(it.message).id }
+                        .toSet()
+                groups[key] = Group(stored, target, previous?.snapshots.orEmpty() + CapturedRead(stored, response, precedingQueries))
                 normalizedRequests += step.owner to frame.id
-                snapshots.getOrPut(step.owner) { mutableSetOf() } += response.payload
                 guardedSnapshots += Triple(host(step.owner), response.payload, stored)
             } else if (frame.type !in queries) {
                 epoch++
@@ -120,7 +135,8 @@ internal class SuiteReadReceipts(
                     step.direction == "client" -> step.owner to frame.id in normalizedRequests
                     step.direction != "daemon" -> false
                     frame.inReplyTo != null -> step.owner to frame.inReplyTo in normalizedRequests
-                    else -> frame.type == "conversation_updated" && frame.payload in snapshots[step.owner].orEmpty()
+                    // Genuine notifications remain gated by permits, including peer-confirmed progress.
+                    else -> false
                 }
             }
     }
@@ -134,13 +150,6 @@ internal class SuiteReadReceipts(
         frame: Envelope,
     ) {
         threadReceipts.requested(owner, frame)
-        if (frame.type == "request_history") {
-            val conversation =
-                frame.payload.jsonObject
-                    .getValue("conversation_id")
-                    .jsonPrimitive.content
-            historyRequests[owner to frame.id] = conversation
-        }
     }
 
     fun delivered(
@@ -149,14 +158,6 @@ internal class SuiteReadReceipts(
     ) {
         threadReceipts.delivered(owner, frame)
         val payload = frame.payload.jsonObject
-
-        fun rememberHistory(
-            conversation: String,
-            id: ULong,
-        ) {
-            delivered.getOrPut(owner to conversation) { mutableSetOf() } += id
-            if (phone(owner)) phoneHistory.getOrPut(host(owner) to conversation) { mutableSetOf() } += id
-        }
 
         fun remember(row: JsonObject) {
             val id = row["id"]?.jsonPrimitive?.content ?: return
@@ -173,34 +174,6 @@ internal class SuiteReadReceipts(
             "conversations" ->
                 (payload["conversations"] as? kotlinx.serialization.json.JsonArray)
                     ?.forEach { remember(it.jsonObject) }
-        }
-        if (frame.type == "history_page") {
-            val conversation = historyRequests.remove(owner to frame.inReplyTo) ?: return
-            (payload["entries"] as? kotlinx.serialization.json.JsonArray)?.forEach { element ->
-                val entry = element.jsonObject
-                val id =
-                    entry
-                        .getValue("id")
-                        .jsonPrimitive.content
-                        .toULong()
-                rememberHistory(conversation, id)
-                val type = entry.getValue("type").jsonPrimitive.content
-                val body = entry.getValue("payload")
-                if (de.pyryco.mobile.data.repository
-                        .contributesToUnreadWatermark(type, body)
-                ) {
-                    shown.merge(host(owner) to conversation, id, ::maxOf)
-                }
-            }
-            return
-        }
-        val checkpoint = frame.historyEntryId ?: return
-        val conversation = payload["conversation_id"]?.jsonPrimitive?.content ?: return
-        rememberHistory(conversation, checkpoint)
-        if (de.pyryco.mobile.data.repository
-                .contributesToUnreadWatermark(frame.type, frame.payload)
-        ) {
-            shown.merge(host(owner) to conversation, checkpoint, ::maxOf)
         }
     }
 
@@ -237,7 +210,7 @@ internal class SuiteReadReceipts(
     fun send(
         owner: String,
         frame: Envelope,
-    ): SuiteStep {
+    ): Pair<SuiteStep, Set<Long>> {
         val payload = frame.payload.jsonObject
         require(payload.keys == setOf("conversation_id", "up_to") && frame.inReplyTo == null) { "Read receipt payload changed" }
         val conversation = payload.getValue("conversation_id").jsonPrimitive.content
@@ -252,22 +225,15 @@ internal class SuiteReadReceipts(
             }
         val group = key?.let(groups::getValue)
         val last = lastRequests[owner to conversation] ?: 0u
-        val authoritative = threadReceipts.handles(owner)
-        val wasDelivered =
-            if (authoritative) {
-                threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
-            } else {
-                target in delivered[owner to conversation].orEmpty() ||
-                    retainedPhoneHistory &&
-                    target in phoneHistory[host(owner) to conversation].orEmpty()
-            }
+        check(threadReceipts.handles(owner)) { "Phone read requires authoritative receipts" }
+        val wasDelivered = threadReceipts.permits(owner, conversation, target, retainedPhoneHistory)
         check(target > last && wasDelivered && (retainedPhoneHistory || group == null || target <= group.maxRequested)) {
             "Read receipt checkpoint rejected: target=$target previous=$last delivered=$wasDelivered " +
                 "maximum=${group?.maxRequested} action=$action"
         }
         lastRequests[owner to conversation] = target
         val server = host(owner) to conversation
-        val shownCeiling = if (authoritative) threadReceipts.ceiling(owner, conversation) else shown[server]
+        val shownCeiling = threadReceipts.ceiling(owner, conversation)
         val ceiling =
             if (retainedPhoneHistory) {
                 group?.required?.let { maxOf(it, shownCeiling ?: it) }
@@ -278,7 +244,21 @@ internal class SuiteReadReceipts(
         val stored = maxOf(confirmed[server] ?: 0u, minOf(target, ceiling))
         confirmed[server] = stored
         group?.confirmed = stored
-        val original = group?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))
+        // A late qualified read can belong to an earlier action. Its acknowledgement must
+        // retain the captured metadata that triggers later queries, rather than borrow theirs.
+        val captured =
+            groups.entries
+                .filter {
+                    it.key.owner == owner &&
+                        it.key.action <= action &&
+                        resolve(JsonPrimitive(it.key.conversation)).jsonPrimitive.content == conversation
+                }.sortedByDescending { it.key.action }
+                .flatMap { it.value.snapshots }
+                // Peer progress cannot move an earlier phone request onto a later snapshot's queries.
+                .filter { it.readUpTo >= minOf(target, ceiling) }
+                .minByOrNull { it.readUpTo }
+                ?: group?.snapshots?.last()
+        val original = captured?.snapshot ?: Envelope(0, "conversation_updated", frame.ts, JsonObject(emptyMap()))
         val allowed =
             setOf("id", "is_promoted", "is_archived", "is_muted", "read_up_to", "name", "cwd", "workspace_label", "last_used_at", "agent")
         val snapshot = metadata[server]?.filterKeys { it in allowed }.orEmpty()
@@ -288,7 +268,7 @@ internal class SuiteReadReceipts(
                 "is_archived" to JsonPrimitive(false),
                 "is_muted" to JsonPrimitive(false),
             )
-        val response = if (group != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
+        val response = if (captured != null) resolve(original.payload).jsonObject else JsonObject(defaults + snapshot)
         val id = allocateId?.invoke(owner) ?: nextIds[owner] ?: 1L
         nextIds[owner] = id + 1
         return SuiteStep(
@@ -306,7 +286,7 @@ internal class SuiteReadReceipts(
                         ),
                     ),
             ),
-        )
+        ) to captured?.precedingQueries.orEmpty()
     }
 
     fun progress() =

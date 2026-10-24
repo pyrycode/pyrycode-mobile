@@ -42,7 +42,7 @@ import org.junit.runner.RunWith
  *
  * The state is constructed directly (the composable reads no repository), so this drives the render
  * contract, not the ViewModel surfacing. The correlation rules themselves are proven off-device by
- * [de.pyryco.mobile.ui.conversations.thread.foldQueuedRows]'s unit test.
+ * [de.pyryco.mobile.ui.conversations.thread.fixtureQueuedRows]'s unit test.
  */
 @RunWith(AndroidJUnit4::class)
 class QueuedBacklogTest {
@@ -96,7 +96,7 @@ class QueuedBacklogTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = state,
+                    state = (state).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -123,16 +123,18 @@ class QueuedBacklogTest {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
-                        stateWith(listOf(queued(42, "queued"))).copy(
-                            runConfig =
-                                ThreadRunConfig(
-                                    sessionId = "s1",
-                                    settingsAvailable = true,
-                                    capabilities =
-                                        de.pyryco.mobile.data.repository
-                                            .SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
-                                ),
-                        ),
+                        (
+                            stateWith(listOf(queued(42, "queued"))).copy(
+                                runConfig =
+                                    ThreadRunConfig(
+                                        sessionId = "s1",
+                                        settingsAvailable = true,
+                                        capabilities =
+                                            de.pyryco.mobile.data.repository
+                                                .SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
+                                    ),
+                            )
+                        ).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -157,7 +159,7 @@ class QueuedBacklogTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = stateWith(listOf(queued(42, "queued"))).copy(runConfig = config),
+                    state = (stateWith(listOf(queued(42, "queued"))).copy(runConfig = config)).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -268,7 +270,7 @@ class QueuedBacklogTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = stateWith(queue = queue, items = items),
+                    state = (stateWith(queue = queue, items = items)).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -329,7 +331,7 @@ class QueuedBacklogTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
-                    state = stateWith(queue = queue),
+                    state = (stateWith(queue = queue)).withLiteralRows(),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -373,7 +375,7 @@ class QueuedBacklogTest {
     fun activating_a_rows_drop_affordance_routes_that_rows_id() {
         val dropped = mutableListOf<Long>()
         setThreadScreen(
-            state = stateWith(queue = listOf(queued(1L, "first queued message"), queued(2L, "second queued message"))),
+            state = (stateWith(queue = listOf(queued(1L, "first queued message"), queued(2L, "second queued message")))).withLiteralRows(),
             onDropQueued = { dropped += it },
         )
 

@@ -1,120 +1,14 @@
-# Banner notice row — `ThreadItem.Banner` / `BannerNoticeRow`
+# Banner notice row
 
-The thread's visible answer to text claude prints **about** the session rather than as part of an
-answer — a hook's reason for blocking a prompt, a local command's output, a loop notification
-([#873](../codebase/873.md), split from #654). Without this row a blocked prompt looked accepted and
-then silently ignored: the daemon sent the `banner` frame, and mobile dropped it on both the live and
-history lanes. Landed the way [`unrecognized_message` landed](unrecognized-message-row.md) (#608, #609):
-one ticket for the type, the decode arms on both lanes, and the row composable, because the decoder and
-the renderer are each other's only consumer.
+## Supplied content route
 
-Package: `de.pyryco.mobile.ui.conversations.components`
-(`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `BannerNoticeRow.kt`.
-Type + wire DTO: `data/repository/ConversationRepository.kt` (`ThreadItem.Banner`, `BannerLevel`),
-`data/network/InteractivePayloads.kt` (`BannerPayloadDto`, `toRow`). Live decode:
-`data/repository/RemoteConversationRepository.kt` (`decodeBanner`, `appendBanner`, `TYPE_BANNER`).
-History decode: `data/repository/HistoryPageReducer.kt` (`withHistoryEntry`'s `TYPE_BANNER` arm,
-`holdsBanner`). Sibling of [`UnrecognizedMessageRow`](unrecognized-message-row.md),
-[`SessionBoundaryDelimiter`](session-boundary-delimiter.md).
-
-Wire SSOT: pyrycode `docs/protocol-mobile.md` § `banner` (sibling checkout) + § *Joining a page to the
-live stream* for the `(type, ts)` join key. Desktop sibling: pyrycode-desktop `ConversationScreen.tsx`'s
-`bannerDisplayText` and the `banner` arm of the timeline render — this row's stripping set and its
-attribution are taken from it, without desktop's composer-slot handling of `stops_turn`, which mobile has
-no equivalent surface for. The attribution originally read a fixed `"Claude: "`; since
-[#1113](https://github.com/pyrycode/pyrycode-mobile/issues/1113) it names the conversation's own agent
-(§ Security below).
-
-## The thread-row type
-
-```kotlin
-sealed interface ThreadItem {
-    data class Banner(
-        val level: BannerLevel,
-        val text: String,
-        val truncated: Boolean,
-        val occurredAt: Instant,
-    ) : ThreadItem
-}
-
-enum class BannerLevel { Warning, Notice, Info }
-```
-
-- **`occurredAt` is the row's identity**, not a client-minted id — the envelope's (or stored entry's)
-  `ts`, the protocol's `(type, ts)` join key with `type` implied by the variant. This is the opposite
-  choice from `UnrecognizedMessage.id`: that frame carries no timestamp claude could stamp meaningfully,
-  so #609 mints a client-owned monotonic counter; `banner` carries a daemon-minted `ts` on both lanes, so
-  reusing it is what lets a banner received live and again in a history page join to one row. **Do not
-  copy the `appendUnrecognizedMessage` no-dedup posture onto a new `ThreadItem` variant without checking
-  whether the frame has a wire identity first** — a banner has one, `unrecognized_message` deliberately
-  does not (its repeats are never coalesced because the firing frequency is itself the signal), and
-  copying the no-dedup shape here would pass every single-lane test and then crash the `LazyColumn` on a
-  duplicate key the first time a history page raced the live lane.
-- **Invariant: `occurredAt` is unique among a thread's banners**, documented in KDoc and asserted in
-  tests, not enforced at construction — the `SessionBoundary` posture. Both thread writers skip a banner
-  the thread already holds: `RemoteConversationRepository.appendBanner` and `HistoryPageReducer`'s
-  `TYPE_BANNER` arm both call the one `holdsBanner(row)` predicate, and `ThreadRow.listKey()` keys a
-  banner on the same `occurredAt`, so the three readers can never disagree about identity. A hostile
-  daemon repeating one `ts` for two different banners loses the second — the fail-safe direction, a
-  missing notice rather than a crashed list — and the daemon's single emit path cannot actually produce
-  that case.
-- **`level` is closed client-side.** The wire's `level` is an open set — `warning` is observed, `info` /
-  `notice` / `suggestion` are documented, and it may be empty — and `BannerPayloadDto.toRow` is a
-  **total** map: `"warning"` becomes `Warning`, `"info"` becomes `Info`
-  ([#1359](https://github.com/pyrycode/pyrycode-mobile/issues/1359)), every other value (including
-  empty, unknown, and one claude ships later) becomes `Notice`. The wire string itself never reaches the
-  UI, so claude cannot inject an arbitrary label. `ThreadScreen`'s render arm (below) draws `Warning` and
-  `Notice` through `BannerNoticeRow` and skips `Info` entirely — an info banner keeps its key and
-  `occurredAt` identity in `ThreadUiState.items` and composes to nothing, matching desktop's
-  `ConversationScreen.tsx` `TimelineRow` `banner` arm, which keeps the row in its timeline but returns
-  `null` for `level === 'info'`.
-- **`text` is carried verbatim, unsanitized**, bounded daemon-side at 4 KiB and not cleaned before it
-  crosses the wire. Stripping belongs to the render boundary (`bannerDisplayText`, below) — keeping the
-  domain value verbatim means the `(type, ts)` join never depends on presentation.
-- **`stops_turn` is decoded and then dropped.** `BannerPayloadDto` carries `stopsTurn` so its shape is
-  checked (a missing or wrong-typed field still fails the decode), but `toRow` never copies it into
-  `ThreadItem.Banner` — nothing on mobile has a turn-scoped surface for it to drive, and the frame is
-  conversation-scoped with no `turn_id`. A `stops_turn: true` banner changes no turn state, emits no
-  `LiveSessionEvent`, and moves no stall, API-retry, or compacting indicator; it is a report, not a
-  control signal.
-- **`BannerPayloadDto`'s five fields are all strict-required with no Kotlin default**, matching pyrycode
-  `internal/protocol/interactive.go`'s `BannerPayload`, which declares no `omitempty` — every field always
-  arrives present, so a missing or wrong-typed one is a decode failure rather than a silently-defaulted
-  value.
-
-## Live lane — `decodeBanner` / `appendBanner` (`TYPE_BANNER`)
-
-Rides the single existing `pump.inbound` collector, the same shape as `unrecognized_message`'s arm: gated
-on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()`, decode-or-drop inside one `try`/`catch
-(IllegalArgumentException)` that covers both the DTO decode and `Instant.parse(envelope.ts)`, routed by
-the payload's `conversation_id`, folded with `threadByConversation.update { … }`. `appendBanner` differs
-from `appendUnrecognizedMessage` in exactly the way the type-level note above requires: it end-appends
-**unless `holdsBanner(row)`** already holds, and the dedup check runs inside the same atomic `update`
-lambda as the write, so a concurrent merge cannot slip a duplicate in between the check and the append.
-The arm makes exactly one write and logs nothing — `text` is claude-authored prose.
-
-Info evidence remains in the projection but is transparent to assistant continuity
-([#2078](https://github.com/pyrycode/pyrycode-mobile/issues/2078)). Like invisible background
-lifecycle rows, an Info banner neither selects a new delta anchor nor settles a streaming
-reply nor interrupts the history/cache segment join. Notice and Warning remain visible
-separators. Classification uses only the closed `BannerLevel` enum, never banner text or timing.
-A correctly parked queued echo alone does not prove continuity: an Info receipt after it can
-otherwise become the last-row anchor and split the held reply. See
-[assistant segments](remote-conversation-repository-assistant-reply-segments.md).
-
-## History lane — `withHistoryEntry`'s `TYPE_BANNER` arm
-
-Gated the same way as the live lane's structured types (`interactive` only). Decodes the entry's payload,
-calls `toRow(occurredAt = entry.timestamp)` — the entry's own stored timestamp, not `Clock.System.now()`
-— and skips the row via `holdsBanner` before appending. `alreadyHolds` (the predicate `withHistoryEntry`'s
-merge runs against the thread the live lane already has) gained an `is ThreadItem.Banner ->
-holdsBanner(row)` arm alongside `MessageItem`/`SessionBoundary`/`UnrecognizedMessage`. `holdsBanner` is
-the one shared predicate — the history merge, the live lane's `appendBanner`, and (transitively, since
-uniqueness is what the key relies on) `ThreadRow.listKey()` all read it.
-
-A stale KDoc line on `withHistoryEntry` counted "the six structured types [interactive gates]"; this
-ticket found it already inaccurate before the change and dropped the count entirely rather than bumping
-it to seven — a specific number invites falling out of sync again the next time an arm is added.
+The existing banner presentation is fed by daemon-built thread items. Canonical
+identity, revision, epoch and order remain supplied. Raw frame decode/fold and
+`HistoryPageReducer`/`ThreadProjection` reconstruction were removed in #2367.
+The component still renders through its existing `ThreadItem` presentation adapter;
+literal component fixtures do not recreate a production content route. See
+[store ownership](remote-conversation-repository-reads-and-thread-store.md) and
+[authoritative rendering](thread-screen-how-it-works-list-and-status-row.md#supplied-authoritative-rendering-1985).
 
 ## The row composable
 
@@ -160,35 +54,21 @@ indicator § The agent name](turn-outcome-indicator.md#the-agent-name-1113) for 
 divergence is a non-blocking NIT, not a defect. [`ModelRefusalRow`](model-refusal-row.md) reuses this same
 `agentName()` / `thread_banner_attribution` pair for its own opened explanation.
 
-## `ThreadRow` / `ThreadScreen` wiring
+## Presentation and persistence
 
-All four of the exhaustive `when`s over `ThreadItem` gained a `Banner` arm:
-
-- **`ThreadRow.listKey()`** — `"banner:$occurredAt"`; unique because `holdsBanner` is.
-- **`ThreadScreen`'s `LazyColumn` render** — `BannerNoticeRow(item = item, agent = state.agent)` (`agent`
-  since #1113) for every level but `Info`; an `Info` row composes to nothing (#1359), inside the same
-  `rowAlpha`-driven `Box` as its neighbours, so above-delimiter dimming applies with no new code where a
-  row does draw. A banner row is **not** a session boundary for `mostRecentSessionBoundaryIndex` —
-  unchanged.
-- **`ThreadItem.timestamp()`** — `occurredAt`.
-- **`RemoteConversationRepositoryTest.threadShape()`** — the test-fixture helper outside production code
-  that also needs every `ThreadItem` arm to keep compiling, the same fourth site #608's Lessons learned
-  named.
-
-## Cache — persisted (#1353)
-
-`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) keeps `ThreadItem.Banner`:
-`FileConversationCache.toRecord` maps it to `CachedBanner(level, text, truncated, occurredAt)`, stored
-verbatim as message content already is, so a restored thread draws its banners in place and the render
-path owns the same stripping either way. Only `ThreadItem.UnrecognizedMessage` still throws from
-`toRecord` — its KDoc forbids persisting raw model-adjacent JSON, and this cache is plain files.
-Before #1353 this row was dropped here and restored by history replay on every open (#873); once
-history loads only on the user's request, a reopened or offline thread stopped getting that replay, so
-the row had to be cached instead. `occurredAt` is the row's dedupe key both ways — `ThreadRow.listKey()`
-for the `LazyColumn`, `HistoryPageReducer.holdsBanner` for the merge, and `decodeThread` for rejecting a
-document that repeats it.
+The supplied renderer selects this component using canonical item identity/revision.
+It does not join live/history rows by `(type, ts)` or reconstruct content from raw
+frames. Authoritative cache persistence retains supplied facts and certification;
+dormant serialized row support remains for #2364. Component styling, text spans and
+gestures remain unchanged.
 
 ## Testing
+
+The dedicated raw DTO/reducer/live-history tests listed in the original coverage
+below were retired in #2367. These references document historical coverage; current
+supported fixtures supply authoritative facts or literal rows and retain presentation,
+privacy, viewport and control assertions.
+
 
 - `BannerDisplayTextTest` (JVM, new): the stripping-set coverage listed above.
 - `RemoteConversationRepositoryTest`, `banner_*` block: text/level/truncated/`occurredAt` fold verbatim

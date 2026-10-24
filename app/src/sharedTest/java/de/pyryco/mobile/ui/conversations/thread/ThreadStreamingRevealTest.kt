@@ -9,7 +9,6 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -111,12 +110,10 @@ class ThreadStreamingRevealTest {
 
     @Test
     fun firstDeltaAfterOpening_revealsFromZero() {
-        var fold = ThreadFold(emptyList(), null)
         showThread()
         val content = "New reply while open continues with enough words to observe gradual reveal before catching up"
         composeRule.runOnIdle {
-            fold = fold.reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 1, content)), "c1")
-            row = (fold.render().single() as ThreadItem.MessageItem).message
+            row = streaming(content, Clock.System.now())
         }
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.onNodeWithText(content, substring = true).assertDoesNotExist()
@@ -128,8 +125,7 @@ class ThreadStreamingRevealTest {
         // The repository projection wins next, with the same lazy key and additional text.
         val full = content + " and an appended delta"
         composeRule.runOnIdle {
-            fold = fold.reduce(ThreadInput.Finished(listOf(ThreadItem.MessageItem(streaming(full, Clock.System.now())))), "c1")
-            row = (fold.render().single() as ThreadItem.MessageItem).message
+            row = streaming(full, Clock.System.now())
         }
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.onNodeWithText("New", substring = true).assertIsDisplayed()
@@ -149,10 +145,7 @@ class ThreadStreamingRevealTest {
         showThread()
         val content = "New reply after history continues with enough words to observe gradual reveal before catching up"
         composeRule.runOnIdle {
-            val fold =
-                ThreadFold(listOf(ThreadItem.MessageItem(history)), null)
-                    .reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 1, content)), "c1")
-            row = (fold.render().last() as ThreadItem.MessageItem).message
+            row = streaming(content, Clock.System.now())
         }
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.onNodeWithText("New", substring = true).assertDoesNotExist()
@@ -163,18 +156,14 @@ class ThreadStreamingRevealTest {
 
     @Test
     fun syntheticBeforeOpening_isImmediate_andReopeningReplaysNothing() {
-        var fold =
-            ThreadFold(emptyList(), null)
-                .reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 1, "Arrived before opening")), "c1")
-        row = (fold.render().single() as ThreadItem.MessageItem).message
+        row = streaming("Arrived before opening", Clock.System.now())
         showThread()
         composeRule.onNodeWithText("Arrived before opening", substring = true).assertIsDisplayed()
 
         val appended = " and appended afterward while the reply continues streaming in the open thread"
         val full = "Arrived before opening" + appended
         composeRule.runOnIdle {
-            fold = fold.reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 2, appended)), "c1")
-            row = (fold.render().single() as ThreadItem.MessageItem).message
+            row = streaming(full, Clock.System.now())
         }
         composeRule.mainClock.advanceTimeByFrame()
         composeRule.onNodeWithText("Arrived before opening", substring = true).assertIsDisplayed()

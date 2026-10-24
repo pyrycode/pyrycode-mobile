@@ -390,17 +390,6 @@ class AuthoritativeThreadScreenTest {
             de.pyryco.mobile.data.repository
                 .FakeConnectionStateSource(),
             ComposerDraftStore(),
-            backgroundTasks = {
-                kotlinx.coroutines.flow.flowOf(
-                    de.pyryco.mobile.data.model.BackgroundTaskRoster(
-                        listOf(
-                            de.pyryco.mobile.data.model
-                                .BackgroundTask("legacy", null, "local_bash", "legacy task", null, null, null, false),
-                        ),
-                        0,
-                    ),
-                )
-            },
             backgroundTaskStopSupported = kotlinx.coroutines.flow.flowOf(true),
             stopBackgroundTask = { conversation, task ->
                 stops += conversation to task
@@ -508,7 +497,7 @@ class AuthoritativeThreadScreenTest {
         compose.waitForIdle()
     }
 
-    @Test fun simultaneousCallbackReplacementAndRouteRemovalRetiresPublishedOwnerAndRestoresActions() {
+    @Test fun simultaneousCallbackReplacementAndRouteRemovalRetiresPublishedOwnerAndRestoresRecordedActions() {
         val presentation =
             projectAuthoritativeThread("host", "conversation", authoritativeSnapshot(authoritativeAgent(1, task = "recorded-task")))
         var supplied by mutableStateOf<AuthoritativeThreadPresentation?>(presentation)
@@ -528,11 +517,11 @@ class AuthoritativeThreadScreenTest {
             owner.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
         }
         compose.waitForIdle()
-        assertEquals(listOf("conversation" to "legacy"), stops)
+        assertTrue("Removed legacy controls must remain inert", stops.isEmpty())
 
         compose.runOnIdle { supplied = presentation }
         tapRecordedStop()
-        assertEquals(listOf("conversation" to "legacy", "conversation" to "recorded-task"), stops)
+        assertEquals(listOf("conversation" to "recorded-task"), stops)
         assertEquals(setOf("recorded-task"), owner.state.value.pendingBackgroundTaskIds)
         compose.runOnIdle {
             supplied = null
@@ -544,7 +533,7 @@ class AuthoritativeThreadScreenTest {
             owner.state.value.pendingBackgroundTaskIds
                 .isEmpty(),
         )
-        assertEquals(2, stops.size)
+        assertEquals(1, stops.size)
     }
 
     @Test fun ownerTransferRetiresOldFactsAndPendingWhileCurrentOwnerSendsOnce() {
@@ -570,7 +559,7 @@ class AuthoritativeThreadScreenTest {
             ownerA.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
         }
         compose.waitForIdle()
-        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy"), stopsA)
+        assertEquals(listOf("conversation" to "recorded-task"), stopsA)
         compose.onNodeWithText("Stop task").performClick()
         compose.waitForIdle()
         compose.runOnIdle { receiver = { ownerB.onOverflowEvent(it) } }
@@ -600,10 +589,10 @@ class AuthoritativeThreadScreenTest {
             owner.onOverflowEvent(ThreadEvent.BackgroundTaskStop("legacy"))
         }
         compose.waitForIdle()
-        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy"), stops)
+        assertEquals(listOf("conversation" to "recorded-task"), stops)
         compose.runOnIdle { mounted = true }
         tapRecordedStop()
-        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "legacy", "conversation" to "recorded-task"), stops)
+        assertEquals(listOf("conversation" to "recorded-task", "conversation" to "recorded-task"), stops)
     }
 
     @Test fun mainTurnReadStatusIsIndependentOfPinnedBackgroundPlacement() {

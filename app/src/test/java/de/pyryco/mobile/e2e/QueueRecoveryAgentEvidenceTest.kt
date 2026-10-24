@@ -138,6 +138,37 @@ class QueueRecoveryAgentEvidenceTest {
 
     private val replayItems = replayScenarioItems().toTypedArray()
 
+    @Test fun sameDocumentPublicationDuringRenderDoesNotRetireReplayOwnership() {
+        val beforeRender = snapshot(*replayItems)
+        val held = evidence(beforeRender)
+        assertTrue(held.hasCompletedReplay(ORDERED))
+        // Turn-end/catch-up can publish after settled assistant text, while Compose synchronizes.
+        val afterRender = beforeRender.copy(checkpoint = beforeRender.checkpoint + 1)
+        assertTrue(held.isCurrentReplay("host", "chat", connection, afterRender))
+        assertNull(evidence(afterRender).authoritativeReplayFailure(ORDERED, "hello"))
+    }
+
+    @Test fun replayCannotBeCertifiedByARetiredOrDifferentSource() {
+        val snap = snapshot(*replayItems)
+        val held = evidence(snap)
+        assertTrue(held.isCurrentReplay("host", "chat", connection, snap))
+        assertFalse(held.isCurrentReplay("host", "chat", Any(), snap))
+        assertFalse(held.isCurrentReplay("host", "chat", null, snap))
+        assertFalse(held.isCurrentReplay("other", "chat", connection, snap))
+        assertFalse(held.isCurrentReplay("host", "other", connection, snap))
+        assertTrue(held.isCurrentReplay("host", "chat", connection, snap.copy()))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, null))
+        val replaced = snap.copy(generation = snap.generation + 1)
+        assertFalse(held.isCurrentReplay("host", "chat", connection, replaced))
+        assertTrue(evidence(replaced).isCurrentReplay("host", "chat", connection, replaced))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, snap.copy(epoch = "replacement")))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, snap.copy(incarnation = "replacement")))
+        val broken = snap.copy(resetNeeded = true)
+        assertFalse(held.isCurrentReplay("host", "chat", connection, broken))
+        assertFalse(evidence(broken).isCurrentReplay("host", "chat", connection, broken))
+        assertFalse(held.isCurrentReplay("host", "chat", connection, snap.copy(repairNeeded = true)))
+    }
+
     @Test fun replayRecoveryRequiresCompleteOrderedSettledItems() {
         assertTrue(evidence(*replayItems).hasCompletedReplay(ORDERED))
         assertNull(evidence(*replayItems).authoritativeReplayFailure(ORDERED, "hello"))

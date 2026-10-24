@@ -1,7 +1,6 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.diagnostics.MessageTrail
-import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -19,7 +18,6 @@ import de.pyryco.mobile.data.network.CAPABILITY_THREAD
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
-import de.pyryco.mobile.data.network.ReplayCursor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -116,26 +114,6 @@ class RelayRepositoryCoordinator(
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
     internal val authoritativeThreads = AuthoritativeThreadStore()
-
-    /**
-     * The reconnect-spanning replay cursor (#412): the latest interactive structured-stream
-     * [de.pyryco.mobile.data.network.Envelope.eventId] observed across all connections. It lives here,
-     * not in the per-connection [RemoteConversationRepository] (rebuilt each reconnect), because it must
-     * outlive connection churn and be readable at the next connection's `hello`-build — [teardownActive]
-     * never touches it, so only a full [close] ends it. Threaded into each per-connection repo in
-     * [onConnection] as the single recorder; #413 reads [ReplayCursor.latest] here to advertise the
-     * resume point. `internal` (module-visible, read-only seam) so #413 and unit tests can read it
-     * without a public API surface, mirroring [toPyrycodeLinkStatus]'s visibility.
-     */
-    internal val replayCursor: ReplayCursor = ReplayCursor()
-
-    /**
-     * Which background tasks this host has finished (#677). Lives here for [replayCursor]'s reason: each
-     * connection gets a fresh repository, but the daemon re-sends its retained roster on every reconnect, so
-     * the finished mark must outlive the connection or a finished task comes back as live on every return
-     * to the foreground. [teardownActive] never touches it. Threaded into each repository in [onConnection].
-     */
-    internal val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks()
 
     /**
      * The five readings this host pushes (#1317), of which the phone also asks only for context usage (#1410),
@@ -302,22 +280,6 @@ class RelayRepositoryCoordinator(
     fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
         questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
 
-    /**
-     * The background tasks each conversation holds on this host (#677), keyed by conversation id. A
-     * per-conversation surface reads through [observeBackgroundTasks] or [observeLiveBackgroundTaskCount].
-     *
-     * The [questionBatches] shape: switched to the active connection's
-     * [RemoteConversationRepository.backgroundTasks] and started [SharingStarted.Eagerly], so frames that
-     * arrive before any screen subscribes are held. Empty between connections, and each connection rebuilds
-     * it from its own frames; only [finishedBackgroundTasks] carries over. No log: the task strings are
-     * claude-authored command lines.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> =
-        activeConnection
-            .flatMapLatest { conn -> conn?.repo?.backgroundTasks ?: flowOf(emptyMap()) }
-            .stateIn(scope, SharingStarted.Eagerly, emptyMap())
-
     /** Detection from this host's current hello_ack, never a grant retained across connections. */
     @OptIn(ExperimentalCoroutinesApi::class)
     val supportsBackgroundTaskStop: StateFlow<Boolean> =
@@ -418,9 +380,37 @@ class RelayRepositoryCoordinator(
                 override fun older(conversationId: String): Boolean =
                     verifiedRepository()?.requestOlderAuthoritativeThread(conversationId) == true
 
+                override fun bodies(
+                    conversationId: String,
+                    connection: Any,
+                    consumer: Any,
+                    snapshot: AuthoritativeThreadSnapshot,
+                    ids: Set<Long>,
+                    retry: Long?,
+                ): java.io.Closeable? =
+                    verifiedRepository()?.takeIf { it === connection }?.demandToolBodies(conversationId, consumer, snapshot, ids, retry)
+
                 override fun cancel(conversationId: String) {
                     (activeConnection.value?.repo)?.cancelAuthoritativeThread(conversationId)
                 }
+
+                override fun children(
+                    conversationId: String,
+                    connection: Any,
+                    consumer: Any,
+                    snapshot: AuthoritativeThreadSnapshot,
+                    ids: Set<Long>,
+                    retry: Long?,
+                    more: Long?,
+                ): java.io.Closeable? =
+                    verifiedRepository()?.takeIf { it === connection }?.demandAgentChildren(
+                        conversationId,
+                        consumer,
+                        snapshot,
+                        ids,
+                        retry,
+                        more,
+                    )
             }
         }
 
@@ -445,14 +435,6 @@ class RelayRepositoryCoordinator(
                 ?: return Result.failure(IllegalStateException("Background task stop not connected"))
         return repo.stopBackgroundTask(conversationId, taskId)
     }
-
-    /** The background tasks [conversationId] holds on this host, or null when nothing has been reported (#677). */
-    fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?> =
-        backgroundTasks.map { it[conversationId] }.distinctUntilChanged()
-
-    /** [BackgroundTaskRoster.liveCount] for [conversationId], or 0 when nothing has been reported (#677). */
-    fun observeLiveBackgroundTaskCount(conversationId: String): Flow<Int> =
-        observeBackgroundTasks(conversationId).map { it?.liveCount ?: 0 }.distinctUntilChanged()
 
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;
@@ -504,8 +486,6 @@ class RelayRepositoryCoordinator(
                         emptySet()
                     }
                 },
-                replayCursor = replayCursor,
-                finishedBackgroundTasks = finishedBackgroundTasks,
                 hostReadings = hostReadings,
                 messageTrail = messageTrail,
                 connToken = { (pump.state.value as? PumpState.Open)?.connId?.let(RelayLog::redactConnId) },

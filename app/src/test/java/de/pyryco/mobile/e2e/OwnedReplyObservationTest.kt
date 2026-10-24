@@ -400,6 +400,24 @@ class OwnedReplyObservationTest {
         }
     }
 
+    @Test fun capturedTerminalOvertakenByLiveReplyRetainsReceiptForFollowUp() {
+        val target = observation(ThreadEvidenceKind.Authoritative)
+        target.bindPhoneConnection(pump) { true }
+        val request = query()
+        target.acceptQuery(request)
+        target.phoneReceived(pump, queryBatch(request, queryFacts().take(1), 1))
+        authoritativeFrames().drop(1).forEach { target.received(pump, it) }
+        target.phoneReceived(pump, queryFinal(request, 1))
+        assertFalse("a valid old terminal still needs current-source catch-up", target.producerCompleted())
+        assertNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+        val later = query(401)
+        target.acceptQuery(later)
+        target.phoneReceived(pump, queryBatch(later, queryFacts()))
+        target.phoneReceived(pump, queryFinal(later))
+        assertTrue("the first valid receipt cannot become a permanent failure", target.producerCompleted())
+        assertNotNull(target.admitted(evidence(ThreadEvidenceKind.Authoritative, rows()), repository))
+    }
+
     @Test fun queryReplyBeforeSendReturnCannotPassARejectedSend() {
         for (accepted in listOf(false, true)) {
             val target = observation(ThreadEvidenceKind.Authoritative)

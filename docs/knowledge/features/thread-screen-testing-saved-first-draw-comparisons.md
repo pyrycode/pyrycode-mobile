@@ -7,6 +7,84 @@ Every earlier miss and comparison remains retained below.
 
 ## Allocation, restore and projection evidence
 
+### File compatibility fixture retention (#2508)
+
+The expected-fact list must remain deterministic and indexable without retaining parsed
+facts across cold openings. `authoritativeFileFacts` generates a temporary `JsonObject`
+per access, preserving exact size, order, numeric spelling and indexed equality. Production
+writes still validate and serialize every fact; the file reader still owns its complete raw
+and validated typed snapshot. Retaining an eager expected list alongside that snapshot
+duplicates the decoded graph throughout fixture writing and every restore. Destination
+disposal cannot release objects owned by that still-live list. No production ownership or
+destination lifecycle change was needed.
+
+The separate native control
+`SavedThreadFirstDrawDeviceTest.authoritativeFileFixture_doesNotRetainDecodedFactsAcrossOpenings`
+holds the list and persisted fixture as the opening loop does. A helper samples weak references
+to its endpoint facts; an independent collectible sentinel establishes collection before
+checking that neither sample survives and the list remains usable. Collection belongs only
+to this untimed method. Measured openings retain CPU readiness and their original frame
+endpoints, with no explicit GC preparation, retry or heap increase.
+
+**Original failure and causal comparison, macOS, 2026-10-23.** In #2505's original
+`ui-9u2sw_hq` on `12aeedf5a0`, the saved-thread class executed 7 methods: 5 passed,
+2 failed, 0 skipped. Both compatibility methods completed four ordinary arms and CPU
+readiness before the first fragmented offline restore exhausted the 201326592-byte
+(192 MiB) heap; suppressed OOM preceded the 20-second committed-draw timeout.
+Stacks reached `decodeReplacement` or `validThreadJson` beneath `ownedValidated`.
+The separately retained same-tree rerun `ui-4l1wpkxh` executed and passed both named
+methods, 0 failures/skips, completing eight arms each. That intermittent pass alone
+did not identify the owner.
+
+| Native comparison | Source | Executed | Passed | Failed | Errors | Skipped | Retained samples | Heap used after seeding |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Eager-list causal control | `c8f4156fb6c0a9c72cc4942231fac072f83db1b3` | 1 | 0 | 1 | 0 | 0 | 2 | 65048296 bytes |
+| Repaired affected class, `ui-igw818xs` | `0c82cc9f3fc6c733740b00b8527276bf667652b2` | 8 | 8 | 0 | 0 | 0 | 0 | 4289976 bytes |
+
+The red assertion specifically rejected retained expected facts. Both runs used the same
+heap limit. The green class includes
+`authoritativeFileCompatibility_exposesNoRetiredReadApis_firstOpenAndReopen` and
+`authoritativeFileCompatibility_preservesExactFacts_offlineAndHeldNewest_firstOpenAndReopen`.
+Each completed all eight ordinary/fragmented, offline/held-newest, first-open/reopen arms
+without OOM, retaining 36000 facts / 18000 islands / 18000 visible messages, exact raw facts,
+numeric spelling, ownership/immutability, revision/wrong-content rejection, retired-API
+absence and exact read/request assertions. DB frames were **116/143/130/123 ms**;
+both actual **3000 ms** newest/older-read controls rejected the unchanged **2000 ms**
+SwiftShader bound. The product target remains 1000 ms and the draw wait 20 seconds.
+One file frame was **3092 ms**, recorded with `required=false`: positive full-file
+latency remains the independent [#2456 benchmark scope](authoritative-reader-paging.md#current-db-and-file-acceptance-scope--approved-2026-10-22).
+
+Raw XML, phone logs, case/stage diagnostics, source and green APK identities were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2508/builder-20261023/`, in separate `original/`,
+`red-c8f4156/` and `green-0c82cc9/` bundles. Their manifest SHA-256 values are respectively
+`f13f3b0fbffb87863aa5c6f0733a27c3c413b6da24fb901f6e0229e0a1aec6a7`,
+`c65aec97040a17ee4e49d7c2a8547d6b183a507eccf4d25b8f4c17e31838855c` and
+`a0ace4c19cf75558ebfddea1f6b606868c509168852cb72233064ff16cabbd86`.
+
+**Configured acceptance.** The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2518)
+reviewed `62ef4e02d32dbd54de526a959eccddbc86eae545` on macOS. Configured UI
+(`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`,
+`ui-1mzc3xk_`) executed **250: 247 passed, 3 failed, 0 errors/skips**. Its XML confirms
+all eight saved-thread methods passed, including both compatibility methods and the causal
+control; each required method executed once. This completes #2508's configured UI criterion.
+The three unrelated recorded-suite failures passed the exact dispatcher rerun,
+**3 executed/passed, 0 failures/errors/skips**: model change (#2368), send queued now
+(dispatcher-recorded first sighting), and offscreen reply (#2360).
+
+JVM/build checks passed **5463 executed/passed, 0 failures/skips**. Scripted-all retained
+**24 executed, 19 passed, 5 failed, 0 errors/skips**. Those five failures reproduced on
+merged main `3c35ff3b4cdf7c52444b0235696b6ab59f0792c1` and were accepted as inherited:
+session-error backlog (#2353), earlier-session Agent restart, background Agent settlement
+and durable-gap catch-up (#2521), and seeded-channel ping (#2469). They remain failures
+of their original run. Linux is outside this ticket's verification scope.
+
+The portable verifier evidence run
+`46283e790043e2ea32dd83a6972ef4b7e9052fdbf5667327aa8903f908f05fb4`
+retains the verdict and counted XML in `logs/verifier-gate__2508_5.log`, plus rerun/base
+and scripted logs. These counts were read from that retained report; no separate focused
+configured-acceptance run is claimed. Builder red/green XML was inspected independently.
+Raw folders are subject to retention; the facts and counts above survive their pruning.
+
 ### Allocation margin and retained evidence (#2018)
 
 The [repair and final verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
@@ -452,7 +530,7 @@ ANR. Host quota contention contributes variance but cannot explain away this
 critical-path product cost. Timestamp, vendored-digest and decimal-parser candidates
 were rejected; the final repair retains the original serializer/provider and does
 not integrate #2042's decoder. See [cache reader ownership](conversation-cache-layout.md#thread-document-readers-1949)
-and [live merge ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+and [live merge ordering](caching-conversation-repository.md).
 
 `readableRowsDoNotWaitForOptionalHistoryButLiveMergeDoes` holds metadata separately:
 validated rows and atomic suppression must publish, but nonempty live merges must
@@ -524,7 +602,7 @@ WhileSubscribed re-collection regain this behavior. Later inputs keep prepared
 markers and rows until their complete replacement is ready, preserving latest-input
 cancellation and projected row/evidence coupling. Production frame pacing remains
 in place. See [independent cache readers](conversation-cache-layout.md#thread-document-readers-1949)
-and [saved/live ordering](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+and [saved/live ordering](caching-conversation-repository.md).
 
 `SavedThreadOpenTest.readyCoverageCannotHoldFirstSavedRowsBehindProjection_firstOpenAndReopen`
 restores complete coverage before rows and holds the injected projection dispatcher.

@@ -5,17 +5,22 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.TransportEvent
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -24,6 +29,80 @@ import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SuiteConnectionsTest {
+    private var savedLogSink = RelayLog.sink
+
+    @Before fun muteDecoderLogs() {
+        savedLogSink = RelayLog.sink
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After fun restoreDecoderLogs() {
+        RelayLog.sink = savedLogSink
+    }
+
+    @Test fun phoneTeardownRetainsRequiredWorkBeforeTestEnd() =
+        runTest {
+            val owner = "phone/host/1"
+            val query = frame(13, "thread_catch_up", """{"conversation_id":"chat","epoch":"epoch","version":28}""")
+            val reply =
+                frame(
+                    48,
+                    "thread_items",
+                    """{"conversation_id":"chat","epoch":"epoch","version":28,"items":[],"final":true,"from_version":28}""",
+                    13,
+                )
+            val tape =
+                RecordedSuiteTape(
+                    listOf(
+                        SuiteStep("connect", owner),
+                        SuiteStep("open", owner),
+                        SuiteStep("client", owner, query),
+                        SuiteStep("daemon", owner, reply, delayMs = 1000),
+                        SuiteStep("client", "control", frame(4, "test-control:test-end", """{"body":""}""")),
+                        SuiteStep("close", owner),
+                        SuiteStep("inbound_end", owner),
+                        SuiteStep("client", "control", frame(5, "test-control:checkpoint", """{"body":"scenario-complete"}""")),
+                    ),
+                    literalProducerIdentities = true,
+                )
+            val hub = SuiteConnections.replaying(backgroundScope, tape)
+            try {
+                val transport = hub.transport(owner) { error("Live transport started") }
+                val pump = hub.pump(transport) { error("Live pump started") }
+                pump.start()
+                transport.connect()
+                runCurrent()
+                // The scenario has asserted its rows; its asynchronous query has not sent yet.
+                val foreground = async { hub.beforePhoneTeardown() }
+                runCurrent()
+                if (foreground.isCompleted) {
+                    // Activity destruction permits the delayed process stop to close the phone.
+                    transport.close()
+                    hub.awaitIdle()
+                }
+                assertFalse("Activity teardown must keep the pending query producer alive", foreground.isCompleted)
+                assertTrue(pump.send(query.copy(id = 90)))
+                runCurrent()
+                advanceTimeBy(20)
+                runCurrent()
+                assertFalse("Matching the request does not deliver its queued reply", foreground.isCompleted)
+                advanceTimeBy(100)
+                runCurrent()
+                foreground.await()
+                assertEquals(reply.copy(inReplyTo = 90), pump.inbound.first())
+                // The foreground fence did not consume test-end or the physical close.
+                // Send directly through the strict tape: control() uses a blocking bridge, which
+                // cannot drive this test's virtual delivery dispatcher while awaiting its barrier.
+                assertTrue(tape.send("control", frame(90, "test-control:test-end", """{"body":""}""")).accepted)
+                transport.close()
+                runCurrent()
+                hub.checkpoint("scenario-complete")
+                hub.assertComplete()
+            } finally {
+                hub.close()
+            }
+        }
+
     @Test fun automaticPeerApprovalWaitsForTheActualPhoneSend() =
         runTest {
             val peer = "peer/host/0"
@@ -192,29 +271,33 @@ class SuiteConnectionsTest {
                 peerTransport.connect()
                 val first = hub.transport(old) { error("Live transport started") }
                 val firstPump = hub.pump(first) { error("Live pump started") }
+                val received = CompletableDeferred<Envelope>()
+                val firstCollector = backgroundScope.launch { firstPump.inbound.collect { received.complete(it) } }
                 firstPump.start()
                 first.connect()
                 runCurrent()
                 val restarting =
                     async {
                         hub.beforePhoneRestart()
+                        assertTrue("the old phone consumer must survive its close fence", firstCollector.isActive)
                         first.close()
                     }
                 runCurrent()
                 assertFalse("restart released before its required catch-up; ${tape.progress()}", restarting.isCompleted)
-                val received = async { firstPump.inbound.first() }
                 assertTrue(firstPump.send(query.copy(id = 90)))
                 runCurrent()
                 assertFalse("restart released before queued reply delivery", restarting.isCompleted)
                 advanceTimeBy(200)
                 runCurrent()
                 restarting.await()
-                assertEquals(90L, received.await().inReplyTo)
+                assertEquals(reply.copy(inReplyTo = 90), received.await())
                 runCurrent()
 
                 // A second restart must select the replacement, without reusing the retired owner.
                 val replacement = hub.transport(next) { error("Live transport started") }
                 val pump = hub.pump(replacement) { error("Live pump started") }
+                val replacementReply = CompletableDeferred<Envelope>()
+                val replacementCollector = backgroundScope.launch { pump.inbound.collect { replacementReply.complete(it) } }
                 pump.start()
                 replacement.connect()
                 runCurrent()
@@ -225,6 +308,8 @@ class SuiteConnectionsTest {
                 advanceTimeBy(20)
                 runCurrent()
                 secondRestart.await()
+                assertEquals(reply.copy(inReplyTo = 91), replacementReply.await())
+                assertTrue("the replacement consumer must survive its close fence", replacementCollector.isActive)
                 replacement.close()
                 assertTrue(peerPump.send(frame(90, "list_conversations")))
                 peerTransport.close()
@@ -435,6 +520,8 @@ class SuiteConnectionsTest {
                 val replacement = hub.transport(next) { error("Live transport started") }
                 val pump = hub.pump(replacement) { error("Live pump started") }
                 pump.start()
+                var received: Envelope? = null
+                backgroundScope.launch { pump.inbound.collect { received = it } }
                 replacement.connect()
                 runCurrent()
                 advanceTimeBy(10)
@@ -445,6 +532,7 @@ class SuiteConnectionsTest {
                 advanceTimeBy(20)
                 runCurrent()
                 closing.await()
+                assertEquals(90L, received?.inReplyTo)
                 hub.checkpoint("scenario-complete")
                 runCurrent()
                 hub.assertComplete()
@@ -633,6 +721,8 @@ class SuiteConnectionsTest {
             val pump = hub.pump(transport) { error("Live pump started") }
             pump.start()
             runCurrent()
+            var received: Envelope? = null
+            backgroundScope.launch { pump.inbound.collect { received = it } }
             val closing = async { hub.beforeClose("phone") }
             runCurrent()
             assertFalse(closing.isCompleted)
@@ -642,7 +732,7 @@ class SuiteConnectionsTest {
             advanceTimeBy(120)
             runCurrent()
             closing.await()
-            assertEquals(90L, pump.inbound.first().inReplyTo)
+            assertEquals(90L, received?.inReplyTo)
             pump.close()
             hub.assertComplete()
             hub.close()

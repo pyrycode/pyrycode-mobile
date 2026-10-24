@@ -67,8 +67,6 @@
 #                         every mode still REPORTS the runner its daemon will use. See #614 and
 #                         docs/e2e-interactive-stream.md § "Interactive runner selection".)
 #   INITIAL_UUID=  CONV_UUID=  SEED_CHANNEL_NAME=e2e-seed
-#   DISCONNECT_LOG=<relay.log>  DISCONNECT_TOKEN=disconnect  (replay-order only: where/what to watch for
-#                                                             the phone-leg drop that fences drop B)
 
 set -euo pipefail
 
@@ -129,6 +127,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO:-}" = "background-agent" ] && [ -z "${E2E_BACKGROUND_AGENT_CASE:-}" ]; then
   exec python3 "${REPO_ROOT}/scripts/e2e-background-agent-scenarios.py"
 fi
+if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO:-}" = "stream" ] && [ -z "${E2E_STREAM_CASE:-}" ]; then
+  exec python3 "${REPO_ROOT}/scripts/e2e-stream-scenarios.py"
+fi
 # A LIVE run started by hand fetches the long-term Claude login when it has none (2026-10-05), instead of
 # stalling on a missing or expired shell login. scripts/with-claude-login.sh explains when it fetches.
 if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
@@ -151,13 +152,6 @@ SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: pi
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
 
-# replay-order (#477) only: drop B fences on the relay logging the phone-leg disconnect (a severed phone
-# cannot send a 2nd send_message to fence on enqueue #2). The relay terminates the phone's WebSocket, so
-# relay.log is the most reliable place to observe the drop; daemon.log is the fallback. The exact log
-# token is the chief first-run unknown (relay/daemon source lives in pyrycode, not verifiable here) —
-# override DISCONNECT_TOKEN / DISCONNECT_LOG and confirm on the first operator run. See docs.
-DISCONNECT_LOG="${DISCONNECT_LOG:-${RELAY_LOG}}"
-DISCONNECT_TOKEN="${DISCONNECT_TOKEN:-phone_unregistered}"
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # seeded session id
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
@@ -764,8 +758,8 @@ if [ -n "${DETERMINISTIC}" ]; then
   # stay env-overridable for first-run tuning.
   FIXTURE_FILE_2="${FIXTURE_FILE_2:-}"
   # How the watcher fences drop B (the 2nd drop): `enqueue` = the 2nd `send_message.enqueued` (the held-open
-  # two-drop scenarios); `disconnect` = the relay logging the phone-leg drop (replay-order #477, whose phone
-  # is offline when drop B must fire); `phone-checkpoint` = the phone has checked its displayed prefix.
+  # two-drop scenarios); `phone-checkpoint` = the phone has checked its displayed prefix or, for
+  # replay-order, proved the deliberate offline boundary. Automatic disconnects cannot release a reply.
   DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
     session-error)
@@ -783,6 +777,8 @@ if [ -n "${DETERMINISTIC}" ]; then
     reply-suggestion)
       TEST_METHOD="interactiveTurn_seededChannel_replySuggestionLongPressSends"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reply-suggestion.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reply-suggestion-done.jsonl}"
+      DROP_B_FENCE=phone-checkpoint  # recover the held reply before its result/native offer
       ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
@@ -795,7 +791,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       DROP_B_FENCE=phone-checkpoint
       ;;
     stream-queued-echo)
-      # Manual ignored reproduction owned by #2078, separate from the display-only stream gate.
+      # Also runs in the managed stream scenario after #2367's authoritative fixture migration.
       TEST_METHOD="interactiveTurn_seededChannel_queuedPromptDoesNotSplitHeldReply"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"
@@ -858,7 +854,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/replay-order-open.jsonl}"  # drop A: thinking, held open across the outage
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/replay-order.jsonl}"   # drop B: ordered sequence, produced while offline
-      DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
+      DROP_B_FENCE=phone-checkpoint                                           # the test releases only after deliberate sever
       ;;
     refusal)
       # #1360: one session-scoped model_refusal_fallback (haiku -> sonnet, both in fakeclaude's canned menu) and
@@ -1496,18 +1492,14 @@ fi
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
 # second fragment needs a host signal: a phone display checkpoint, enqueue #2,
-# or a phone disconnect while replay-order deliberately keeps the phone offline.
+# or replay-order's explicit control action after the phone proves its deliberate close.
 if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
   log "arming second-fragment release: ${DROP_B_FENCE}"
   (
-    if [ "${DROP_B_FENCE}" = "disconnect" ]; then
-      disconnect_base="$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)"
-      disconnect_base="${disconnect_base:-0}"
-      while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${disconnect_base}" ]; do sleep 0.2; done
-    elif [ "${DROP_B_FENCE}" = "send-now" ]; then
+    if [ "${DROP_B_FENCE}" = "send-now" ]; then
       while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
     elif [ "${DROP_B_FENCE}" = "phone-checkpoint" ]; then
-      # The selected test proves the displayed prefix before releasing the next delta.
+      # The selected test proves the displayed prefix or deliberate offline boundary first.
       # A release must not require another prompt that changes the active turn.
       while [ ! -f "${REPLAY_RELEASE}" ]; do sleep 0.1; done
     else

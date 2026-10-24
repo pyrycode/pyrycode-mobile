@@ -113,9 +113,6 @@ class ScriptedThreadHarness(
         TappingConversationRepository(
             object : ConversationRepository by repo {
                 override val negotiatedThread = route
-
-                override fun observeMessages(conversationId: String): Flow<List<de.pyryco.mobile.data.repository.ThreadItem>> =
-                    error("legacy rows used by authoritative fixture")
             },
             tapNegotiated = true,
         )

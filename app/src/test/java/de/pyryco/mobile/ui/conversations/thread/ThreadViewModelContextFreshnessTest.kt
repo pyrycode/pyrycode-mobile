@@ -25,7 +25,11 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -181,7 +185,7 @@ class ThreadViewModelContextFreshnessTest {
             rig.transition("c1", "s1", "s2", at = LATER)
             rig.resetting(false)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
+            rig.context("c1", used = 150_000, asOf = TS, session = "s1")
             runCurrent()
             assertNull("a remembered reply must not restore the replaced context", rig.repo.observeContextUsage("c1").first())
             assertNull("old settings cannot fill in for the rejected reply", rig.vm.state.value.runConfig.contextPercent)
@@ -195,7 +199,7 @@ class ThreadViewModelContextFreshnessTest {
 
             rig.settings("s2", used = 0)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
+            rig.context("c1", used = 150_000, asOf = TS, session = "s1")
             rig.context("c2", used = 60_000, asOf = TS)
             runCurrent()
             assertNull(rig.repo.observeContextUsage("c1").first())
@@ -211,7 +215,7 @@ class ThreadViewModelContextFreshnessTest {
 
             rig.context("c1", used = 2_000, session = "s2")
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
+            rig.context("c1", used = 150_000, asOf = TS, session = "s1")
             runCurrent()
             assertEquals(
                 "late old replies cannot overwrite fresh context",
@@ -233,7 +237,7 @@ class ThreadViewModelContextFreshnessTest {
             // A replayed older boundary must not reopen admission for old readings.
             rig.transition("c1", "s1", "s2", at = TS)
             runCurrent()
-            rig.context("c1", used = 150_000, asOf = TS, session = "s3")
+            rig.context("c1", used = 150_000, asOf = TS, session = "s2")
             runCurrent()
             assertNull(rig.repo.observeContextUsage("c1").first())
             assertNull(rig.vm.state.value.runConfig.contextPercent)
@@ -247,7 +251,7 @@ class ThreadViewModelContextFreshnessTest {
         }
 
     @Test
-    fun rejectedRememberedResetReply_allowsTheNextTurnToRefresh() =
+    fun rejectedPredecessorReplyCannotBlockCurrentPushOrExplicitRefresh() =
         runTest {
             val rig = rig()
             rig.resetting(true)
@@ -255,16 +259,16 @@ class ThreadViewModelContextFreshnessTest {
             rig.transition("c1", "s1", "s2", at = LATER)
             runCurrent()
             val resetAsk = rig.pump.sent.last { it.type == "request_context_usage" }
-            rig.context("c1", used = 150_000, asOf = TS, replyTo = resetAsk.id)
+            rig.context("c1", used = 150_000, asOf = TS, session = "s1", replyTo = resetAsk.id)
             runCurrent()
             assertNull(rig.repo.observeContextUsage("c1").first())
 
             rig.pump.push("turn_state", """{"conversation_id":"c1","state":"thinking"}""")
-            rig.pump.push("turn_end", """{"conversation_id":"c1","turn_id":"replacement-turn","stop_reason":"end_turn"}""")
-            rig.context("c1", used = 40_000)
+            rig.pump.push("turn_state", """{"conversation_id":"c1","state":"idle"}""")
+            rig.repo.requestContextUsage("c1")
             runCurrent()
             val refreshAsk = rig.pump.sent.last { it.type == "request_context_usage" }
-            assertNotEquals("a rejected remembered reply must release the pending ask", resetAsk.id, refreshAsk.id)
+            assertNotEquals("explicit refresh after a rejected predecessor uses a fresh request", resetAsk.id, refreshAsk.id)
             rig.pump.push("error", """{"code":"context_usage.unavailable","message":"Unavailable","retryable":true}""", resetAsk.id)
             rig.context("c1", used = 150_000)
             runCurrent()
@@ -298,17 +302,19 @@ class ThreadViewModelContextFreshnessTest {
             rig.transition("c1", "s1", "s2", at = LATER)
             runCurrent()
             rig.repo.requestContextUsage("c1")
-            val reconnectedPump = Pump()
+            val reconnectedPump = Pump(initialSession = "s2")
             val reconnectedRepo =
                 RemoteConversationRepository(
                     reconnectedPump,
                     backgroundScope,
                     negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
                     hostReadings = readings,
+                    authoritativeHostId = "host-a",
                 )
             reconnectedPump.push(
                 "context_usage",
                 """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0,"as_of":"$TS"}""",
+                session = "s1",
             )
             runCurrent()
             assertNull("reconnect must not forget the source boundary", reconnectedRepo.observeContextUsage("c1").first())
@@ -319,6 +325,7 @@ class ThreadViewModelContextFreshnessTest {
                 rig.pump.sent
                     .last { it.type == "request_context_usage" }
                     .id,
+                session = "s1",
             )
             runCurrent()
             assertNull(reconnectedRepo.observeContextUsage("c1").first())
@@ -327,6 +334,7 @@ class ThreadViewModelContextFreshnessTest {
                 "context_usage",
                 """{"conversation_id":"c1","model":"","total_tokens":150000,"max_tokens":200000,"percentage":75,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0,"as_of":"$TS"}""",
                 reconnectedPump.sent.last().id,
+                session = "s1",
             )
             runCurrent()
             assertNull("a current request cannot authorize old remembered data", reconnectedRepo.observeContextUsage("c1").first())
@@ -336,6 +344,7 @@ class ThreadViewModelContextFreshnessTest {
                 "context_usage",
                 """{"conversation_id":"c1","model":"","total_tokens":2000,"max_tokens":200000,"percentage":1,"categories":[],"dropped_categories":0,"mcp_tools":[],"dropped_mcp_tools":0,"memory_files":[],"dropped_memory_files":0}""",
                 reconnectedPump.sent.last().id,
+                session = "s2",
             )
             runCurrent()
             assertEquals(2_000L, reconnectedRepo.observeContextUsage("c1").first()?.totalTokens)
@@ -419,11 +428,14 @@ class ThreadViewModelContextFreshnessTest {
                 backgroundScope,
                 negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE, CAPABILITY_THREAD) },
                 hostReadings = hostReadings,
+                authoritativeHostId = "host-a",
             )
         pump.push(
             "conversations",
             """{"conversations":[{"id":"c1","name":"Context test","is_promoted":true,"cwd":"/p","current_session_id":"s1","last_used_at":"$TS","last_message_ts":"$TS"}]}""",
         )
+        pump.clear("c2", "other-old")
+        repo.refreshSessionSettings("c1")
         val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("serverId" to "host-a", "conversationId" to "c1")),
@@ -474,23 +486,32 @@ class ThreadViewModelContextFreshnessTest {
             old: String,
             new: String,
             at: String = TS,
-        ) = pump.push(
-            "session_transition",
-            """{"conversation_id":"$conversation","previous_session_id":"$old","new_session_id":"$new","reason":"clear","occurred_at":"$at","workspace_cwd":null}""",
-        )
+        ) {
+            check(old.isNotEmpty())
+            pump.clear(conversation, new, at)
+        }
 
         fun resetting(active: Boolean) =
             pump.push("resetting", """{"conversation_id":"c1","active":$active,"phase":"wrapping_up","handoff":"pending"}""")
     }
 
-    private class Pump : SessionPump {
+    private class Pump(
+        initialSession: String = "s1",
+    ) : SessionPump {
         private val frames = Channel<Envelope>(Channel.UNLIMITED)
         override val inbound: Flow<Envelope> = frames.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
         private var id = 1L
+        private val bindings = mutableMapOf("c1" to initialSession, "c2" to "other-old")
+        private val requestOwners = mutableMapOf<Long, Pair<String, String>>()
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
+            val conversation =
+                envelope.payload.jsonObject["conversation_id"]
+                    ?.jsonPrimitive
+                    ?.content
+            if (conversation != null) requestOwners[envelope.id] = conversation to bindings.getValue(conversation)
             return true
         }
 
@@ -500,14 +521,68 @@ class ThreadViewModelContextFreshnessTest {
             replyTo: Long? = null,
             session: String? = null,
         ) {
+            val decoded = MobileJson.parseToJsonElement(payload)
+            if (type == "conversations") {
+                (decoded.jsonObject["conversations"] as kotlinx.serialization.json.JsonArray).forEach {
+                    bindings[
+                        it.jsonObject
+                            .getValue("id")
+                            .jsonPrimitive.content,
+                    ] =
+                        it.jsonObject
+                            .getValue("current_session_id")
+                            .jsonPrimitive.content
+                }
+            }
+            val conversation = decoded.jsonObject["conversation_id"]?.jsonPrimitive?.content ?: requestOwners[replyTo]?.first ?: "c1"
+            val producer =
+                session ?: when (type) {
+                    "context_usage" ->
+                        requestOwners[replyTo]?.second
+                            ?: if (bindings[conversation] == "") {
+                                ""
+                            } else if (conversation == "c1") {
+                                "s1"
+                            } else {
+                                "other-old"
+                            }
+                    "session_settings" ->
+                        decoded.jsonObject["session_id"]
+                            ?.jsonPrimitive
+                            ?.content
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: bindings.getValue(conversation)
+                    else -> bindings.getValue(conversation)
+                }
             frames.trySend(
                 Envelope(
                     id++,
                     type,
                     TS,
-                    MobileJson.parseToJsonElement(payload),
+                    decoded,
                     inReplyTo = replyTo,
-                    sessionProvenance = SessionProvenance(session?.let { JsonPrimitive(it) }),
+                    conversationId = JsonPrimitive(conversation),
+                    sessionProvenance = SessionProvenance(if (producer.isEmpty()) JsonNull else JsonPrimitive(producer)),
+                    sessionStateCleared = JsonPrimitive(false),
+                ),
+            )
+        }
+
+        fun clear(
+            conversation: String,
+            session: String,
+            at: String = TS,
+        ) {
+            bindings[conversation] = session
+            frames.trySend(
+                Envelope(
+                    id++,
+                    "context_usage",
+                    at,
+                    JsonObject(emptyMap()),
+                    conversationId = JsonPrimitive(conversation),
+                    sessionProvenance = SessionProvenance(JsonPrimitive(session)),
+                    sessionStateCleared = JsonPrimitive(true),
                 ),
             )
         }

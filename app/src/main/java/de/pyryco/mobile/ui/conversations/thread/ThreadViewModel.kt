@@ -3,7 +3,6 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -23,6 +22,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.AttachmentUploadResult
+import de.pyryco.mobile.data.repository.AuthoritativeHistoryLoad
 import de.pyryco.mobile.data.repository.AuthoritativeLiveProgress
 import de.pyryco.mobile.data.repository.CanonicalRefusalIdentity
 import de.pyryco.mobile.data.repository.ConnectionReading
@@ -31,30 +31,20 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
-import de.pyryco.mobile.data.repository.HistoryCoverage
-import de.pyryco.mobile.data.repository.HistoryPage
-import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
-import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ReplySuggestion
 import de.pyryco.mobile.data.repository.ResetStatus
-import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SwitchAgentFailure
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
-import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.data.repository.ThreadReadEvidence
-import de.pyryco.mobile.data.repository.ThreadSnapshot
 import de.pyryco.mobile.data.repository.ThreadSupport
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.data.repository.projectDisplay
-import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -77,15 +67,12 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -107,14 +94,12 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import java.lang.ref.WeakReference
-import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
@@ -173,8 +158,6 @@ class ThreadViewModel(
     mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // through the destination-bound coordinator. Demo defaults remain inert.
-    backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
-    backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     backgroundTaskStopSupported: Flow<Boolean> = flowOf(false),
     backgroundTaskStopRefusals: (conversationId: String) -> Flow<String> = { emptyFlow() },
     private val stopBackgroundTask: suspend (conversationId: String, taskId: String) -> Result<Unit> = { _, _ ->
@@ -719,8 +702,6 @@ class ThreadViewModel(
      * nothing here reads or logs their prose. Controls use only opaque task ids.
      */
     private data class TaskControls(
-        val roster: BackgroundTaskRoster? = null,
-        val count: Int = 0,
         val supported: Boolean = false,
         val expanded: Set<String> = emptySet(),
         val pending: Set<String> = emptySet(),
@@ -731,10 +712,85 @@ class ThreadViewModel(
 
     private val taskControlLock = Any()
     private val taskControls = MutableStateFlow(TaskControls())
+    private val bodyConsumer = Any()
+    private var bodyRelease: java.io.Closeable? = null
+    private var bodyConnection: Any? = null
+    private val childConsumer = Any()
+    private var childRelease: java.io.Closeable? = null
+    private var childConnection: Any? = null
+
+    private fun demandAgentChildren(event: ThreadEvent.AgentChildrenDemand) {
+        if (viewModelScope.coroutineContext[Job]?.isActive != true) return
+        val controls = taskControls.value
+        val p = event.presentation
+        val route = negotiated ?: return
+        if (controls.authoritative !== p ||
+            controls.authoritativeBinding !== event.binding ||
+            p.host != serverId ||
+            p.conversation != conversationId
+        ) {
+            return
+        }
+        val connection = (route.support.value as? ThreadSupport.Supported)?.connection
+        if (connection == null || event.keys.isEmpty()) {
+            childRelease?.close()
+            childRelease = null
+            childConnection = null
+            return
+        }
+        if (p.sourceConnection !== connection) return
+        val current = route.store.current(serverId, conversationId) === p.sourceSnapshot
+        if (childConnection !== connection) childRelease?.close()
+        val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
+
+        fun target(key: String?) = key?.takeIf { current && it in event.keys }?.let { p.bodyItem(it)?.id }
+        childRelease =
+            route.children(conversationId, connection, childConsumer, p.sourceSnapshot, ids, target(event.retry), target(event.more))
+                ?: childRelease
+        childConnection = connection
+    }
+
+    private fun demandToolBodies(event: ThreadEvent.ToolBodyDemand) {
+        if (viewModelScope.coroutineContext[Job]?.isActive != true) return
+        val controls = taskControls.value
+        val p = event.presentation
+        val route = negotiated ?: return
+        if (controls.authoritative !== p ||
+            controls.authoritativeBinding !== event.binding ||
+            p.host != serverId ||
+            p.conversation != conversationId
+        ) {
+            return
+        }
+        val connection = (route.support.value as? ThreadSupport.Supported)?.connection
+        if (connection == null || event.keys.isEmpty()) {
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
+            return
+        }
+        if (p.sourceConnection !== connection) return
+        // The lane applies stale-snapshot withdrawals before requiring freshness for additions.
+        val current = route.store.current(serverId, conversationId) === p.sourceSnapshot
+        if (bodyConnection !== connection) bodyRelease?.close()
+        val ids = event.keys.mapNotNull { p.bodyItem(it)?.id }.toSet()
+        bodyRelease = route.bodies(
+            conversationId,
+            connection,
+            bodyConsumer,
+            p.sourceSnapshot,
+            ids,
+            event.retry?.takeIf { current && it in event.keys }?.let { p.bodyItem(it)?.id },
+        ) ?: bodyRelease
+        bodyConnection = connection
+    }
+
     private val taskStopAttempts = mutableMapOf<String, Any>()
     private val taskStopOwners = mutableMapOf<String, String?>()
 
     init {
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion { bodyRelease?.close() }
+        viewModelScope.coroutineContext[Job]?.invokeOnCompletion { childRelease?.close() }
         viewModelScope.launch {
             backgroundTaskStopRefusals(conversationId).collect { taskId ->
                 synchronized(taskControlLock) {
@@ -747,14 +803,10 @@ class ThreadViewModel(
             }
         }
         viewModelScope.launch {
-            combine(
-                (if (negotiated == null) backgroundTasks(conversationId) else flowOf(null)).onStart { emit(null) },
-                (if (negotiated == null) backgroundTaskCount(conversationId) else flowOf(0)).onStart { emit(0) },
-                backgroundTaskStopSupported.onStart { emit(false) },
-            ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
+            backgroundTaskStopSupported.onStart { emit(false) }.collect { supported ->
                 synchronized(taskControlLock) {
                     val old = taskControls.value
-                    publishTaskControls(old.copy(roster = roster, count = count, supported = supported))
+                    publishTaskControls(old.copy(supported = supported))
                     if (old.pending != taskControls.value.pending || old.expanded != taskControls.value.expanded) {
                         RelayLog.d { "event=background_task_action code=roster_cleanup" }
                     }
@@ -765,7 +817,11 @@ class ThreadViewModel(
 
     /** Called only under taskControlLock; legacy roster updates cannot override supplied item facts. */
     private fun publishTaskControls(current: TaskControls) {
-        val tasks = (current.authoritative?.tasks ?: current.roster)?.tasks.orEmpty()
+        val tasks =
+            current.authoritative
+                ?.tasks
+                ?.tasks
+                .orEmpty()
         val eligible = if (current.supported) tasks.filterNot { it.isFinished }.associateBy { it.taskId } else emptyMap()
         taskStopAttempts.keys.removeAll { id ->
             id !in eligible || taskStopOwners[id] != current.authoritative?.let { eligible[id]?.toolCallId }
@@ -798,6 +854,12 @@ class ThreadViewModel(
             val old = taskControls.value
             // A fresh lambda can publish to this same owner before its predecessor retires.
             if (old.authoritativeBinding !== binding) return
+            bodyRelease?.close()
+            bodyRelease = null
+            bodyConnection = null
+            childRelease?.close()
+            childRelease = null
+            childConnection = null
             taskStopAttempts.clear()
             taskStopOwners.clear()
             publishTaskControls(old.copy(authoritative = null, authoritativeBinding = null))
@@ -808,7 +870,14 @@ class ThreadViewModel(
     private fun toggleBackgroundTask(taskId: String) {
         synchronized(taskControlLock) {
             val current = taskControls.value
-            if (!current.supported || current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true) return
+            if (!current.supported ||
+                current.authoritative
+                    ?.tasks
+                    ?.tasks
+                    ?.any { it.taskId == taskId && !it.isFinished } != true
+            ) {
+                return
+            }
             val opened = taskId !in current.expanded
             taskControls.value = current.copy(expanded = if (opened) current.expanded + taskId else current.expanded - taskId)
             RelayLog.d { "event=background_task_row expanded=$opened" }
@@ -822,17 +891,11 @@ class ThreadViewModel(
             val current = taskControls.value
             val authoritative = current.authoritative
             val eligible =
-                if (event.authoritativeScope != null) {
-                    authoritative != null &&
-                        authoritative.scope == event.authoritativeScope &&
-                        authoritative.tasks.tasks.any { task ->
-                            task.taskId == taskId && task.toolCallId == event.authoritativeItemId && !task.isFinished
-                        }
-                } else {
-                    authoritative == null &&
-                        taskId in current.expanded &&
-                        current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } == true
-                }
+                authoritative != null &&
+                    event.authoritativeScope == authoritative.scope &&
+                    authoritative.tasks.tasks.any { task ->
+                        task.taskId == taskId && task.toolCallId == event.authoritativeItemId && !task.isFinished
+                    }
             if (!current.supported || taskId in current.pending || !eligible) return
             taskStopAttempts[taskId] = attempt
             taskStopOwners[taskId] = event.authoritativeItemId
@@ -856,27 +919,7 @@ class ThreadViewModel(
         }
     }
 
-    /**
-     * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
-     * on this conversation's `turn_end`s. Each replaces the last (the value is already a running total, so
-     * it is never summed), and an absent, zero, negative or non-finite one leaves the earlier value standing.
-     * Collected eagerly so it lasts as long as this view model, as desktop keeps it while the timeline lives;
-     * `WhileSubscribed` would forget it whenever the screen stops collecting. Claude's claim: never logged.
-     */
-    private val sessionCostUsd: StateFlow<Double?> =
-        liveSessionEvents
-            .filterIsInstance<LiveSessionEvent.TurnEnd>()
-            .mapNotNull { event ->
-                event.costUsdTotal?.takeIf { event.conversationId == conversationId && it.isFinite() && it > 0 }
-            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
-
-    /**
-     * Channel info's Session readings (#1346): what Claude reports about its session, with the permission
-     * mode [runningModel] leaves unread, and [sessionCostUsd]. A second `observeSessionFacts` subscription is
-     * a projection read that sends nothing. None of it reaches [runConfigFlow].
-     */
-    private val channelInfoSession: Flow<Pair<SessionFacts?, Double?>> =
-        combine(repository.observeSessionFacts(conversationId), sessionCostUsd, ::Pair)
+    private val channelInfoSession = repository.observeSessionFacts(conversationId)
 
     /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
     private val mcpStatusReading: Flow<McpStatus> =
@@ -901,39 +944,6 @@ class ThreadViewModel(
         }
 
     /**
-     * This conversation's backward history walk (#777) — cursor, in-flight, page count and stop reason in
-     * one value. Written CAS-shaped: [claimHistorySlot]'s [MutableStateFlow.compareAndSet] loop for the
-     * ask and the retry claims, and [MutableStateFlow.update] for every settle and fail. A plain
-     * read-then-assign would open a real window, because the settle runs in a launched coroutine while the
-     * claim runs on the caller's.
-     *
-     * It survives a reconnect (#1352): the cursor names a position in the daemon's append-only log, so the
-     * next gesture after a reconnect continues from it. Its position is saved beside the cached rows when
-     * an ask settles and restored at open by [historySeed] (#1354); the page count and failures are not.
-     */
-    private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
-    private val historyCoverage = MutableStateFlow(HistoryCoverage())
-    private var pendingNewest = 0
-
-    /**
-     * Restores the history position saved when this thread was last open (#1354), so the first pull asks
-     * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
-     * Reader demand is dropped until this finishes; the `init` block's newest-page ask waits for it.
-     * No walk ask can carry the opening empty cursor once a saved one exists.
-     */
-    private val historySeed: Job =
-        viewModelScope.launch {
-            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
-            historyDemand.update {
-                it.restored(
-                    cursor = saved.cursor,
-                    atStart = saved.atStart && saved.coverage?.unsignedIncomplete != true,
-                )
-            }
-            historyCoverage.value = saved.coverage ?: HistoryCoverage()
-        }
-
-    /**
      * Whether this thread's host has a live repository right now (#1352), desktop's
      * `connectedConversationHostNow`: a history ask is sent only while it holds, and the oldest-end slot
      * shows the offline notice while it does not. Keyed on the published repository, not the socket, for
@@ -949,146 +959,6 @@ class ThreadViewModel(
             }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
-    private val receivedThread =
-        (if (negotiated == null) repository.threadSnapshots(conversationId) else emptyFlow())
-            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
-
-    /**
-     * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
-     * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
-     * growing `isStreaming` assistant message that settles into the finished message when the turn ends.
-     *
-     * `observeMessages` (cold, re-emits on subscribe) and [liveSessionEvents] (hot, `replay = 0`) are two
-     * uncoordinated server emitters — there is no wire ordering between `turn_end` and the finished
-     * `message`, and the finished `message` carries no `turn_id`. So the dedup is structural, not
-     * id-correlated: see [ThreadFold.reduce]. With the inert empty-flow default the `merge` yields only the
-     * `observeMessages` arm, so the thread behaves exactly as #313.
-     */
-    private val threadItems: Flow<FoldedThread> =
-        flow {
-            var fold = ThreadFold(emptyList(), null)
-            var evidence = ThreadReadEvidence()
-            emit(FoldedThread(emptyList(), evidence))
-            if (negotiated != null) return@flow
-            merge(
-                receivedThread.map {
-                    // Boundary effects stay on main at receipt, before a worker backlog can delay them.
-                    noteNewestBoundary(it.rows)
-                    FoldInput.Received(it)
-                },
-                liveSessionEvents.map {
-                    // A first synthetic row also establishes the pre-existing nonempty baseline.
-                    if (it is LiveSessionEvent.AssistantDelta && it.conversationId == conversationId) {
-                        boundaryBaselineSeen = true
-                    }
-                    FoldInput.Live(ThreadInput.Live(it))
-                },
-            )
-                // Fuses with merge's intake channel: worker suspension must never stall either source
-                // or receipt-side boundary effects. The live source drops oldest events under pressure;
-                // only complete folded states may conflate. Collection cancellation discards this queue.
-                .buffer(Channel.UNLIMITED)
-                .collect { input ->
-                    val reading =
-                        withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
-                            val event =
-                                when (input) {
-                                    is FoldInput.Received -> {
-                                        evidence = input.snapshot.readEvidence
-                                        ThreadInput.Finished(input.snapshot.rows)
-                                    }
-                                    is FoldInput.Live -> input.input
-                                }
-                            fold = fold.reduce(event, conversationId)
-                            val rows = fold.render()
-                            FoldedThread(rows, evidence.presentedAs(rows))
-                        }
-                    emit(reading)
-                }
-        }.distinctUntilChanged()
-
-    /**
-     * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
-     * backlog (#461). [ConversationRepository.observeQueue] is a thread-content stream (an ordered list of
-     * not-yet-sent user text, the same category as [items]) rather than a transient cross-cutting signal,
-     * so it is surfaced on [ThreadUiState] — not as a sibling [StateFlow] like [isStalled]. Combined here
-     * so the five-arm typed `state` combine keeps one content arm. The fold and queue seed empty content.
-     * Rows and their exact receipt evidence share one complete value through worker display preparation
-     * and frame pacing; unrelated action/dialog flows do not wait for a frame.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val threadContent: Flow<ThreadContent> =
-        flow {
-            var hasPublishedRows = false
-            emitAll(
-                combine(
-                    threadItems,
-                    if (negotiated == null) repository.observeQueue(conversationId) else flowOf(emptyList()),
-                    historyDemand,
-                    hostAvailable,
-                    flow<HistoryCoverage?> {
-                        emit(null)
-                        historySeed.join()
-                        historyCoverage.collect { emit(it) }
-                    },
-                ) { reading, queued, demand, connected, coverage ->
-                    Triple(
-                        reading.items,
-                        coverage ?: HistoryCoverage(),
-                        ThreadContent(
-                            reading.items,
-                            queued,
-                            demand.tail(connected),
-                            emptyList(),
-                            coverage?.let { reading.evidence.copy(gaps = it.unsignedGaps) },
-                        ),
-                    )
-                }.transformLatest { (items, coverage, content) ->
-                    val needsProjection = items.isNotEmpty() && (coverage.unsignedGaps.isNotEmpty() || coverage.unsignedUnknown)
-                    if (needsProjection && !hasPublishedRows) {
-                        // Optional markers must not hold the initial readable rows; qualification awaits preparation.
-                        hasPublishedRows = true
-                        emit(content.copy(evidence = null))
-                        RelayLog.d { "event=history_initial_content_published rows=${items.size} projection=pending" }
-                    }
-                    val prepared =
-                        if (!needsProjection) {
-                            content
-                        } else {
-                            withContext(projectionDispatcher) {
-                                val context = currentCoroutineContext()
-                                // Use the render fold's one-to-one queue correlation and lifecycle filtering.
-                                val delivered = IdentityHashMap<ThreadItem, Unit>()
-                                foldQueuedRows(items, content.queued).forEach { row ->
-                                    context.ensureActive()
-                                    if (row is ThreadRow.Delivered) delivered[row.item] = Unit
-                                }
-                                val display =
-                                    coverage.projectDisplay(
-                                        items,
-                                        checkActive = { context.ensureActive() },
-                                        isDisplayed = { it in delivered },
-                                    )
-                                RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
-                                content.copy(
-                                    items = display.rows,
-                                    historyMarkers =
-                                        display.markers.map {
-                                            ThreadHistoryMarker(
-                                                beforeRow = it.beforeRow,
-                                                unsignedAnchor = it.anchor,
-                                                displayRow = it.displayRow,
-                                            )
-                                        },
-                                )
-                            }
-                        }
-                    if (prepared.items.isNotEmpty()) hasPublishedRows = true
-                    emit(prepared)
-                },
-            )
-        }.distinctUntilChanged()
-            .paceThreadContent(if (negotiated == null) contentScheduling else null)
 
     /**
      * The negotiated thread's screen presentation (#2175): restored or synchronized facts for this exact host and
@@ -1115,7 +985,13 @@ class ThreadViewModel(
                             combine(snapshots, progress) { snapshot, reading ->
                                 withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
                                     // An empty epoch can still carry scoped local Sending feedback.
-                                    projectAuthoritativeThread(route.host, conversationId, snapshot, reading)
+                                    projectDeferredAuthoritativeThread(
+                                        route.host,
+                                        conversationId,
+                                        snapshot,
+                                        reading,
+                                        sourceConnection = (support as? ThreadSupport.Supported)?.connection,
+                                    )
                                 }
                             }.paceThreadContent(contentScheduling),
                         )
@@ -1145,11 +1021,10 @@ class ThreadViewModel(
     val state: StateFlow<ThreadUiState> =
         combine(
             conversations,
-            threadContent,
             pendingWorkspacePicker,
             transientDialogs,
             runConfigFlow,
-        ) { conversations, content, pickerVisible, dialogs, runConfig ->
+        ) { conversations, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             // A sessionless replacement summary cannot override its admitted, connection-correlated
             // settings with a detached connection's last known session. Held readings never bind it.
@@ -1171,13 +1046,10 @@ class ThreadViewModel(
                 conversationName = conv?.name,
                 isPromoted = conv?.isPromoted ?: false,
                 agent = conv?.agent ?: ConversationAgent.Claude,
-                hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = dialogs.renameVisible,
                 saveAsChannelDialog = dialogs.saveAsChannel,
-                items = content.items,
-                queuedMessages = content.queued,
                 channelInfoOpen = dialogs.channelInfoOpen,
                 deleteConfirmVisible = dialogs.deleteConfirmVisible,
                 workspacePath = conv?.cwd ?: "",
@@ -1185,23 +1057,20 @@ class ThreadViewModel(
                 sessionCount = conv?.sessionHistory?.size ?: 0,
                 runConfig = runConfig.forLiveSession(liveSession),
                 mutationsSupported = repository.mutationsSupported,
-                historyTail = content.historyTail,
-                historyMarkers = content.historyMarkers,
-                readEvidence = content.evidence,
             )
         }.combine(slashCommandMenu) { uiState, menu ->
             val slashCommandsAccepted = uiState.runConfig.capabilities?.slashCommands ?: true
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(taskControls) { uiState, tasks ->
             uiState.copy(
-                backgroundTasks = tasks.roster,
-                backgroundTaskCount = tasks.count,
+                backgroundTasks = tasks.authoritative?.tasks,
+                backgroundTaskCount = tasks.authoritative?.tasks?.liveCount ?: 0,
                 backgroundTaskStopSupported = tasks.supported,
                 expandedBackgroundTaskIds = tasks.expanded,
                 pendingBackgroundTaskIds = tasks.pending,
             )
-        }.combine(channelInfoSession) { uiState, (facts, cost) ->
-            uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
+        }.combine(channelInfoSession) { uiState, facts ->
+            uiState.copy(reportedSessionFacts = facts)
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
@@ -1237,7 +1106,18 @@ class ThreadViewModel(
                             it.conversation == conversationId &&
                             route.store.current(serverId, conversationId) === it.sourceSnapshot
                     }
-                uiState.copy(authoritativeThread = presentation, sessionCostUsd = current?.reportedSessionCost(session))
+                uiState.copy(
+                    authoritativeThread = presentation,
+                    items = presentation?.items.orEmpty(),
+                    hasMessages = presentation?.rows?.isNotEmpty() == true,
+                    sessionCostUsd = current?.reportedSessionCost(session),
+                )
+            }
+        }.combine(negotiated?.localHistory(conversationId) ?: flowOf(AuthoritativeHistoryLoad.Idle)) { uiState, local ->
+            when (local) {
+                AuthoritativeHistoryLoad.Loading -> uiState.copy(historyTail = ThreadHistoryTail.Loading)
+                AuthoritativeHistoryLoad.Retry -> uiState.copy(historyTail = ThreadHistoryTail.Retry)
+                AuthoritativeHistoryLoad.Idle -> uiState
             }
         }.combine(contextSheetOpen) { uiState, open ->
             uiState.copy(contextSheetOpen = open)
@@ -1551,11 +1431,6 @@ class ThreadViewModel(
      * counts. Every writer runs on `viewModelScope`'s main dispatcher.
      */
     val turnOutcome: StateFlow<TurnRecoveryNotice?> = _turnOutcome.asStateFlow()
-
-    /** The newest boundary row [threadItems] has drawn, once it has drawn a non-empty thread (#1357). */
-    private var newestBoundary: ThreadItem.SessionBoundary? = null
-
-    private var boundaryBaselineSeen = false
 
     /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
     val systemPrompt: StateFlow<SystemPromptEditorState?> =
@@ -1976,16 +1851,8 @@ class ThreadViewModel(
         event: LiveSessionEvent,
     ): TurnRecoveryNotice? {
         if (event.conversationId != conversationId) return current
-        return when (event) {
-            is LiveSessionEvent.TurnEnd -> turnRecoveryNotice(event)
-            is LiveSessionEvent.TurnState ->
-                if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
-            is LiveSessionEvent.AssistantDelta,
-            is LiveSessionEvent.ToolUse,
-            is LiveSessionEvent.ToolResult,
-            -> null
-            is LiveSessionEvent.ReplayGap -> current
-        }
+        val phase = (event as LiveSessionEvent.TurnState).phase
+        return if (phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
     }
 
     private fun setTurnOutcome(
@@ -2006,43 +1873,7 @@ class ThreadViewModel(
 
     private fun clearTurnOutcome(reason: String) = setTurnOutcome(null, reason)
 
-    /**
-     * Clear [turnOutcome] when [items] end on a boundary newer than the last one drawn (#1357). An empty list,
-     * the fold's seed or a thread not loaded yet, sets no baseline, so the first load never reads as a
-     * transition. An older history page prepends rows and leaves the newest boundary as it was.
-     */
-    private fun noteNewestBoundary(items: List<ThreadItem>) {
-        if (items.isEmpty()) return
-        val newest = items.lastOrNull { it is ThreadItem.SessionBoundary } as ThreadItem.SessionBoundary?
-        if (boundaryBaselineSeen && newest != null && newest != newestBoundary) clearTurnOutcome("session_boundary")
-        newestBoundary = newest
-        boundaryBaselineSeen = true
-    }
-
     init {
-        // #1572: an open thread asks for the newest history page every time its host becomes available, at
-        // open and after every reconnect. A reply that reached it while it was off-screen was never cached and
-        // the reconnect dropped it; replay does not resend it, so only this ask brings it back. Older pages
-        // are still asked for only by the reader (#1352), and the walk keeps its cursor across a reconnect.
-        // This replaces #1569's opening ask, which a never-loaded thread only made.
-        viewModelScope.launch {
-            historySeed.join()
-            var opened = false
-            repositoryAvailable
-                .distinctUntilChanged()
-                .filter { it }
-                .collect {
-                    askForNewestPage(reconnect = opened)
-                    opened = true
-                }
-        }
-
-        // Raw arrivals can precede the eager availability projection. Readiness releases pending
-        // newest work without creating another arrival or reader demand.
-        viewModelScope.launch {
-            hostAvailable.filter { it }.collect { drainNewestPages() }
-        }
-
         // #1311: a drop and the return both end the round trip the local-send window was waiting on.
         // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
@@ -2059,22 +1890,9 @@ class ThreadViewModel(
         // repository drops a reading on `turn_end`, so any reading that follows belongs to a later step.
         viewModelScope.launch {
             liveSessionEvents.collect { event ->
-                val reason =
-                    when (event) {
-                        is LiveSessionEvent.TurnEnd -> "turn_end"
-                        is LiveSessionEvent.TurnState -> "turn_state"
-                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
-                        is LiveSessionEvent.ToolUse -> "tool_use"
-                        is LiveSessionEvent.ToolResult -> "tool_result"
-                        is LiveSessionEvent.ReplayGap -> "replay_gap"
-                    }
+                val reason = "turn_state"
                 if (event.conversationId == conversationId &&
-                    (
-                        event is LiveSessionEvent.AssistantDelta ||
-                            event is LiveSessionEvent.ToolUse ||
-                            event is LiveSessionEvent.ToolResult ||
-                            (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle)
-                    )
+                    (event as LiveSessionEvent.TurnState).phase != LiveSessionEvent.TurnState.Phase.Idle
                 ) {
                     invalidateSuggestion("turn")
                 }
@@ -2217,279 +2035,13 @@ class ThreadViewModel(
         repository.requestContextUsage(conversationId)
     }
 
-    /**
-     * The reader pulled toward older messages at the thread's oldest end (#1352) — ask for the next page
-     * back. The only ask besides Retry and the newest-page ask on each host arrival ([askForNewestPage]):
-     * a page arriving never asks.
-     *
-     * Sends nothing while the host is not connected. [ThreadHistoryDemand.canAsk] drops an ask that
-     * arrives while a request is outstanding or after the walk reached a terminal stop, and drops it
-     * rather than queuing it.
-     */
+    /** Ask the owning authoritative route for older content. */
     fun onDemandOlderHistory() {
-        if (negotiated != null) {
-            negotiated.older(conversationId)
-            return
-        }
-        if (!historySeed.isCompleted) {
-            // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
-            RelayLog.d { "event=history_ask_skipped reason=seeding" }
-            return
-        }
-        if (!hostAvailable.value) {
-            RelayLog.d { "event=history_ask_skipped reason=offline" }
-            return
-        }
-        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
-        launchHistoryAsk(claimed)
+        negotiated?.older(conversationId)
     }
 
-    /**
-     * The reader pressed the oldest-end retry affordance (#778) — ask again for the page that failed.
-     *
-     * Gated on [ThreadHistoryDemand.canRetry], so it is inert unless the walk actually stopped on a
-     * retryable failure, and on the host being connected. The retry resumes from the **same** cursor,
-     * keeping every loaded row and the walk's position across both the failure and the retry.
-     */
     fun onRetryOlderHistory() {
-        if (negotiated != null) {
-            negotiated.older(conversationId)
-            return
-        }
-        if (!hostAvailable.value) return
-        val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
-        launchHistoryAsk(claimed)
-    }
-
-    /**
-     * The open thread's host became available (#1572) — ask for the newest page, which brings back a reply
-     * stored while the thread was off-screen. The page merges through the repository's dedup, so rows
-     * already drawn do not repeat.
-     *
-     * It takes the walk's one outstanding-request slot, waiting behind a pull or retry. When
-     * the walk's own next ask would carry the empty cursor anyway, the page is the walk's and settles as a
-     * pull's would; otherwise the walk's cursor, saved position and stop reason are left as they were.
-     */
-    private fun askForNewestPage(reconnect: Boolean) {
-        // #2175: a negotiated thread catches up through its own query on each supported connection.
-        if (negotiated != null) return
-        if (reconnect) RelayLog.d { "event=history_newest_ask reason=reconnect" }
-        pendingNewest++
-        drainNewestPages()
-    }
-
-    private fun drainNewestPages() {
-        if (pendingNewest == 0 || !hostAvailable.value || historyDemand.value.inFlight) return
-        // Re-set on every run of the claim, so after the loop it describes the claim that won.
-        var walkPage = false
-        val claimed =
-            claimHistorySlot {
-                val coverage = historyCoverage.value
-                walkPage = it.newestPageAdvancesWalk ||
-                    it.stoppedBy == HistoryWalkStop.AtStart &&
-                    coverage.spans.isEmpty() &&
-                    coverage.newestCursor == ""
-                when {
-                    walkPage -> it.asking()
-                    !it.inFlight -> it.askingNewest()
-                    else -> null
-                }
-            }
-        when {
-            claimed == null -> RelayLog.d { "event=history_newest_ask_skipped reason=in_flight" }
-            walkPage -> {
-                pendingNewest--
-                launchHistoryAsk(claimed)
-            }
-            else -> {
-                pendingNewest--
-                launchNewestPageSideAsk()
-            }
-        }
-    }
-
-    /**
-     * A newest-page ask that is not the walk's page. The repository merges rows; only coverage and
-     * gap cursors advance here, leaving the backwards walk unchanged. A failure is logged with a
-     * static event only and shows nothing, since the reader asked for no page; the next host arrival asks again.
-     */
-    private fun launchNewestPageSideAsk() {
-        viewModelScope.launch {
-            try {
-                val page = repository.requestHistory(conversationId, cursor = "", limit = THREAD_HISTORY_PAGE_SIZE)
-                recordCoverage(page, newest = true)
-            } catch (e: CancellationException) {
-                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-            } catch (e: RelayErrorException) {
-                RelayLog.d { "event=history_newest_ask_failed" }
-            } catch (e: IllegalStateException) {
-                RelayLog.d { "event=history_newest_ask_failed" }
-            } catch (e: IllegalArgumentException) {
-                RelayLog.d { "event=history_newest_ask_failed" }
-            }
-            historyDemand.update { it.newestSettled() }
-            drainNewestPages()
-        }
-    }
-
-    /**
-     * The walk's single ask site.
-     *
-     * The repository has already merged the returned page into the thread. Here its durable ids update
-     * coverage and its cursor/atStart advance the independent backwards walk; no row is rendered again.
-     *
-     * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
-     * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
-     *
-     * A received page's position is saved (#1354) before the settle releases the slot, so the one
-     * outstanding ask also orders the saves. A failed ask saves nothing, leaving the saved position as it
-     * was; a refused cursor clears it.
-     */
-    private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
-        viewModelScope.launch {
-            try {
-                val page = fetchHistoryPage(claimed) ?: return@launch
-                historyCoverage.update { it.received(page, newest = claimed.cursor.isEmpty()) }
-                val coverage = historyCoverage.value
-                val settled =
-                    if (page.atStart && coverage.unsignedIncomplete) {
-                        // Retain a usable walk and visible unknown state until signed consumers migrate.
-                        RelayLog.d { "event=history_completeness_unavailable reason=unsigned_identity" }
-                        claimed.failed(retryable = false)
-                    } else {
-                        claimed.settled(pageCursor = page.cursor, atStart = page.atStart)
-                    }
-                repository.writeHistoryPosition(
-                    conversationId,
-                    HistoryPosition(settled.cursor, settled.stoppedBy == HistoryWalkStop.AtStart, coverage),
-                )
-                historyDemand.update { settled }
-            } finally {
-                drainNewestPages()
-            }
-        }
-    }
-
-    private suspend fun recordCoverage(
-        page: HistoryPage,
-        newest: Boolean = false,
-        target: ULong? = null,
-    ) {
-        historyCoverage.update { it.receivedUnsigned(page, newest, target) }
-        if (historyCoverage.value.unsignedIncomplete) {
-            historyDemand.update { if (it.stoppedBy == HistoryWalkStop.AtStart) it.copy(stoppedBy = null) else it }
-        }
-        val walk = historyDemand.value
-        repository.writeHistoryPosition(
-            conversationId,
-            HistoryPosition(walk.cursor, walk.stoppedBy == HistoryWalkStop.AtStart, historyCoverage.value),
-        )
-    }
-
-    fun onDemandHistoryGap(anchor: Long) {
-        if (anchor >= 0) onDemandUnsignedHistoryGap(anchor.toULong())
-    }
-
-    fun onDemandUnsignedHistoryGap(anchor: ULong) {
-        if (negotiated != null || !historySeed.isCompleted || !hostAvailable.value) return
-        val coverage = historyCoverage.value
-        if (anchor == 0uL &&
-            coverage.unsignedUnknownEdge == null ||
-            anchor != 0uL &&
-            coverage.unsignedGaps.none { it.anchor == anchor }
-        ) {
-            return
-        }
-        claimHistorySlot { if (!it.inFlight) it.askingNewest() else null } ?: return
-        val cursor = coverage.cursorForUnsigned(anchor)
-        viewModelScope.launch {
-            try {
-                recordCoverage(
-                    repository.requestHistory(conversationId, cursor, limit = THREAD_HISTORY_PAGE_SIZE),
-                    newest = cursor.isEmpty(),
-                    target = anchor,
-                )
-                RelayLog.d { "event=history_gap_page_received" }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: RelayErrorException) {
-                if (error.code == HISTORY_INVALID_CURSOR && cursor.isNotEmpty()) {
-                    historyCoverage.update { it.refusedUnsigned(anchor) }
-                    val walk = historyDemand.value
-                    repository.writeHistoryPosition(
-                        conversationId,
-                        HistoryPosition(walk.cursor, walk.stoppedBy == HistoryWalkStop.AtStart, historyCoverage.value),
-                    )
-                    RelayLog.d { "event=history_gap_cursor_refused" }
-                } else {
-                    RelayLog.d { "event=history_gap_ask_failed" }
-                }
-            } catch (error: IllegalStateException) {
-                RelayLog.d { "event=history_gap_ask_failed" }
-            } catch (error: IllegalArgumentException) {
-                RelayLog.d { "event=history_gap_ask_failed" }
-            } finally {
-                historyDemand.update { it.newestSettled() }
-                drainNewestPages()
-            }
-        }
-    }
-
-    /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
-    private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
-        try {
-            return repository.requestHistory(conversationId, claimed.cursor, limit = THREAD_HISTORY_PAGE_SIZE)
-        } catch (e: CancellationException) {
-            throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-        } catch (e: RelayErrorException) {
-            // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
-            // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
-            // code falls through to the failure branch, so the fallback here is the safe one.
-            if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
-                // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
-                // nothing asks now. Reset the saved backwards position without dropping durable gaps.
-                RelayLog.d { "event=history_cursor_refused" }
-                val coverage = historyCoverage.value.takeIf { it.spans.isNotEmpty() || it.unknown }
-                repository.writeHistoryPosition(conversationId, coverage?.let { HistoryPosition("", false, it) })
-                historyDemand.update { it.cursorRefused() }
-            } else {
-                // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
-                failWalk(retryable = e.retryable)
-            }
-        } catch (e: IllegalStateException) {
-            // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
-            // retryable: a button with no connection behind it cannot work. A gesture after the
-            // reconnect asks again (#1352).
-            failWalk(retryable = false)
-        } catch (e: IllegalArgumentException) {
-            // An unknown conversation id, or a malformed page — kotlinx.serialization's
-            // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-            failWalk(retryable = false)
-        }
-        return null
-    }
-
-    /** Settle a failed ask. [retryable] is a flag, never text. */
-    private fun failWalk(retryable: Boolean) {
-        RelayLog.d { "event=history_ask_failed retryable=$retryable" }
-        historyDemand.update { it.failed(retryable = retryable) }
-    }
-
-    /**
-     * Claim the walk's single outstanding-request slot under [claim]'s rule, returning the claimed demand
-     * (whose `cursor` is the one to ask with) or `null` when the ask must be dropped.
-     *
-     * A [MutableStateFlow.compareAndSet] loop rather than a read-then-assign: the settle runs in a
-     * launched coroutine, so a check-then-act would admit two concurrent asks through the window between
-     * reading the rule and writing the in-flight flag. [claim] is pure and cheap, so re-running it on a
-     * lost CAS is free.
-     */
-    private fun claimHistorySlot(claim: (ThreadHistoryDemand) -> ThreadHistoryDemand?): ThreadHistoryDemand? {
-        while (true) {
-            val current = historyDemand.value
-            val claimed = claim(current) ?: return null
-            if (historyDemand.compareAndSet(current, claimed)) return claimed
-        }
+        negotiated?.older(conversationId)
     }
 
     /** Record an edit to this chat's composer (#789). Exact text; the store clears only on `""`. */
@@ -3187,11 +2739,9 @@ class ThreadViewModel(
      * constructor lambda. Always passes the VM's own [conversationId] (never a caller-supplied id; the
      * screen forwards only the row's [Long] queued-message id).
      *
-     * **No optimistic removal** (AC #3): the row leaves only on the next `queue_state` ([observeQueue]),
-     * so this holds no state to roll back and a failed drop is inert (AC #4). The daemon never replies to
-     * the dequeue (#859), so the call returns once the frame is sent; the repository removes the drop's
-     * own echo from the thread when that snapshot arrives. The remote throws only when not connected;
-     * the [RelayErrorException] catch covers the interface contract's other implementations.
+     * This forwards the supplied daemon queue identifier. Current queue presentation and retirement
+     * follow authoritative item state. The call creates no reconstructed user row and does not infer
+     * acceptance from a raw queue snapshot. A failed send remains inert.
      *
      * The catch contract mirrors [sendInterrupt] exactly: the [CancellationException] rethrow **MUST
      * precede** the typed catches (`j.u.c.CancellationException` extends `IllegalStateException` on the
@@ -3639,12 +3189,13 @@ class ThreadViewModel(
             presentation.host == serverId &&
             presentation.conversation == conversationId &&
             state.value.hostAvailable &&
-            presentation.rows.any { row -> row is ThreadRow.Delivered && row.listKey(0) == event.rowKey && row.item == event.row } &&
+            presentation.matchesReadContents(event.rowKey, event.row, event.seenRowRevisions[event.rowKey]) &&
             presentation.readCheckpoint(event.rowKey, state.value.readMarks, event.seenRowRevisions) == event.checkpoint
     }
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.AgentChildrenDemand -> demandAgentChildren(event)
             ThreadEvent.AgentSwitchConfirm -> confirmAgentSwitch()
             ThreadEvent.AgentSwitchDismiss -> dismissAgentSwitch()
             is ThreadEvent.NewestContentPresented -> {
@@ -3666,7 +3217,7 @@ class ThreadViewModel(
                         highestQualifiedReadConnection = authoritative.readConnection
                         highestQualifiedRead = 0uL
                     }
-                } else if (authoritative.authoritative != null || state.value.readMarks?.threadSupported == true) {
+                } else {
                     return
                 }
                 if (checkpoint <= highestQualifiedRead) return
@@ -3680,15 +3231,12 @@ class ThreadViewModel(
                             owner.get()?.qualifiesAuthoritativeSight(event) == true
                         }
                     }
-                } else {
-                    viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        repository.acknowledgeReadCheckpoint(conversationId, checkpoint)
-                    }
                 }
             }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event)
             is ThreadEvent.AuthoritativeThreadPresented -> presentAuthoritativeThread(event)
+            is ThreadEvent.ToolBodyDemand -> demandToolBodies(event)
             is ThreadEvent.AuthoritativeQueueAction -> {
                 val presentation = taskControls.value.authoritative
                 if (presentation?.host != serverId || presentation.conversation != conversationId) return
@@ -3876,34 +3424,6 @@ class ThreadViewModel(
         val settings: SessionSettings?,
         val connection: Any? = null,
     )
-
-    /**
-     * The thread's content surface (#461): the rendered rows folded with the queued-message backlog and,
-     * since #777, the history walk's oldest-end slot. The slot rides this arm rather than taking a sixth
-     * one of its own because Kotlin's typed `combine` stops at five and [state] already uses all five.
-     */
-    private data class ThreadContent(
-        val items: List<ThreadItem>,
-        val queued: List<QueuedMessage>,
-        val historyTail: ThreadHistoryTail,
-        val historyMarkers: List<ThreadHistoryMarker>,
-        val evidence: ThreadReadEvidence?,
-    )
-
-    private data class FoldedThread(
-        val items: List<ThreadItem>,
-        val evidence: ThreadReadEvidence,
-    )
-
-    private sealed interface FoldInput {
-        data class Received(
-            val snapshot: ThreadSnapshot,
-        ) : FoldInput
-
-        data class Live(
-            val input: ThreadInput.Live,
-        ) : FoldInput
-    }
 
     private data class TransientDialogs(
         val renameVisible: Boolean,
