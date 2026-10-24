@@ -8,6 +8,9 @@ and its links.
 
 ## Test scheduling and harnesses
 
+The [focused API35 selection receipt](development-verification-api35-selection.md)
+separates admitted selectors and loaded-consumer proofs from #2418's pending device acceptance.
+
 The instrumentation Compose 1.10.4 rule's default unconfined composition dispatcher
 can resume a suspended startup producer inline on its completion worker. In #2094,
 the launcher replacement failure reached `NavHost.setGraph` from DataStore through

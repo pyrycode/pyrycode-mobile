@@ -8,6 +8,9 @@ and its links.
 
 ## Compose evidence
 
+For focused full-API35 list captures, see [selection and pending capture evidence](development-verification-api35-selection.md).
+Selector/probe passes and loaded-policy proofs cannot replace real-system-bar device execution.
+
 Compose tests should assert the contract independently of the implementation.
 Give a row, state and callback a value that the production code cannot derive from
 the expected assertion. For a visible transition, assert the state before the
