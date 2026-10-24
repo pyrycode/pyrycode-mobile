@@ -7,6 +7,7 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/ThreadEvidence.kt`: `ThreadEvidenceOwner.matches`, strict ownership remains unchanged.
 - Retained commit `8534e6ca2babec13ba8ac0981565590fb946dd19`: `PingReadProof`, its seven tests, native ping sampling, metadata trace and attention diagnostic.
 - `app/src/main/java/de/pyryco/mobile/di/HostConversationSource.kt`: exact-host repository and attention ownership.
+- `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `completeAuthoritativeReadSummary`, `refreshUnavailableAuthoritativeReadFacts` and `invalidateWithdrawnReadSummary`; #2493's current correlation and revocable recovery are already wired and stay untouched.
 - `docs/knowledge/INDEX.md`, `features/development-verification.md`, `features/development-verification-gates.md`: current-source evidence, strict settlement and focused native boundaries.
 - `docs/knowledge/features/dependency-injection-host-conversation-source.md`: attention precedence and authoritative current repository selection.
 - `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store.md`: bounded opening-summary recovery, revocable queued authority and independent daemon read facts from #2493.
