@@ -777,6 +777,8 @@ if [ -n "${DETERMINISTIC}" ]; then
     reply-suggestion)
       TEST_METHOD="interactiveTurn_seededChannel_replySuggestionLongPressSends"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reply-suggestion.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reply-suggestion-done.jsonl}"
+      DROP_B_FENCE=phone-checkpoint  # recover the held reply before its result/native offer
       ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"

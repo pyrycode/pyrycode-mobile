@@ -32,14 +32,18 @@ host process drives. See [the force-stop procedure](#external-app-force-stop-pro
 **Suggested next reply (#1866).** Rung 3 adds
 `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`; rung 4
 adds `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
-(`reply-suggestion`, `reply-suggestion.jsonl`). Both observe the actual repository
+(`reply-suggestion`, `reply-suggestion.jsonl` + `reply-suggestion-done.jsonl`). Both observe the actual repository
 offer after a successful turn, assert the empty composer's exact placeholder,
 long-press/release Send, require one verbatim user message, then observe a newer
 revisioned daemon clear and the removed placeholder. The live method is in the
 configured full suite; the scripted twin uses native `prompt_suggestion` output
 and zero real-Claude turns. Both callers pass their owning host's live repository
 holder (#2436): session selection, offer, delivered echo and revisioned clear follow
-connection replacement. Static `ReplySuggestionProof` checkpoints identify offer,
+connection replacement. The scripted twin holds the original result and suggestion
+until the delivered assistant reply recovers on a replacement connection with the
+same identity and a non-idle phase, then releases them once. This keeps its offer
+eligible after reconnect; observing a reconciled revoked revision cannot re-arm
+the composer. Static `ReplySuggestionProof` checkpoints identify offer,
 placeholder, long-press/release, echo, clear, placeholder removal and completion
 without logging authored text or pairing secrets. See the
 [replacement regression](#reply-suggestion-live-connection-observation-2436).
@@ -496,8 +500,40 @@ The scripted failure remains a failure:
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
 timed out after 90 seconds in the full run. Fresh exact comparisons passed once each on
 candidate and pinned main; they do not prove suite-order independence or an inherited main
-failure. Track the intermittent result in [#2374](https://github.com/pyrycode/pyrycode-mobile/issues/2374).
-The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
+failure. The [#2374 diagnosis and downstream proof](specs/architecture/2374-refusal-publication-proof.md)
+subsequently verified the owning [Core repair, PR #3726](https://github.com/pyrycode/pyrycode/pull/3726)
+(merge `3d5379ec4b778c569c27b7639a2ae495b32cee0d`). Both old exact comparisons used daemon
+`647a4e7526f581f78d422195cb22b3e9b979e767`; neither validates the later repair.
+
+Controlled Core publication regressions recorded **2 executed, 1 passed, 1 failed, 0 skipped** before
+repair and **2 executed, 2 passed, 0 failed, 0 skipped** after repair. Separate delivery/link publication formerly removed
+an already published identity, retiring the peer and losing the live refusal; repaired separate
+and coalesced schedules each retain one live refusal without retirement or duplicate delivery.
+The historical failed phone/daemon trace contains `baseline_required` and close code 4414,
+followed by restored history without an armed offer. Missing raw history segments leave the
+original batching unknown: this trace fits the controlled defect but does not reconstruct it.
+
+The [accepted #2374 verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2528#issuecomment-6382288285)
+confirmed the separate Linux `python3 scripts/android-test-gate.py scripted refusal` run on
+2026-10-24: **1 executed, 1 passed, 0 failed, 0 skipped**. Raw XML names the exact refusal
+method above on `pixel2Api33Atd` (5.221 seconds). Mobile source was
+`585e5734e234d399250e51a78d6124605e0ba3b8`, repaired Core source/embedded binary revision
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` and relay source/embedded binary revision
+`2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1`. The specification retains binary hashes and
+API 33 Google ATD x86_64 image/emulator identities. The unchanged method keeps the 90000 ms
+reply/control deadline, exactly one clickable control, disappearance after tapping and fresh
+unheld session settings returning `haiku`; no real Claude turn was required. This pass does
+not establish suite-order independence or erase the historical failure.
+
+Raw downstream XML, phone phases and logs were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2374/bounded-20261024/`, in
+`gates/scripted-tmij09ce/`; daemon/relay captures are in
+`gates/harness/fault-9729c632652e99621108c502486e58f5/`. `result.json`, build/device metadata
+and verified manifests retain provenance; original diagnosis remains in `../builder-linux-20261021/`.
+These are private raw locations at review time, subject to pruning. Scenario-specific daemon-b,
+answer and bypass logs were unavailable. Other operating systems are outside this Linux proof.
+
+In the historical #2366 gates above, the UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
 `interactiveTurn_seededChannel_durableGapCatchUp`, already ignored on pinned main and owned
 by #2367/#2167. Neither skip is a pass; `DurableGapProof` and its callers were unchanged.
 
@@ -3740,6 +3776,14 @@ is held once fakeclaude has spawned, so tapping any earlier would race it), taps
 button to disappear, then reads a **fresh, non-held** `observeSessionSettings` value from the coordinator's
 live repository and asserts it names `haiku` — the daemon round trip, not just the button's disappearance.
 
+The [#2374 publication diagnosis](specs/architecture/2374-refusal-publication-proof.md) establishes
+the daemon prerequisite: accepted delivery identity must survive separate and coalesced publication
+before fresh refusal effects reach the phone. History restoration can render the row without arming
+Switch back. The [repaired-daemon Linux proof](#authoritative-fixture-migration-evidence-2366)
+executed this exact method once and passed, with zero failures/skips, preserving the original
+90000 ms combined reply/clickable-control deadline and fresh-settings assertion. Passing retries
+against the old daemon remain historical comparisons, not post-repair acceptance.
+
 `offline-retry` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
 and belongs to `python3 scripts/android-test-gate.py scripted-all`. The daemon and
@@ -6775,6 +6819,97 @@ and [causal diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/2436#i
 The live twin was source-reviewed and compiled without a new real-Claude run;
 macOS is outside this Linux ticket's verification scope.
 
+**Reopened failure and remaining boundary (2026-10-24).** After the live-source
+repair, #2388 verification at Mobile
+`d37187df190fbb8a810aa2f52deb9b31923d9cc7` failed this method again on Linux.
+`scripted-all-chxvle5t` recorded **24 executed, 23 passed, 1 failed,
+0 errors/skipped**; its named rerun `scripted-all-pldigrbt` recorded **1
+executed/passed, 0 failed/errors/skipped**. Bundle
+`dfc1022f0c76e9b08b2f0af80a35bcd43d4c61619cda8b581d8ab812abc5fdd5`
+retains the summaries and daemon trace: `baseline_required`/close 4414 at
+22:45:27.352 UTC, replacement handshake at 22:45:28.939. Its original failing
+phone stack/checkpoint trace is missing. That correlation and passing rerun do
+not identify the historical failure stage.
+
+Controlled post-repair evidence isolates a different boundary: **current-source
+offer observation does not establish composer eligibility**. Disconnect revokes
+an observed revision; same-revision reconciliation deliberately cannot display it
+again. On preserved Mobile `b821a18a4245a01793251d69efb90fabf1d11da7`, the original
+unfenced scenario `scripted-mdbiqij7` passed **1/1, 0 failed/errors/skipped**.
+The same source with the retained seven-line controlled retirement diagnostic,
+`scripted-nv9cce0n`, recorded **1 executed, 0 passed, 1 failed, 0 errors/skipped**.
+The actual offer was displayed before retirement, accepted on the replacement,
+and observed by the live-source read; the unchanged **90000-ms placeholder wait**
+then expired before pointer input. Publication, phone delivery and current-source
+observation succeeded; the missing placeholder was the failing stage. Its daemon
+trace has no `baseline_required` event. Both probes used repaired Core
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` (includes merged Core PR #3726), binary
+SHA-256 `9d1b74bbfa1163c2043ecdbb53b321c3574cfaf60af4bdced90a62c447476d66`.
+The controlled result establishes the remaining scheduling mismatch without
+assigning a checkpoint to the unretained #2388 failure.
+
+The scripted fixture now withholds **both result and native suggestion** until
+the already delivered assistant reply recovers across a controlled reconnect.
+Holding only the suggestion would start Core's two-second post-result fallback
+window prematurely. `awaitHeldReply` accepts exact assistant content and non-idle
+phase together inside `firstOnLive`: restored content can precede transient phase
+reconciliation. Before releasing once, the scenario checks a distinct connection
+owner, identical reply identity and absent placeholder. The two fragments
+concatenate byte-for-byte to the original fixture (SHA-256
+`c42b502052c3ec258a0af6d9a260fa1a1964076df792bc24833c9bd7949ec648`).
+The unchanged shared assertion then proves the actual daemon offer, exact
+empty-composer placeholder, pointer long-press/release, exactly one verbatim
+delivered suggestion echo, newer clear for the offered session and placeholder
+removal. Product revocation, the live twin, replacement-read regressions and
+deadlines remain unchanged; no Send or whole test is retried.
+
+Earlier controlled attempts remain failures under the agents repository's
+`logs/evidence/2436/`: `reopened-controlled-red-20261022/` failed at the
+placeholder; `reopened-held-precondition-red-20261022/` required an initial-user
+echo the held fixture does not supply; `reopened-phase-observation-red-20261022/`
+sampled Idle before Responding arrived; `reopened-regression-red-20261022/`
+failed the held-turn requirement against the original terminal fixture. Each
+executed **1, passed 0, failed 1, 0 errors/skipped**. The old-Core development
+green in `reopened-development-green-20261022/` passed **1/1**; it does not replace
+the repaired-Core acceptance below.
+
+On reviewed Mobile `19ffe218b6fd2bfdb535f0493206deb608b328c3`, Linux focused
+`python3 scripts/android-test-gate.py scripted reply-suggestion` produced
+`scripted-630c5oiv`: **1 executed/passed, 0 failed/errors/skipped**. Both recovery
+checkpoints and all seven original submission checkpoints completed. Core source
+and binary were the same as the controlled probes above. Fresh focused JVM XML
+records `ReplySuggestionReadsTest` **4/4**, `LiveConnectionReadsTest` **4/4**,
+`ThreadViewModelReplySuggestionTest` **9/9** and `ScriptedReplySuggestionTest`
+**2/2**: **19 executed/passed, 0 failed/errors/skipped**.
+
+The configured `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+on that candidate recorded **24 executed, 19 passed, 5 failed, 0 errors/skipped**.
+The exact suggestion method executed/passed in the original full invocation
+`scripted-all-qm4ztnwy`, **1/1, 0 failed/errors/skipped**, with every recovery and
+submission checkpoint complete. The five failures reproduced on main
+`ba8c54c3d18a2d3a2f93acfa60b8c2004674a1e8`: session-error backlog (#2353), earlier
+session Agent, background Agent and durable-gap catch-up (#2521), and scripted
+ping (#2469). They remain accepted inherited failures, not passes. Configured
+JVM/build checks passed **5547 executed, 0 failed/skipped**, including the focused
+classes. The UI gate selected no tests and supplies no device evidence here.
+
+Raw builder XML, phone/daemon logs, source patches and provenance were retained
+under `/work/Projects/pyrycode-mobile-agents/logs/evidence/2436/bounded-20261024/`:
+`unfenced-current-core/`, `controlled-current-core/`,
+`final-native/scripted-630c5oiv/` and `final-jvm/`, with daemon captures in
+`harness/`. Configured daemon receipt/logs were retained under the same agents
+repository's `logs/evidence/2436/harness/fault-7ff9d92b9801e3dbbbb411717d593506/`.
+It records the same Core source, rebuilt binary SHA-256
+`9ead6cb12eebc44e1276adbcde38110fa6c66a4badca4f62c8272722f0894de5`.
+Accepted verifier bundle
+`786166ad1065cab94693fd8f41c8d20db557101f46d7baa627dae61d5eb9ef1b`
+retains counted configured XML in `logs/verifier-gate__2436_6.log`, JVM report
+tail and the verdict. These are retention locations at verification time, not
+surviving gate-worktree build paths. See the
+[accepted reopened verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2527#issuecomment-6382039522).
+No new real-Claude acceptance was required; macOS remains outside this Linux
+ticket's scope.
+
 **Accessible side actions and ping confirmation (#1895, 2026-10-07).** The
 dispatcher full live command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
@@ -8746,7 +8881,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   stays `python3 scripts/android-test-gate.py live`; no wire schema change.
   \#2436 keeps both callers' offer/session, echo and clear observations on the owning
   live connection. [Controlled replacement and counted Linux evidence](#reply-suggestion-live-connection-observation-2436)
-  cover the repair; no new live acceptance or coverage follow-up remains.
+  cover the repair. The scripted twin now recovers its held assistant reply before
+  releasing the original result/native offer, preserving composer revocation across
+  reconnect. No new live acceptance or coverage follow-up remains.
 
 - **Side-copy selector and notice repair (#1878):** the existing rung-3
   `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
@@ -9218,6 +9355,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   alone (each scenario overwrites the prior XML): 1 executed, 0 failed, 0 skipped, and
   `python3 -m unittest scripts/test_android_test_gate.py` (37 pass) covers `refusal`'s entry in
   `SCENARIOS`.
+
+  [#2374](specs/architecture/2374-refusal-publication-proof.md) diagnoses the producer publication
+  defect behind a compatible historical timeout and records the unchanged method's repaired-daemon
+  Linux proof: 1 executed, 1 passed, 0 failed, 0 skipped. See
+  [fixture migration evidence](#authoritative-fixture-migration-evidence-2366) for the retained failure,
+  old-daemon comparison limits, runtime identities and missing-original-batching uncertainty.
 
 - **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
   `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
