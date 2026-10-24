@@ -151,7 +151,17 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
         detailValidity =
             detailValidity.copy(
                 staleFullBodies =
-                    (if (preserveStale) detailValidity.staleFullBodies else detailValidity.staleFullBodies - incoming.map { it.id }.toSet()) +
+                    (
+                        if (preserveStale) {
+                            detailValidity.staleFullBodies
+                        } else {
+                            detailValidity.staleFullBodies -
+                                incoming
+                                    .map {
+                                        it.id
+                                    }.toSet()
+                        }
+                    ) +
                         restoredStale.associate { it.id to it.rev },
                 children = detailValidity.children + restoredStale.filter { it.id !in fetchedChildren }.map { it.id },
                 floors =

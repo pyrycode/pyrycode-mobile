@@ -649,13 +649,15 @@ class CompactRootPagesTest {
         runTest {
             val f = CompactRootFixture(backgroundScope)
             val store = f.repo.authoritativeThreads
-            val child = ThreadItemDto.decode(
-                kotlinx.serialization.json.JsonObject(
-                    message(20) + mapOf("kind" to JsonPrimitive("tool_call"), "parent" to JsonPrimitive(17)),
-                ),
-            )
-            val saved = AuthoritativeThreadSnapshot(epoch = "e", items = listOf(child), completedVersion = 90, checkpoint = 90)
-                .toSavedAuthoritativeThread()
+            val child =
+                ThreadItemDto.decode(
+                    kotlinx.serialization.json.JsonObject(
+                        message(20) + mapOf("kind" to JsonPrimitive("tool_call"), "parent" to JsonPrimitive(17)),
+                    ),
+                )
+            val saved =
+                AuthoritativeThreadSnapshot(epoch = "e", items = listOf(child), completedVersion = 90, checkpoint = 90)
+                    .toSavedAuthoritativeThread()
             store.restore("h", "c", saved.toSnapshot(), 0)
             f.repo.openAuthoritativeThread("c")
             runCurrent()
@@ -678,7 +680,9 @@ class CompactRootPagesTest {
                 f.push(
                     CompactRootFixture.obj(
                         """{"conversation_id":"c","epoch":"e","version":100,"item_id":20,"rev":20,"kind":"tool_call","final":$final$content}""",
-                    ), request, "thread_tool_body",
+                    ),
+                    request,
+                    "thread_tool_body",
                 )
             }
             runCurrent()
