@@ -645,6 +645,53 @@ class CompactRootPagesTest {
             assertEquals(1, f.details.size)
         }
 
+    @Test fun savedChildWithoutAncestorRequiresExplicitRefreshWhenFirstCompactAncestorArrives() =
+        runTest {
+            val f = CompactRootFixture(backgroundScope)
+            val store = f.repo.authoritativeThreads
+            val child = ThreadItemDto.decode(
+                kotlinx.serialization.json.JsonObject(
+                    message(20) + mapOf("kind" to JsonPrimitive("tool_call"), "parent" to JsonPrimitive(17)),
+                ),
+            )
+            val saved = AuthoritativeThreadSnapshot(epoch = "e", items = listOf(child), completedVersion = 90, checkpoint = 90)
+                .toSavedAuthoritativeThread()
+            store.restore("h", "c", saved.toSnapshot(), 0)
+            f.repo.openAuthoritativeThread("c")
+            runCurrent()
+            f.push(f.batch(headers = listOf(header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
+            f.push(f.marker())
+            runCurrent()
+            val before = store.current("h", "c")
+            val held = before.expansionItems.single { it.id == 20L }
+            assertFalse("an omitted saved ancestor cannot certify its saved descendant", before.hasToolBody(held))
+            assertEquals(saved.items, before.toSavedAuthoritativeThread().items)
+            assertTrue("closed descendants cause no detail demand", f.details.isEmpty())
+            val presentation = projectDeferredAuthoritativeThread("h", "c", before)
+            val row = presentation.rows.filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
+            assertFalse(presentation.suppliesReadSight(row, setOf(row.listKey(0))))
+            assertFalse(presentation.matchesReadContents(row.listKey(0), row.item, 20))
+            f.repo.demandToolBodies("c", this, before, setOf(20))
+            val request = f.details.single()
+            for (final in listOf(false, true)) {
+                val content = if (final) "" else ",\"content\":{\"output\":\"current descendant\"}"
+                f.push(
+                    CompactRootFixture.obj(
+                        """{"conversation_id":"c","epoch":"e","version":100,"item_id":20,"rev":20,"kind":"tool_call","final":$final$content}""",
+                    ), request, "thread_tool_body",
+                )
+            }
+            runCurrent()
+            val refreshed = store.current("h", "c")
+            assertTrue(refreshed.hasToolBody(held))
+            assertFalse(refreshed.copy(bodyContents = emptyMap()).hasToolBody(held))
+            assertEquals(before.checkpoint, refreshed.checkpoint)
+            assertEquals(before.coverage, refreshed.coverage)
+            assertEquals(before.completeCheckpoint, refreshed.completeCheckpoint)
+            assertEquals(before.completeCoverage, refreshed.completeCoverage)
+            assertEquals(saved.items, refreshed.toSavedAuthoritativeThread().items)
+        }
+
     @Test fun restoreInvariantCompleteHostKeepsSavedFullBodiesWithoutCompactFreshness() {
         val full = ThreadItemDto.decode(kotlinx.serialization.json.JsonObject(message(17) + ("kind" to JsonPrimitive("tool_call"))))
         val saved =
