@@ -413,6 +413,51 @@ class DeterministicInteractiveStreamE2ETest {
     /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
     @Test
     fun interactiveTurn_seededChannel_durableGapCatchUp() {
+        durableGapCatchUp()
+    }
+
+    /** Separate controlled proof: the failed offline arm must not poison a later send on this graph. */
+    @Test
+    fun interactiveTurn_durableGapFailure_restoresBeforeFollowingPing() {
+        val graph = GlobalContext.get()
+        val activity = composeTestRule.activity
+        val supervisor = graph.get<RelayConnectionSupervisor>()
+        val coordinator = graph.get<RelayRepositoryCoordinator>()
+        val original = runBlocking { withTimeout(RECONNECT_TIMEOUT_MS) { coordinator.currentRepository.filterNotNull().first() } }
+        val injected = AssertionError("controlled durable-gap offline-arm failure")
+        val cleanups = mutableListOf<String>()
+        val failure =
+            runCatching {
+                durableGapCatchUp(offlineArm = {
+                    android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=offline_injection")
+                    throw injected
+                }, cleaned = { cleanups += it })
+            }.exceptionOrNull()
+        org.junit.Assert.assertSame("offline failure must survive cleanup", injected, failure)
+        assertTrue("restoration and cleanup must succeed", injected.suppressed.isEmpty())
+        android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=primary_preserved cleanup_count=${cleanups.size}")
+        runBlocking {
+            withTimeout(RECONNECT_TIMEOUT_MS) { coordinator.currentRepository.first { it != null && it !== original } }
+        }
+        assertEquals(listOf("peer", "probe"), cleanups)
+        org.junit.Assert.assertSame(graph, GlobalContext.get())
+        org.junit.Assert.assertSame(activity, composeTestRule.activity)
+        org.junit.Assert.assertSame(supervisor, graph.get<RelayConnectionSupervisor>())
+        android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=fresh_connection same_graph=true")
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread()
+        org.junit.Assert.assertSame(graph, GlobalContext.get())
+        org.junit.Assert.assertSame(activity, composeTestRule.activity)
+        android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=following_ping_passed same_graph=true")
+    }
+
+    private fun durableGapCatchUp(
+        offlineArm: () -> Unit = {},
+        cleaned: (String) -> Unit = {},
+    ) {
         arriveInSeededThread()
         val args = InstrumentationRegistry.getArguments()
         val serverId = requireNotNull(args.getString("serverId"))
@@ -445,13 +490,26 @@ class DeterministicInteractiveStreamE2ETest {
                 ),
                 threadEnabled = true,
             )
-        try {
+        DurableGapIsolation(
+            restore = ::restoreLink,
+            closePeer = {
+                peer.close()
+                cleaned("peer")
+                android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=peer_closed")
+            },
+            endProbe = {
+                AuthoritativeHistoryProbe.end()
+                cleaned("probe")
+                android.util.Log.i("DurableGapIsolation", "event=gap_isolation phase=probe_ended")
+            },
+        ).run {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             val observation = runBlocking { peer.observeProduction(conversation.id, THREAD_TIMEOUT_MS) }
             var produced: ProducedReplyEvidence? = null
-            severLink()
+            sever(::severLink)
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
+                offlineArm()
                 runBlocking {
                     produced =
                         observation
@@ -465,8 +523,6 @@ class DeterministicInteractiveStreamE2ETest {
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
-        } finally {
-            peer.close()
         }
     }
 

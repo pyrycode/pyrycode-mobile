@@ -428,6 +428,15 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         result = self.run_block(block, DETERMINISTIC="1", SCENARIO="stream", TEST_CLASS="fixture.Class", TEST_METHOD="original")
         self.assertEqual("fixture.Class#original", result.stdout)
 
+    def test_durable_gap_isolation_is_separate_from_normal_ping_pair(self):
+        start = self.script.index('if [ -n "${DETERMINISTIC}" ]; then', self.script.index('# ---- 4. run'))
+        end = self.script.index('elif [ -n "${LIVE}" ]; then', start)
+        block = self.script[start:end] + 'fi\nprintf "%s" "$TEST_TARGET"\n'
+        result = self.run_block(block, DETERMINISTIC="1", SCENARIO="ping", TEST_CLASS="fixture.Class",
+                                TEST_METHOD="original", DURABLE_GAP_ISOLATION_PROOF="1")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("fixture.Class#interactiveTurn_durableGapFailure_restoresBeforeFollowingPing", result.stdout)
+
     def test_every_pairing_is_minted_after_the_build(self):
         build = self.script.index('"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug')
         mints = [i for i in range(len(self.script)) if self.script.startswith(" pair -pyry-name=", i)]
