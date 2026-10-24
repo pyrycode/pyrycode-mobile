@@ -45,3 +45,13 @@ None: this branch retains evidence and changes no runtime state or identity rule
 
 - Pending documentation stage: `docs/knowledge/features/development-verification-gates.md`, shared admission guidance — record the deployed cache/admission identity mismatch, the host correction and evidence boundaries. Keep raw evidence linked to this ticket's fixture and preserve the separate dispatcher acceptance results when available.
 - Pending agents/deployment documentation owner: record the persistent Quadlet environment requirement and the Podman 4.9 `.container.d` limitation reported by the operator. No agents or host configuration is edited by this Mobile branch.
+
+## Revisions
+
+### 2026-10-24: consume accepted session-error recovery evidence
+
+Verifier finding 1 at `aa480075b3551d3e6850080b8e72417c845767d5` required investigation of the retained-arm timeout and complete dispatcher acceptance. Its required owner #2338 has now merged through PR #2509. Authoritative verifier run `b8fb0d854eb72efdd146a2fd8826aa58be8b232d0b11f2bdb1d9b1247c501452` accepted `e51627c81871ad29708c8a0a572673bdda97db18`: the exact recovery method passed in configured scripted execution; four other failures have accepted inherited comparisons on #2521 and #2469. This resolves the dependency, without turning any earlier failure or unexecuted investigation into a pass.
+
+Add `scripts/e2e-fixtures/2327-journal-lock/session-error-acceptance.json` as a bounded receipt linking that accepted verdict, counted configured XML, native input identities, focused passes and intervening failure. Raw evidence remains with #2338's hashed bundles and persistent integration directory; no application logs are duplicated here. Keep the original journal-lock fixture bytes unchanged. Recheck receipt hashes and source equality, rerun the seven admission regressions, and run the required builder build/static checks. This is evidence reconciliation, with no new runtime behavior, exported declaration, consumer migration or error branch. Total forecast remains below 900 written lines, including existing work; no in-flight branch overlaps these evidence paths.
+
+The accepted child evidence does not establish #2327's current-candidate acceptance. Independent review, configured dispatcher checks and the later main sweep remain pending with their owners. No native task or complete suite is launched by this builder. Documentation stage should link the accepted #2338 evidence alongside the original failures when updating the shared admission guidance.
