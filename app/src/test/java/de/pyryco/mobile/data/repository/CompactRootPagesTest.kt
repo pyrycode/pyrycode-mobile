@@ -694,6 +694,15 @@ class CompactRootPagesTest {
             assertEquals(before.completeCheckpoint, refreshed.completeCheckpoint)
             assertEquals(before.completeCoverage, refreshed.completeCoverage)
             assertEquals(saved.items, refreshed.toSavedAuthoritativeThread().items)
+            assertTrue(f.repo.requestOlderAuthoritativeThread("c"))
+            store.applyBatch("h", "c", "e", 101, listOf(child), 0)
+            val replaced = store.current("h", "c").copy(bodyContents = emptyMap())
+            assertTrue(replaced.hasToolBody(replaced.expansionItems.single { it.id == 20L }))
+            f.push(f.batch(headers = listOf(header(5))))
+            f.push(f.marker(1, 10, false))
+            runCurrent()
+            val older = store.current("h", "c").copy(bodyContents = emptyMap())
+            assertTrue("unrelated older roots cannot revoke a current full source", older.hasToolBody(older.expansionItems.single { it.id == 20L }))
         }
 
     @Test fun restoreInvariantCompleteHostKeepsSavedFullBodiesWithoutCompactFreshness() {
