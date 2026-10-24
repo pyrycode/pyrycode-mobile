@@ -27,6 +27,7 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
+import de.pyryco.mobile.data.repository.BodyLoad
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -44,6 +45,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -62,9 +64,18 @@ class MissingToolBodyScreenTest {
 
     @Test fun collapsedQueuedBodyWithdrawsDemandBeforeLoadingPresentationArrives() = mountedBody(collapseQueuedBeforeLoading = true)
 
+    @Test fun capacityRetryUsesExpandedBodyStylingAndRecoversAfterOtherDemandCloses() = mountedBody(capacity = true)
+
+    @Test fun loadedExpandedBodyStaysProtectedUnderHostPressureAndRetriesAfterCollapse() = mountedBody(loadedPressure = true)
+
+    @Test fun retainedBodyReopenRefreshesLruThroughMountedConsumer() = mountedBody(reopenUnderPressure = true)
+
     private fun mountedBody(
         stopBeforeLoading: Boolean = false,
         collapseQueuedBeforeLoading: Boolean = false,
+        capacity: Boolean = false,
+        loadedPressure: Boolean = false,
+        reopenUnderPressure: Boolean = false,
     ) {
         val frames = Channel<Long>(Channel.UNLIMITED)
         frames.trySend(1L)
@@ -174,12 +185,13 @@ class MissingToolBodyScreenTest {
                     "thread_tool_body",
                     "now",
                     MobileJson.parseToJsonElement(
-                        """{"conversation_id":"c","epoch":"e","version":41,"item_id":17,"rev":${raw["expected_rev"]},"kind":"tool_call","final":$final${if (final) "" else ",\"content\":{\"input\":\"\",\"output\":\"loaded contents\"}"}}""",
+                        """{"conversation_id":"c","epoch":"e","version":41,"item_id":${raw["item_id"]},"rev":${raw["expected_rev"]},"kind":"tool_call","final":$final${if (final) "" else ",\"content\":{\"input\":\"\",\"output\":\"loaded contents\"}"}}""",
                     ),
                     inReplyTo = request.id,
                 ),
             )
         }
+        var pressure = if (capacity) occupyExpansionCapacity(repo.authoritativeThreads, "host") else null
         try {
             repo.authoritativeThreads.establishComplete("host", "c", "e", 23, listOf(tool(23), tool(23, 18, 6, "Bash")), 0)
             compose.setContent {
@@ -276,7 +288,83 @@ class MissingToolBodyScreenTest {
             compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
             assertTrue(seen.isEmpty())
             reply(true)
+            if (capacity) {
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn’t load tool details").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Retry").assertExists()
+                compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
+                compose.mainClock.advanceTimeBy(500)
+                assertEquals(1, reads().size)
+                pressure?.close()
+                compose.onNodeWithText("Retry").performClick()
+                compose.waitUntil(5000) { reads().size == 2 }
+                reply(false)
+                reply(true)
+                compose.waitUntil(5000) { compose.onAllNodesWithText("loaded contents").fetchSemanticsNodes().isNotEmpty() }
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             compose.waitUntil(5000) { compose.onAllNodesWithText("loaded contents").fetchSemanticsNodes().isNotEmpty() }
+            if (loadedPressure || reopenUnderPressure) {
+                val store = repo.authoritativeThreads
+                val loaded = store.current("host", "c")
+                val body = requireNotNull(loaded.bodyContents[17L to 23L])
+                val bytes = body.toString().toByteArray(Charsets.UTF_8).size
+                if (reopenUnderPressure) toggle()
+                compose.runOnIdle { pressure = occupyExpansionCapacity(store, "host", 16 * 1024 * 1024 - bytes) }
+                compose.waitForIdle()
+                if (reopenUnderPressure) {
+                    pressure?.close()
+                    toggle()
+                    compose.onNodeWithText("loaded contents").assertExists()
+                    assertEquals("retained reopen does not fetch", 1, reads().size)
+                    toggle()
+                }
+                toggle("Bash")
+                compose.waitUntil(5000) { reads().size == 2 }
+                reply(false)
+                reply(true)
+                if (loadedPressure) {
+                    compose.waitUntil(5000) {
+                        val snapshot = store.current("host", "c")
+                        snapshot.bodyLoads[18L to 23L] == BodyLoad.Retry || snapshot.bodyContents.containsKey(18L to 23L)
+                    }
+                    assertSame(body, store.current("host", "c").bodyContents[17L to 23L])
+                    assertEquals(BodyLoad.Retry, store.current("host", "c").bodyLoads[18L to 23L])
+                    compose.waitForIdle()
+                    compose.onNodeWithText("loaded contents").assertExists()
+                    compose.onNodeWithText("Couldn’t load tool details").assertExists()
+                    compose.mainClock.advanceTimeBy(500)
+                    assertEquals("capacity Retry stays sticky", 2, reads().size)
+                    toggle()
+                    compose.onNodeWithText("Retry").performClick()
+                    compose.waitUntil(5000) { reads().size == 3 }
+                    reply(false)
+                    reply(true)
+                    compose.waitUntil(5000) { store.current("host", "c").bodyContents.containsKey(18L to 23L) }
+                    assertFalse(store.current("host", "c").bodyContents.containsKey(17L to 23L))
+                } else {
+                    compose.waitUntil(5000) { store.current("host", "c").bodyContents.containsKey(18L to 23L) }
+                    assertSame(
+                        "reopened body is newer than the closed pressure entries",
+                        body,
+                        store.current("host", "c").bodyContents[
+                            17L to
+                                23L,
+                        ],
+                    )
+                    assertFalse(store.current("host", "capacity-fixture").bodyContents.containsKey(1L to 4000L))
+                    toggle()
+                    compose.onAllNodesWithText("loaded contents").assertCountEquals(2)
+                    assertEquals(2, reads().size)
+                }
+                val after = store.current("host", "c")
+                assertSame(loaded.items, after.items)
+                assertEquals(loaded.coverage, after.coverage)
+                assertEquals(loaded.checkpoint, after.checkpoint)
+                assertEquals(loaded.completedVersion, after.completedVersion)
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             toggle()
             toggle()
             compose.onNodeWithText("loaded contents").assertExists()
@@ -284,6 +372,7 @@ class MissingToolBodyScreenTest {
             assertTrue(sent.none { it.type == "mark_conversation_read" })
             repo.authoritativeThreads.applyBatch("host", "c", "e", 24, listOf(tool(24)), 0)
             compose.waitUntil(5000) { reads().size == 2 }
+            compose.onNodeWithText("loaded contents").assertExists()
             inbound.trySend(
                 Envelope(
                     91,
@@ -295,6 +384,7 @@ class MissingToolBodyScreenTest {
             )
             compose.waitUntil(5000) { compose.onAllNodesWithText("Retry").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Couldn’t load tool details").assertExists()
+            compose.onNodeWithText("loaded contents").assertExists()
             compose.mainClock.advanceTimeBy(500)
             assertEquals(2, reads().size)
             compose.onNodeWithText("Retry").performClick()
@@ -309,8 +399,9 @@ class MissingToolBodyScreenTest {
             reply(false)
             reply(true)
             compose.waitForIdle()
-            compose.onAllNodesWithText("loaded contents").assertCountEquals(0)
+            compose.onNodeWithText("loaded contents").assertExists()
         } finally {
+            pressure?.close()
             compose.runOnIdle { vmStore.clear() }
             scope.cancel()
         }

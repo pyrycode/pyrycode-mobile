@@ -35,6 +35,7 @@ internal object SettingsReadProbe {
         conversationId: String,
         isCurrent: () -> Boolean,
         session: () -> SessionProvenance?,
+        onReceipt: (Long, Envelope) -> Unit = { _, _ -> },
     ): SessionSettings =
         coroutineScope {
             val authoritative = repository.usesAuthoritativeLiveState
@@ -66,7 +67,7 @@ internal object SettingsReadProbe {
                 try {
                     read.checkOwner()
                     if (authoritative) repository.refreshSessionSettings(conversationId)
-                    val reading =
+                    val (receipt, reading) =
                         read.receipts
                             .filterNotNull()
                             .mapLatest { result ->
@@ -82,8 +83,8 @@ internal object SettingsReadProbe {
                                 if (!authoritative) observed.first { it != null && !it.held && it == settings }
                                 receipt to settings
                             }.first { (receipt, _) -> read.isCurrentReceipt(receipt) }
-                            .second
                     read.checkOwner()
+                    onReceipt(receipt.requestId, receipt.reply.getCompleted())
                     reading
                 } finally {
                     collector.cancel()

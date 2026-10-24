@@ -200,7 +200,8 @@ complete saved facts intact; body-supplied unknown fields cannot establish a tas
 roster or move rows. Overlay conversion uses `decodeReplacement` because live
 optional-field null clears are valid retained facts. Unchanged reopen/offline
 reuse is in-memory; fetched bodies add no disk schema or process-restore promise.
-Reset clears the map and changed revisions cannot consume old entries.
+Reset clears the map. Changed revisions cannot certify old entries as current;
+same-owner stale contents can remain visible during replacement.
 
 Loading/Retry state is separate from retained availability and history coverage.
 Absence, private/wrong-kind refusal, malformed data, send failure and timeout do
@@ -213,6 +214,162 @@ otherwise accept another capture's marker. Body replies never advance checkpoint
 join watermark, completed history or read marks, and the shared evidence observers
 ignore them for history/read certification. See [screen states](thread-screen.md)
 and [counted Linux evidence](../../e2e-interactive-stream.md#missing-tool-body-evidence-2388).
+
+## Direct-child pages (#2389)
+
+Agent-child demand uses the same exact authenticated connection and granted
+`thread`, `interactive` and `thread_expansion` support as body demand. Compact-v1
+remains unadvertised and complete delivery remains usable without expansion
+support. Child and body consumer sets and completion state are independent, while
+both share the serialized catch-up/history/expansion lane. Only visible expanded
+agents request missing first pages; equal active/queued targets coalesce.
+Retained proven-valid pages suppress refetch, including offline reopen. Child
+pages are in-memory only;
+they neither replace complete saved contents nor add a disk migration.
+
+The sibling protocol's “Bounded expansion reads” remains the wire authority.
+`thread_read_children` requests the exact epoch, parent ID/revision and limit 50,
+within the protocol ceiling of 256 including ties. The decoder stages at most one
+bounded `thread_children` data batch with `final: false`. Public direct-child
+summaries must ascend strictly by `(order, id)`, retaining order-zero ties, and
+contain neither bodies nor descendant inventory. Required zero/false facts,
+recorded attribution, optional unknown-versus-known facts, unsigned tokens and
+bounded inert headline/unknown metadata survive decoding. Count and aggregate
+byte limits include envelope overhead. Duplicate, unordered, foreign-parent,
+malformed or oversized replies cannot publish a page.
+
+Data and the separate empty-children `final: true` marker must agree on request,
+conversation, epoch, parent revision, captured consumed version and envelope
+routing/session metadata. Positive child revisions and the parent revision must
+not exceed that unsigned capture, including marker-only replies; a later valid
+marker cannot rescue rejected data. Only a validated marker with explicit
+`more: false` certifies the last page or authoritative empty result. `more: true` requires a validated cursor
+for exactly the last delivered `(order, id)` and the captured conversation,
+epoch, parent/revision and consumed version. A byte-limited short page can still
+have more; a changed consumed version invalidates continuation even when the
+parent revision stays equal.
+
+Load more selects one certified continuation explicitly. Refusal, send failure,
+timeout, partial replies or rejected cursors leave sticky Retry, never automatic
+recomposition retries or empty success. Retry starts at the current owner's first
+page and keeps the prior rows/cursor until validated success replaces them. It
+cannot downgrade the retained capture or summary revision. Equal-revision
+summaries preserve the first admitted fact and reject changed placement. Both
+summary admission and full-fact merge enforce immutable parent/kind across all
+retained full and summary identities, including unreachable pages and either
+arrival order. Otherwise a later full reply could bypass the summary identity
+fence.
+
+The projection preserves the highest full revision and first equal-revision fact.
+Resolve each parent's final winning revision before accepting its pages'
+descendants, independent of page insertion order; unresolved cyclic dependencies
+contribute nothing. A full fact with no order stays unplaced rather than borrowing
+an older summary's order. Certified zero-order children render only under their
+expanded ancestor. These overlays preserve newer/full held contents and supply no
+history coverage, recovery checkpoint, join watermark or read mark.
+
+Current bindings fence additions, Retry and publication by host, conversation,
+connection, epoch, generation/incarnation, parent and revision. Older presentations
+may only withdraw previously admitted targets. Collapse, navigation, background,
+disconnection, deletion and connection replacement retire that consumer without
+cancelling another's demand. Abandoned requests discard staged pages but retain
+captured routing/version for terminal draining before lane reuse; timeout closes
+the connection. See [inline controls](thread-screen.md#what-it-does) and
+[counted lane, decoder and mounted-consumer evidence](../../e2e-interactive-stream.md#direct-child-page-evidence-2389).
+
+## Expanded detail validity (#2391)
+
+`ExpansionDetailValidity` tracks accepted source observations, invalidation serials
+and capture floors separately from retained body/page maps and Loading/Retry.
+Source revision and ancestor `subtree_version` are independent. A newer accepted
+observation with changed revision, changed freshness or missing freshness
+invalidates the affected retained subtree; known zero compares normally. Equal or
+older captures cannot re-invalidate a successful replacement. Loading and
+recomposition do not count as source observations. Only current expanded demand
+refreshes invalid bodies/pages.
+
+Query keys bind host, conversation, authenticated connection, projection, epoch,
+generation/incarnation, item/kind/revision and invalidation serial. Continuations
+also bind the consumed version. Validated data plus a separate matching success
+marker must satisfy the current serial and capture floor: invalidation between
+data and terminal discards staged data and drains the lane before replacement.
+Old full batches cannot clear newer invalidation. A winning current full prose
+fact can clear its own body invalidation, never child or history completion.
+
+A stale/refused continuation restarts at page one. Validated first-page success
+replaces the enumeration instead of appending; later pages preserve unique direct
+children in daemon `(order, id)` order, including zero ties, newer full facts and
+immutable identity/parent/kind. Retain stale rows until successful replacement,
+but withhold freshness, authoritative empty and usable continuation. When a parent
+page observes changed/missing nested freshness, clear only the parent's load from
+`observed.childLoads`; copying pre-observation loads revives nested Retry and
+suppresses the demanded refresh.
+
+Load-state writes also bind their producing query owner. A retired lane cannot
+clear a replacement lane's Loading/Retry with colliding IDs. Existing consumer
+union, stale-target withdrawal and terminal drain apply across collapse, hidden
+ancestry, lifecycle/destination retirement, reset, deletion and connection change.
+Request authority stays separate from retention protection: admitted stale
+consumer targets retain lifetime/identity protection until withdrawal, while
+serial/revision/cursor checks continue to reject reads, Retry and publication.
+
+Complete source descendants reached through complete source ancestry retain exact
+full-body usability without `thread_expansion`. Propagate body invalidation through
+omitted/summary ancestry and fetched details; child enumerations and request
+serials still invalidate for all affected identities. Preserve prior invalidation
+floors so an old full batch cannot bypass a compact invalidation. Otherwise a
+complete-only connection could show permanent Loading with no refresh capability.
+
+No detail transition changes complete saved facts, root/history coverage,
+recovery checkpoint, join watermark or read marks. Diagnostics use static codes
+and exclude daemon text and identifiers. See [screen behavior](thread-screen-expanded-details.md#invalidation-retry-and-reopen-2391)
+and [counted regression evidence](../../e2e-interactive-stream.md#expanded-detail-validity-evidence-2391).
+
+## Retained expansion budget (#2390)
+
+Fetched bodies and accumulated direct-child enumerations share one inclusive
+**16,777,216-byte (16 MiB) and 1000-summary budget per host**, across all host
+conversations. Open, closed and currently unreachable retained entries all count.
+Hosts with colliding conversation/item IDs have independent budgets. Existing
+complete source facts remain outside this budget.
+
+`AuthoritativeThreadStore` measures the UTF-8 JSON serialization of each retained
+body content object, each original validated child-summary object and the current
+continuation cursor object. Escapes, multibyte text and unknown retained fields
+count. Use the original summary payload: the presentation-adapted DTO adds
+`summary` and null `content` fields that were never in the transmitted summary.
+Each entry is charged once regardless of consumer count; replacement subtracts
+its old cost. A body object or a parent's entire accumulated enumeration with its
+cursor is the eviction unit; no prefix is truncated. The captured child version
+and existing decoder/fragment-assembly ceilings remain unchanged.
+
+The query owner contributes the union of current consumer demand, including
+already available bodies. Queries skip their requests without withdrawing their
+protection. Protect ancestor enumerations needed to expose an open descendant by
+child membership ID, even when a newer full child revision wins. Host, epoch,
+generation/incarnation and identity fences still apply, including retained
+invalidated entries across source revision changes. A collapse or retirement releases only that consumer's protection. Protection never
+authorizes a stale presentation, retired connection or reply.
+
+Before admission, select unprotected entries in deterministic least-recently-used
+order across both kinds and all conversations of the host. Successful admission
+and newly protected retained reopen record use; repeated demand, recomposition
+and unrelated publication do not. Commit victims only when the whole candidate
+fits both limits. If protected demand prevents that, reject atomically without
+evicting other entries, replacing prior rows/cursor or certifying incoming detail.
+The existing expanded-row failure stays sticky until explicit current-owner
+Retry through the owned lane. After other demand closes, Retry can reclaim its
+unprotected entries. Retained unchanged details reopen without refetch, including
+offline; an evicted closed entry reopens missing and uses bounded demand again.
+
+Eviction removes only that entry's availability, continuation and transient
+completion/load claim. Other summaries preserve identity/order without duplicates;
+full facts, root/history coverage, recovery checkpoints, join watermarks and read
+marks remain intact, including reconnect. Snapshot/reset reconciliation drops
+retired ledger membership without weakening existing ownership or drain fences.
+The ledger adds no jobs, persistence or migration; diagnostics contain static
+loaded/evicted/capacity codes only. See [cache lifetime](conversation-cache.md#the-contract)
+and [counted focused and configured evidence](../../e2e-interactive-stream.md#retained-expansion-budget-evidence-2390).
 
 ## Daemon conversation read marks
 

@@ -8,6 +8,9 @@ and its links.
 
 ## Test scheduling and harnesses
 
+The [focused API35 selection receipt](development-verification-api35-selection.md)
+separates admitted selectors and loaded-consumer proofs from #2418's pending device acceptance.
+
 The instrumentation Compose 1.10.4 rule's default unconfined composition dispatcher
 can resume a suspended startup producer inline on its completion worker. In #2094,
 the launcher replacement failure reached `NavHost.setGraph` from DataStore through
@@ -466,6 +469,72 @@ it can still cut in. Fairness holds only among ticketed waiters. `DeviceHoldTest
 covers arrival order, a dead waiter's ticket, a lost ticket counter and an old
 poller mixed with ticketed waiters, all with real second processes.
 
+### Direct Share evidence across connection replacement (#2498)
+
+A rendered reply and its daemon read mark can belong to a replacement connection
+while an assertion against the earlier concrete repository waits until timeout.
+`HostConversationSource.repositoryFor` supplies current availability; capturing it
+before Send does not retain the destination across reconnect. Cleanup-time launcher
+focus cannot establish activity loss or identify the failing operation. The
+[controlled native failure and counted recovery](../../e2e-interactive-stream.md#direct-share-replacement-evidence-2498)
+correlate this boundary with the retained #2486/#2439 failures and passing reruns.
+
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+resolves the exact published shortcut's host/conversation through
+`ThreadDestinationFactory` and observes its retained negotiated route through
+`harnessThreadEvidence`. Before Send, wait for admitted evidence within the existing
+thread deadline, then require no user message. An unadmitted observation cannot
+prove an empty thread. After the reply renders, the scenario closes/reconnects its
+own host supervisor and requires a different authenticated source before accepting
+the delivered echo. This controlled retirement remains in every invocation; it
+introduces no resend, test retry or longer deadline.
+
+`isCurrentDirectShareEvidence` requires authoritative admitted evidence for the
+exact target, a nonnull current authenticated connection identical to the evidence
+owner and route's supported connection, and the store's current snapshot by
+identity, epoch and generation. The native acceptance check rechecks source,
+support and snapshot after evaluating the predicate. Validate exactly one delivered
+exact-text user echo against the fresh observation's own owner, rather than the
+pre-send owner. Equal snapshot contents, retired connections and unsupported
+routes cannot certify even an empty thread.
+
+`DirectShareEvidenceTest` covers replacement ownership, retired/unsupported sources,
+unadmitted/wrong-target/stale snapshots, and exact single delivered echo semantics.
+Its four methods passed in the focused Linux run and the configured JVM gate.
+The native scenario separately proves actual shortcut publication, intent delivery,
+exact composer staging without the picker, explicit Send and rendered reply.
+Bounded diagnostics emit static stages and admission/source booleans only, retain
+the original failure, and exclude authored content and pairing material.
+
+### Terminal replay producer lifetime (#2491)
+
+Keep the successful recorded Activity alive beyond test-end when the tape still requires
+queries, replies or scenario-complete. Run the real session end once while it is alive,
+then prepare the captured terminal prefix and downstream consumption before destruction.
+Whether scenario-complete precedes phone close is a recorded fact; retain either order.
+An early checkpoint is remembered only after its actual successful send. Outer cleanup
+still handles failures and releases replacement Activities once.
+
+One shared 30-second budget covers terminal preparation across observations. Re-entering
+individually bounded waits must not restart it. Repeated requests need their distinct
+correlated replies; foreign owners/generations or work crossing an observation cannot
+satisfy the prefix. Keep the first scenario/preparation failure when destruction fails,
+and reset end/failure state between evaluations. Changing production lifecycle behavior
+or the recording would hide this harness defect.
+
+The retained causal controls failed before repair; 95 affected JVM tests and the exact
+recorded Agent method passed on macOS at `00055df35`. Independent review then accepted
+integrated candidate `eb99f99da`: 220 script and 5411 JVM passes, including all eight
+terminal regression methods, and 24 scripted passes. The original complete UI run
+executed 333: 327 passed and six unrelated tests failed, with one additional ignored
+test. All six failures passed their exact rerun; the dispatcher accepted that gate
+under its flaky-rerun policy. The exact Agent method passed in the original full run
+(1 executed/passed, zero failures/errors/skips), independently of its retained focused pass.
+See [terminal preparation and counted evidence](../../recorded-tests.md#recorded-terminal-preparation-2491)
+for original source/APK identities, distinct pre/post-test-end failures, the shared-budget
+negative and accepted evidence. Historical reds remain failed; replay makes no claim
+about current provider behavior. Linux is outside this macOS ticket's verification scope.
+
 ### Background permission replay consumption (#2348)
 
 The original macOS main sweep on `77b5717d6d3a1dba9f1a92a251162e7f9b3770e2`
@@ -559,3 +628,27 @@ outside this macOS ticket's verification scope.
 covers selected-directory cleanup, timestamp-independent collection, strict
 per-execution accounting, retained original XML and the counted causal evidence
 for #2455 and #2481.
+
+### Subprocess startup and chunk-scanner proofs
+
+Keep synthetic child startup outside a short scanner deadline. In #2500,
+`GenerationReadinessTest.test_registration_token_across_chunks` could spend its
+250 ms readiness budget before the child wrote anything. A controlled 750 ms
+startup delay reproduced HTTP 503 with `registration_timeout`, a living child
+and zero output bytes. A cold focused pass alone could not expose that race.
+
+Both that method and `test_registration_token_across_chunks_after_delayed_startup`
+now wait boundedly for exactly 4096 fixture bytes: 4090 padding bytes plus
+`relay:`. They require incomplete-token rejection before releasing the suffix,
+then wait for all 4113 bytes and require HTTP 200 with the same living PID and
+generation. Each output wait has a five-second monotonic bound; the controller's
+250 ms test deadline and owned-child cleanup remain intact. Do not replace this
+with a longer controller timeout or remove the padding: the scanner must still
+carry the token prefix across its real read boundary.
+
+Retain byte counts alongside controller phase, identity and liveness. Removing
+suffix carry in a temporary controller copy made the repaired proof fail with
+all 4113 bytes present, distinguishing scanner failure from the zero-byte startup
+failure. The [retained experiments](../../../scripts/e2e-fixtures/readiness-2500/evidence.json)
+include commands, revisions, raw exchanges, child output and hashes; see
+[counted acceptance and historical limits](../../e2e-interactive-stream.md#chunked-registration-proof-2500).

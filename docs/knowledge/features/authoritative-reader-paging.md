@@ -7,21 +7,31 @@ uses bounded saved pages before the existing daemon history coordinator. The ful
 ## Current DB and file acceptance scope — approved 2026-10-22
 
 Juhana explicitly approved separating full-file latency from #2334. Normal channel opening
-uses MigratingConversationCache and AuthoritativeRoomStorage to load roughly200 display
+uses MigratingConversationCache and AuthoritativeRoomStorage to load roughly 200 display
 contributions plus required parent/active facts. FileConversationCache still supports
 conversation metadata/read positions and one-time authoritative snapshot import. The direct
 36000-fact FileConversationCache fixture is a compatibility stress case; its frame time is
 neither normal bounded DB opening latency nor an actual file-to-Room import measurement.
 
-The1000ms product target and2000ms SwiftShader assertion remain binding for DB opening and
+The 1000 ms product target and 2000 ms SwiftShader assertion remain binding for DB opening and
 reader demand/retry/reopen. Both file compatibility methods retain exact raw facts, numeric
-spelling, ownership, immutability,36000facts/18000islands/18000visiblemessages and exact
+spelling, ownership, immutability, 36000 facts / 18000 islands / 18000 visible messages and exact
 read/request assertions. Their positive timing bound is enabled only by the test-only
-requireFullFileLatencyBound=true instrumentation argument and belongs to separate
+`requireFullFileLatencyBound=true` instrumentation argument and belongs to separate
 [#2456](https://github.com/pyrycode/pyrycode-mobile/issues/2456), which is not a #2334 blocker.
-The actual3000ms slow-read negative control now uses DB newest-window reads in all four
+The actual 3000 ms slow-read negative control now uses DB newest-window reads in all four
 offline/held-newest first/reopen arms and must reject the same renderer bound. The retired
 projection/API mapping remains as documented below; no unused dispatcher delay is claimed.
+
+On 2026-10-23, the manual continuation of that measurement ticket removed the requirement
+to meet its historical full-file target before documenting the benchmark. The optional
+assertion remains available, and a miss remains a failed assertion in that run. Reporting
+the result does not require a production optimisation. The Linux-only scheduling constraint
+was also removed: record the actual host and renderer, and do not treat measurements from
+different hosts or source revisions as a controlled optimisation comparison. Correctness
+checks and the normal DB timing bounds above are unchanged. A real one-time file-to-Room
+import includes a different transaction and must be measured separately if investigated;
+neither the direct-file fixture nor a later bounded DB reopen measures that whole import.
 
 This approved scope supersedes earlier positive full-file timing requirements in this
 companion and the six issue contracts. Historical failures remain failures of their original
@@ -35,12 +45,25 @@ retains the failed original file-bound measurements and source/capture identitie
 
 ## Approved-scope native validation
 
-Source324df55be6a3978a5a166aac3bcfec3af1cd0acf passed forced formatting and native compilation/SpotlessCheck, then ui-maqwbx4h selected/executed6/pass6/fail0/error0/skip0. DB first-draw frames247/244/243/207ms retained200payloadresults/decodes,5queries,oneevidence row and nofullreads. The actualDB3000ms slow-control frames3868/3403/3343/3320ms all rejected the same2000ms bound while retaining identical counts. Paging/retry/reopen and descriptor cleanup passed. Both complete file compatibility methods logged required=false/followup2456, each8ordinary/fragmented offline/held-newest first/reopen arms, exact36000facts/18000islands/18000visiblemessages and fullreads offline1/online2/retiredAPIs0. File fragmented frames2166–2646ms remain measurements for2456, never normal DB latency or actual one-time import timing. Raw XML/phone/APKs/source/plan/image/runtime/receipt:2452/manual-20261022/db-file-separated-324d, manifestffce81fc6fb25b0fb76309e20130c9b9c8c29168ed1deea44ef14b935c33ad4c. The selected native runtime uses production destination/repository/ViewModel with controlled transport, no external daemon. Independent #2452 acceptance is recorded below; parent acceptance and reviewed merges remain separate.
+The [file-fixture retention repair (#2508)](thread-screen-testing-saved-first-draw-comparisons.md#file-compatibility-fixture-retention-2508)
+records on-demand expected facts, native causal red/green proof and completed configured UI
+acceptance under the unchanged DB/file scope above.
 
+The [native benchmark receipts](authoritative-reader-native-benchmarks.md#approved-scope-native-validation)
+retain the approved DB first-draw/slow-control results and exact file compatibility checks.
 
 ### Independent opt-in file benchmark
 
-On the same324df55be6 source, normal admitted native gate ui-562olv0x with requireFullFileLatencyBound=true selected/executed1/pass0/fail1/errors0/skips0. Phone records confirmed required=true/followup2456 after all8exact compatibility arms completed. Fragmented file frames2501/2246/2825/2687ms; the actual failure was Probe.assertBound at2501ms versus2000ms. This is retained as a separate2456 latency failure, not DB acceptance or real import latency. Complete XML/phone/APKs/source/image/runtime are under logs/evidence/2456/manual-20261022/optin-324d, manifestb54f7a09902a6c63af9dbbe2c341d0e5f67a561aec3962c992391b160827d949. Together with default required=false in both six-suite file methods, this verifies effective scope selection rather than silently disabling the benchmark. No production change followed the failure.
+The [historical opt-in receipt](authoritative-reader-native-benchmarks.md#independent-opt-in-file-benchmark)
+preserves the separate full-file timing failure and its original source identity.
+
+### Current-source file compatibility measurement — 2026-10-23
+
+The [current measurement](authoritative-reader-native-benchmarks.md#current-source-file-compatibility-measurement--2026-10-23)
+records both file methods, all 16 compatibility cases, the active opt-in timing miss,
+Mac readiness failures and the supported commands, with raw evidence identities.
+The [independent review](authoritative-reader-native-benchmarks.md#independent-review-and-configured-acceptance--2026-10-23)
+authenticates those receipts and records cached/skipped gate distinctions and full scripted acceptance.
 
 ## Storage continuation contract
 
@@ -380,7 +403,7 @@ Existing manual holds, claims, counters and approvals remain in force.
 A transparent `NegotiatedThread` decorator must forward `localHistory(conversationId)` as
 the selected provider's exact flow. Inheriting the default Idle flow hides actual local-page
 Loading and Retry even while facts and reader ownership still pass through correctly.
-`TappingConversationRepository`, `InitialAttentionQueryGate.negotiated` and
+`TappingConversationRepository`, `ThreadAcquisitionGate.negotiated` and
 `PassiveThreadProbe.negotiated` now preserve it, including their installed
 `tapNegotiated=true` composition. Retry continues through the existing `older` action.
 No collector, query, reader, lease or state conversion is needed to expose that contract.

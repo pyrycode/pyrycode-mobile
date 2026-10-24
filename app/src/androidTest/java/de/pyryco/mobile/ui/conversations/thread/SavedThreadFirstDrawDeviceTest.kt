@@ -74,6 +74,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -82,6 +83,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -644,21 +646,67 @@ class SavedThreadFirstDrawDeviceTest {
         measureAuthoritativeFiles(guardLegacyReads = true)
     }
 
+    @Test fun authoritativeFileFixture_doesNotRetainDecodedFactsAcrossOpenings() {
+        val facts = authoritativeFileFacts(fragmented = true)
+        val samples = sampleFixtureFacts(facts)
+        withAuthoritativeFileFixture(facts) {
+            // Establish collection independently: this control must not rely on an arbitrary sleep.
+            val sentinel = WeakReference(Any())
+            composeRule.waitUntil(5000) {
+                Runtime.getRuntime().gc()
+                sentinel.get() == null
+            }
+            val retained = samples.count { it.get() != null }
+            val runtime = Runtime.getRuntime()
+            Log.i(
+                "SavedThreadFixtureMemory",
+                "event=fixture_seeded facts=${facts.size} retained_samples=$retained " +
+                    "heap_used_bytes=${runtime.totalMemory() - runtime.freeMemory()} heap_max_bytes=${runtime.maxMemory()}",
+            )
+            assertEquals("The expected-fact list must not retain a second decoded fixture during restore", 0, retained)
+            assertEquals(36_000, facts.size)
+            assertEquals(
+                1,
+                facts
+                    .first()
+                    .getValue("id")
+                    .jsonPrimitive.content
+                    .toInt(),
+            )
+            assertEquals(
+                36_000,
+                facts
+                    .last()
+                    .getValue("id")
+                    .jsonPrimitive.content
+                    .toInt(),
+            )
+        }
+    }
+
+    private fun sampleFixtureFacts(facts: List<JsonObject>) = listOf(WeakReference(facts.first()), WeakReference(facts.last()))
+
     @Test fun slowRestore_negativeControlRejectsTheSameFirstDrawBound() {
         measureDatabaseOpenings(readDelayMs = 3000)
     }
 
     private fun authoritativeFileFacts(fragmented: Boolean): List<JsonObject> =
-        (0 until if (fragmented) 36_000 else 20).map { index ->
-            val visible = !fragmented || index % 2 == 0
-            val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
-            MobileJson
-                .parseToJsonElement(
-                    """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
+        // The expected list survives every opening; retaining parsed facts duplicates the cold restore.
+        object : AbstractList<JsonObject>() {
+            override val size = if (fragmented) 36_000 else 20
+
+            override fun get(index: Int): JsonObject {
+                if (index !in indices) throw IndexOutOfBoundsException()
+                val visible = !fragmented || index % 2 == 0
+                val order = if (fragmented) index / 2 * 4 + index % 2 + 1 else index + 1
+                return MobileJson
+                    .parseToJsonElement(
+                        """{"id":${index + 1},"rev":${index + 40_001},"order":$order,
                 "kind":"${if (visible) "assistant_message" else "future_fixture"}",
                 "status":"done","active":false,"shown":$visible,"summary":"",
                 "content":{"text":"Saved ${if (fragmented) index / 2 else index}."},"future":{"clear":null}}""",
-                ).jsonObject
+                    ).jsonObject
+            }
         }
 
     private fun measureAuthoritativeFiles(guardLegacyReads: Boolean) {

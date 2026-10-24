@@ -111,7 +111,7 @@ internal fun sessionErrorPeerTrace(frames: List<Envelope>): List<String> {
 @RunWith(AndroidJUnit4::class)
 class SessionErrorDiagnosticsTest {
     @Test
-    fun peerTracePreservesOrderWithoutPublishingPrivateFields() {
+    fun peerTracePreservesRecoveryOrderingWithoutPrivateValues() {
         val frames =
             listOf(
                 traceFrame("session_error", """{"code":"session.child_crashing","message":"private-prompt"}"""),
@@ -137,8 +137,11 @@ class SessionErrorDiagnosticsTest {
     }
 
     @Test
-    fun peerTraceBoundsMalformedFramesAndRetainsOriginalOrdinals() {
-        val frames = List(300) { traceFrame("turn_state", """{"state":{"private":"value"}}""") }
+    fun peerTraceHandlesMalformedFieldsAndBoundsOutput() {
+        val frames =
+            List(300) { index ->
+                traceFrame("turn_state", if (index % 2 == 0) "[]" else """{"state":{"private":"value"}}""")
+            }
         val trace = sessionErrorPeerTrace(frames)
         assertEquals("peer_frames=300 omitted=44", trace.first())
         assertEquals(257, trace.size)
@@ -148,22 +151,27 @@ class SessionErrorDiagnosticsTest {
     }
 
     @Test
-    fun peerTraceDistinguishesClearIdleAndMalformedFlags() {
+    fun peerTraceKeepsClearFramesDistinctFromIdle() {
         val frames =
             listOf(
                 traceFrame("turn_state", "{}").copy(sessionStateCleared = kotlinx.serialization.json.JsonPrimitive(true)),
-                traceFrame("turn_state", """{"state":"idle"}"""),
+                traceFrame(
+                    "turn_state",
+                    """{"state":"idle"}""",
+                ).copy(sessionStateCleared = kotlinx.serialization.json.JsonPrimitive(false)),
                 traceFrame(
                     "session_error",
                     """{"code":123}""",
                 ).copy(sessionStateCleared = kotlinx.serialization.json.JsonPrimitive("true")),
+                traceFrame("turn_state", """{"state":"idle"}"""),
             )
         assertEquals(
             listOf(
-                "peer_frames=3 omitted=0",
+                "peer_frames=4 omitted=0",
                 "index=0 type=turn_state state=unknown error=none clear=true",
                 "index=1 type=turn_state state=idle error=none clear=false",
                 "index=2 type=session_error state=none error=unknown clear=unknown",
+                "index=3 type=turn_state state=idle error=none clear=false",
             ),
             sessionErrorPeerTrace(frames),
         )
@@ -172,7 +180,7 @@ class SessionErrorDiagnosticsTest {
     private fun traceFrame(
         type: String,
         payload: String,
-    ) = Envelope(id = 1L, type = type, ts = "2026-10-20T21:00:00Z", payload = MobileJson.parseToJsonElement(payload))
+    ) = Envelope(id = 1L, type = type, ts = "2026-10-20T19:00:00Z", payload = MobileJson.parseToJsonElement(payload))
 
     @Test
     fun bothArmsRetainPhaseReadinessAndOriginalTimeoutWithoutFormattingIt() {

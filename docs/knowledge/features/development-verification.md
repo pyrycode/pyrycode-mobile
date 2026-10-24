@@ -13,8 +13,12 @@ into its own document:
 - [Development verification — change surface, Gradle gates and where a test goes](development-verification-gates.md) —
   `Establish the change surface`, `Gradle and source checks`, `Where a screen test goes`, `Device gate`
 - [Development verification — Compose evidence](development-verification-compose-evidence.md) —
-  `Compose evidence`, `Probe the evidence itself`; `Compose evidence` also covers the shared
-  `ViewportRule` / `@Viewport` and the `design-1220/` capture harness (#1430)
+  `Compose evidence`, with a navigation stub for `Probe the evidence itself`; `Compose evidence` also
+  covers the shared `ViewportRule` / `@Viewport` and the `design-1220/` capture harness (#1430)
+- [Development verification — Compose evidence probes](development-verification-compose-probes.md) —
+  `Probe the evidence itself`, moved verbatim from the Compose evidence overview on 2026-10-24
+- [Focused API35 capture selection](development-verification-api35-selection.md) —
+  bounded selectors, loaded-policy identity and pending real-system-bar evidence (#2435, #2418)
 - [Development verification — test scheduling and harnesses](development-verification-test-scheduling.md) —
   `Test scheduling and harnesses`
 - [Development verification — JVM logging, emulator and real evidence](development-verification-emulator-evidence.md) —

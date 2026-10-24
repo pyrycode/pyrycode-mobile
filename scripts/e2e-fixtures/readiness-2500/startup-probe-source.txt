@@ -1,0 +1,44 @@
+import contextlib
+import json
+from pathlib import Path
+import shutil
+import sys
+import time
+import unittest
+
+sys.path.insert(0, str(Path.cwd() / 'scripts'))
+from test_e2e_daemon_fault import GenerationReadinessTest
+
+original = GenerationReadinessTest.controller
+destination = Path('/tmp/builder-2500/controlled-startup-red')
+destination.mkdir(exist_ok=True)
+
+@contextlib.contextmanager
+def delayed(self, script, **kwargs):
+    prefix = """import os,time,json
+from pathlib import Path
+p = Path(os.environ['GENERATION_FIXTURE'])
+(p / 'child-started.json').write_text(json.dumps({'pid':os.getpid(), 'time':time.monotonic()}))
+time.sleep(0.75)
+"""
+    with original(self, prefix + script, **kwargs) as (request, path):
+        def observed(action):
+            status, payload = request(action)
+            observation = {'action': action, 'status': status, 'payload': payload,
+                           'time': time.monotonic(), 'child_bytes': (path / 'child.log').stat().st_size}
+            print(json.dumps(observation), flush=True)
+            (destination / 'response.json').write_text(json.dumps(observation, indent=2))
+            return status, payload
+        try:
+            yield observed, path
+        finally:
+            for name in ('controller.log', 'child.log', 'child-started.json'):
+                if (path / name).exists():
+                    shutil.copy2(path / name, destination / name)
+
+GenerationReadinessTest.controller = delayed
+suite = unittest.TestSuite([GenerationReadinessTest('test_registration_token_across_chunks')])
+result = unittest.TextTestRunner(verbosity=2).run(suite)
+print(json.dumps({'executed': result.testsRun, 'passed': result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped),
+                  'failed': len(result.failures), 'errors': len(result.errors), 'skipped': len(result.skipped)}))
+sys.exit(not result.wasSuccessful())

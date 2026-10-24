@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ThreadItemDto
 import de.pyryco.mobile.data.repository.AuthoritativeThreadRoute
+import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.flow.flow
@@ -34,6 +35,7 @@ internal class OwnedReplyObservation(
     val before: ThreadEvidence,
     private val legacyProducer: Boolean = false,
     private val knownSession: String? = null,
+    producerSnapshot: AuthoritativeThreadSnapshot? = null,
 ) {
     private var pump: Any? = null
     private var pumpCurrent: () -> Boolean = { true }
@@ -85,7 +87,7 @@ internal class OwnedReplyObservation(
     private val threadStore =
         if (before.owner.kind == ThreadEvidenceKind.Authoritative) {
             AuthoritativeThreadStore().also { store ->
-                before.sourceSnapshot?.let { store.restore(host, before.owner.conversation, it, 0) }
+                (producerSnapshot ?: before.sourceSnapshot)?.let { store.restore(host, before.owner.conversation, it, 0) }
                 if (store.current(host, before.owner.conversation).epoch == null) {
                     val facts = before.records.mapNotNull { it.fact }
                     store.applyBatch(
@@ -182,8 +184,14 @@ internal class OwnedReplyObservation(
 
     /** Wait for this exact current phone send before another client acts. No reply completion is required. */
     @Synchronized fun acceptedSendCurrent(current: Any?): Boolean =
-        current === before.owner.connection && !closed && !failed && pump != null && pumpCurrent() &&
-            accepted && messageId != null && request?.field("message_id") == messageId &&
+        current === before.owner.connection &&
+            !closed &&
+            !failed &&
+            pump != null &&
+            pumpCurrent() &&
+            accepted &&
+            messageId != null &&
+            request?.field("message_id") == messageId &&
             request?.field("conversation_id") == before.owner.conversation
 
     @Synchronized fun received(
@@ -364,6 +372,19 @@ internal class OwnedReplyObservation(
         current: Any?,
     ): CompletedReplyObservation? {
         checkCurrent(current)
+        return admit(evidence)
+    }
+
+    /** Producer recovery treats a lost source as unavailable, keeping strict screen checks separate. */
+    @Synchronized fun admittedIfCurrent(
+        evidence: ThreadEvidence,
+        current: Any?,
+    ): CompletedReplyObservation? {
+        if (current !== before.owner.connection || closed || !pumpCurrent()) return null
+        return admit(evidence)
+    }
+
+    private fun admit(evidence: ThreadEvidence): CompletedReplyObservation? {
         val expected = if (queryWitness == null) before.owner else queryWitness.owner() ?: return null
         if (!producerCompleted() || !evidence.admitted || !expected.matches(evidence.owner)) return null
         val produced = if (producerStore != null) authoritativeReply() else null
@@ -465,51 +486,53 @@ internal object OwnedReplyProbe {
 
         fun observers(): List<OwnedReplyObservation> =
             (sessionObservers.filter { it.host == host } + listOfNotNull(active?.takeIf { it.host == host })).distinct()
-        return object : ManagedSessionPump by delegate {
-            override val inbound =
-                flow {
-                    try {
-                        delegate.inbound.collect { frame ->
-                            ContextResetProbe.before(host, connection, frame)
-                            AuthoritativeHistoryProbe.received(host, connection, frame)
-                            observers().forEach { it.phoneReceived(connection, frame) }
-                            sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
-                            active?.takeIf { it.host == host }?.received(connection, frame)
-                            emit(frame)
-                            ContextResetProbe.delivered(host, connection, frame)
+        val observed =
+            object : ManagedSessionPump by delegate {
+                override val inbound =
+                    flow {
+                        try {
+                            delegate.inbound.collect { frame ->
+                                ContextResetProbe.before(host, connection, frame)
+                                AuthoritativeHistoryProbe.received(host, connection, frame)
+                                observers().forEach { it.phoneReceived(connection, frame) }
+                                sessionObservers.filter { it.host == host }.forEach { it.sessionReceived(connection, frame) }
+                                active?.takeIf { it.host == host }?.received(connection, frame)
+                                emit(frame)
+                                ContextResetProbe.delivered(host, connection, frame)
+                            }
+                        } finally {
+                            AuthoritativeHistoryProbe.ended(host, connection)
+                            observers().forEach { it.phoneEnded(connection) }
+                            phoneSources.remove(host, source)
+                            active?.takeIf { it.host == host }?.ended(connection)
                         }
-                    } finally {
-                        AuthoritativeHistoryProbe.ended(host, connection)
-                        observers().forEach { it.phoneEnded(connection) }
-                        phoneSources.remove(host, source)
-                        active?.takeIf { it.host == host }?.ended(connection)
+                    }
+
+                override fun send(envelope: Envelope): Boolean {
+                    val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
+                    val observers = observers()
+                    AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
+                    observers.forEach { it.phoneSending(connection, envelope) }
+                    sessionObservers.filter { it.host == host }.forEach { it.sessionSending(connection, envelope) }
+                    val observation = active?.takeIf { it.host == host }
+                    val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
+                    return delegate.send(envelope).also { result ->
+                        contextReceipt?.complete(result)
+                        AuthoritativeHistoryProbe.sent(host, connection, envelope, result)
+                        observers.forEach { it.phoneSent(connection, envelope, result) }
+                        if (targeted) observation?.sent(connection, result)
                     }
                 }
 
-            override fun send(envelope: Envelope): Boolean {
-                val contextReceipt = ContextResetProbe.sending(host, connection, envelope)
-                val observers = observers()
-                AuthoritativeHistoryProbe.sending(host, connection, envelope) { phoneSources[host] === source && source.open() }
-                observers.forEach { it.phoneSending(connection, envelope) }
-                sessionObservers.filter { it.host == host }.forEach { it.sessionSending(connection, envelope) }
-                val observation = active?.takeIf { it.host == host }
-                val targeted = observation?.sending(connection, envelope) { delegate.state.value is PumpState.Open } == true
-                return delegate.send(envelope).also { result ->
-                    contextReceipt?.complete(result)
-                    AuthoritativeHistoryProbe.sent(host, connection, envelope, result)
-                    observers.forEach { it.phoneSent(connection, envelope, result) }
-                    if (targeted) observation?.sent(connection, result)
+                override fun close() {
+                    AuthoritativeHistoryProbe.ended(host, connection)
+                    observers().forEach { it.phoneEnded(connection) }
+                    phoneSources.remove(host, source)
+                    active?.takeIf { it.host == host }?.ended(connection)
+                    delegate.close()
                 }
             }
-
-            override fun close() {
-                AuthoritativeHistoryProbe.ended(host, connection)
-                observers().forEach { it.phoneEnded(connection) }
-                phoneSources.remove(host, source)
-                active?.takeIf { it.host == host }?.ended(connection)
-                delegate.close()
-            }
-        }
+        return ThreadQueryReadiness.wrap(host, observed)
     }
 
     fun <T> observing(

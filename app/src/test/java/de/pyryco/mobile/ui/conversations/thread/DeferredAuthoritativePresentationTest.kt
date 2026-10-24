@@ -9,6 +9,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeferredAuthoritativePresentationTest {
+    @Test fun revisionInvariantExpansionOverlayKeepsHighestFullFactAndFirstEqualRevision() {
+        val newest = authoritativeItem(50, rev = 70, content = """{"text":"newest"}""")
+        val older = authoritativeItem(50, rev = 7, content = """{"text":"older"}""")
+        val equal = authoritativeItem(50, rev = 70, content = """{"text":"equal duplicate"}""")
+        for (facts in listOf(listOf(newest, older), listOf(older, newest), listOf(newest, equal))) {
+            val snapshot = authoritativeSnapshot(*facts.toTypedArray())
+            assertSame(newest, snapshot.expansionItems.single())
+            val p = projectDeferredAuthoritativeThread("host", "conversation", snapshot)
+            assertEquals("newest", ((p.rows.single() as ThreadRow.Delivered).item as ThreadItem.MessageItem).message.content)
+        }
+    }
+
     @Test fun deepClosedChainRetainsOnlyParentLinksAndConvertsOnlyDemandedBodies() {
         val facts =
             (1L..8333L).map { id ->

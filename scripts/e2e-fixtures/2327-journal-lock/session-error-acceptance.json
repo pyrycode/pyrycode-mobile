@@ -1,0 +1,133 @@
+{
+  "ticket": "pyrycode/pyrycode-mobile#2327",
+  "kind": "accepted-dependency-evidence-reconciliation",
+  "reviewedDate": "2026-10-24",
+  "os": "Linux",
+  "requiredOwner": "pyrycode/pyrycode-mobile#2338",
+  "pullRequest": "https://github.com/pyrycode/pyrycode-mobile/pull/2509",
+  "integratedBy": "9f430b77cb4cbfff737c6e7085b58e68aff7b4c8",
+  "originalFinding": {
+    "candidate": "aa480075b3551d3e6850080b8e72417c845767d5",
+    "method": "de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog",
+    "result": "Retained arm timed out at the original 20-second status-clear assertion in both complete execution and same-tree comparison.",
+    "disposition": "Preserved failure; accepted repaired-source proof belongs to #2338. No residual admission defect is demonstrated."
+  },
+  "acceptedChild": {
+    "runId": "b8fb0d854eb72efdd146a2fd8826aa58be8b232d0b11f2bdb1d9b1247c501452",
+    "bundleDigest": "4d02a591274dd02f7a0fcb657f3f2944d23b475232279f47b331ecab304b99ea",
+    "bundleManifestSha256": "e360cdf8c1c9c76c874546d1c818b5385db12c70a94edae788aed56024bba808",
+    "bundleFilesVerified": 154,
+    "candidate": "e51627c81871ad29708c8a0a572673bdda97db18",
+    "mergedMain": "76822ac37f2a363ee60af47eb7f061c1cc9eb5b0",
+    "verdict": "PASS",
+    "authoritativeAcceptance": "accepted: Checks and exact-candidate verdict accepted",
+    "dispatcherRevision": "91310c59a1c0834526ee0f2f356a80a763611566",
+    "jvm": { "executed": 5556, "passed": 5556, "failed": 0, "errors": 0, "skipped": 0 },
+    "ui": { "executed": 250, "passed": 250, "failed": 0, "errors": 0, "skipped": 0 },
+    "scriptedAll": { "executed": 24, "passed": 20, "failed": 4, "errors": 0, "skipped": 0 },
+    "configuredRecovery": { "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0 },
+    "scriptedCommand": "ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all",
+    "originalRecoveryReport": "build/dispatcher-tests/scripted-all-vwgsp877/session-error-0-TEST-installed.xml",
+    "sameTreeComparison": { "executed": 4, "passed": 0, "failed": 4, "errors": 0, "skipped": 0 },
+    "mainComparison": { "executed": 4, "passed": 0, "failed": 4, "errors": 0, "skipped": 0 },
+    "acceptedInheritedFailures": [
+      { "method": "interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect", "issue": 2521 },
+      { "method": "interactiveTurn_seededChannel_backgroundAgentMovesAndSettles", "issue": 2521 },
+      { "method": "interactiveTurn_seededChannel_durableGapCatchUp", "issue": 2521 },
+      { "method": "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread", "issue": 2469 }
+    ],
+    "limitation": "Configured scripted execution remains raw exit 1; accepted inherited comparisons do not repair these four failures or establish #2327 candidate acceptance."
+  },
+  "bundleFiles": [
+    {
+      "path": "handoff/verifier-2338.md",
+      "sha256": "2caafd09b1d1e3346aa6ab27b00fc43e679ee4584f319cbac6b264115e3ebbae",
+      "bytes": 8752
+    },
+    {
+      "path": "logs/verifier-gate__2338_5.log",
+      "sha256": "b2ca38b98f51b8f586862100c8cf5b69e6f43569ce15c36bb59f65b995e374b4",
+      "bytes": 42076
+    },
+    {
+      "path": "logs/verifier-gate__2338_6.log",
+      "sha256": "1051506bcb3a89021f57f3948d0120915be268d55a66a32844bcd21e0cf00055",
+      "bytes": 6915
+    },
+    {
+      "path": "logs/2026-10-24T11-49-07-803Z_verifier-gate-rerun__2338.log",
+      "sha256": "4dfe3b4b51af7cc9c126b2bc819184df998617b56745fb28c0f466c163f8e4f0",
+      "bytes": 1133
+    },
+    {
+      "path": "logs/2026-10-24T11-53-43-534Z_verifier-gate-base__2338.log",
+      "sha256": "4dfe3b4b51af7cc9c126b2bc819184df998617b56745fb28c0f466c163f8e4f0",
+      "bytes": 1133
+    }
+  ],
+  "nativeProof": {
+    "root": "/work/Projects/pyrycode-mobile-agents/logs/evidence/2338/integration-linux-20261024",
+    "manifest": "SHA256SUMS",
+    "manifestSha256": "3a09922a8f39c4df79d872387c3c60f663fb48c1763d80738d112b7c93b81072",
+    "filesVerified": 61,
+    "sourceRevisions": {
+      "core": "64ef0e0fba71a723b7fdc97141cfc144f6355664",
+      "agents": "3105b6f49d4bb72859fdea020bea3ebc98810aeb",
+      "relay": "9939bc1ff8afec5021c09862e6f14dadba33ad42"
+    },
+    "recoveryDaemonSha256": "2310e8087b383651ff2f660cd3a3d76c7be5bf0041ef6f377e839c7f1e2a69de",
+    "recoveryDaemonRevision": "unavailable; clean retained Core source and tagged build establish attribution",
+    "finalReusedAppApkSha256": "b6a210153033237867df1392f1201c7af130511919be24a26307ebb08ad02918",
+    "finalReusedTestApkSha256": "8275f8f9b36eee9f3bba1d5b70e4684dc872ea26ccbe540d9554765d81a56341",
+    "freshTestApkSha256": "19cb48ab5a29c35b344c2421e0a98f1144317fedb7baa9d8d29f537e5a1c13d1",
+    "successfulArms": "retained held/fresh child counts 1/0; dropped counts 0/1; stable identities; owned daemons absent and prior pairing/connection restored",
+    "phoneOrder": "retained error applied -> responding -> cleared -> idle",
+    "assertions": "Original 20-second status-clear deadline, both arms and independent child-input assertions remain unchanged.",
+    "captures": [
+      {
+        "path": "fresh/scripted-1dw9hs_7/0-TEST-pixel2Api33Atd-_app-.xml",
+        "mobile": "a622b6d21ea8cd8767f764212e0a71f818b37520",
+        "sha256": "eeaaf9ea4f302a0030e16b2797ce14ce73833fefb9f664a969295f1b82b2b2b4",
+        "bytes": 747,
+        "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0
+      },
+      {
+        "path": "reused/scripted-hiumew3f/0-TEST-pixel2Api33Atd-_app-.xml",
+        "mobile": "e51627c81871ad29708c8a0a572673bdda97db18",
+        "sha256": "625c334ca717c8bdaea0ad09c6bdfa5bbc0a54db75a227a559fa50d85d5f3910",
+        "bytes": 2609,
+        "executed": 1, "passed": 0, "failed": 1, "errors": 0, "skipped": 0,
+        "failure": "dropped held_send, before child exit/status clearing; cause remains unknown"
+      },
+      {
+        "path": "final-reused/scripted-y2mnw2hu/0-TEST-pixel2Api33Atd-_app-.xml",
+        "mobile": "e51627c81871ad29708c8a0a572673bdda97db18",
+        "sha256": "394fbf0e629a34b3429ce8b64dfc6ed887c6c9a68697d31a6cc6d600ef1eb5f9",
+        "bytes": 749,
+        "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0
+      }
+    ],
+    "inputEquivalence": "Fresh and final tracked executable/build inputs match. Revision metadata changed the instrumentation APK after the documentation merge; failed reused and final-reused APK hashes match.",
+    "summarySha256": "8d344f3a2d2055797c8884a98c81628ce1afa775cebc362e5930b45adede4f61",
+    "summaryLimitation": "integration-summary.json predates acceptance; its configuredRecoveryPass=pending dispatcher is superseded only by the accepted verifier record above."
+  },
+  "journalEvidenceRecheck": {
+    "originalArtifactsVerified": 18,
+    "originalBytesChanged": 0,
+    "admissionSourceHashesMatchOriginalReceipt": true,
+    "managedGradleLauncherUnchangedSince": "e2f17c0ca3173e2991cfbd5d853fd3f6dc8239d0",
+    "effectiveAdmissionPath": "/work/Projects/.pyry-test-admission.lock",
+    "effectiveAdmissionDeviceInode": "66306:1100311",
+    "effectiveJournalLockPath": "/home/agent/.gradle/caches/journal-1/journal-1.lock",
+    "effectiveJournalLockDeviceInode": "66306:1082682",
+    "freshAdmissionRegressions": { "executed": 7, "passed": 7, "failed": 0, "skipped": 0 },
+    "limitation": "Current builder identities do not identify historical sweep PID 279774 or replace the retained cross-container comparison."
+  },
+  "pending": [
+    "Independent review and dispatcher-owned configured acceptance on the #2327 integrated candidate",
+    "Later dispatcher-owned main sweep",
+    "Documentation-stage shared admission guidance update"
+  ],
+  "custody": "No native task launched, no holds or approval controls changed, no application logs duplicated, no timeout or assertion weakened.",
+  "otherOs": "macOS is outside this Linux ticket verification scope."
+}

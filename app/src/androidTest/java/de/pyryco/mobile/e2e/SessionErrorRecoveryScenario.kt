@@ -23,9 +23,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.network.WireRole
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
@@ -56,7 +54,6 @@ internal class SessionErrorRecoveryScenario(
     private var phase = "fixture_start"
     private var fixtureReady = false
     private var diagnosticServerId: String? = null
-    private var diagnosticPeer: Pair<String, SecondClientPeer>? = null
 
     fun run() {
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
@@ -77,7 +74,6 @@ internal class SessionErrorRecoveryScenario(
             phase = "fixture_start"
             fixtureReady = false
             diagnosticServerId = null
-            diagnosticPeer = null
             var diagnosed: AssertionError? = null
             try {
                 sessionErrorCleanup(
@@ -106,16 +102,6 @@ internal class SessionErrorRecoveryScenario(
             } catch (failure: Throwable) {
                 if (failure === diagnosed) throw failure
                 throw sessionErrorDiagnosticFailure(arm, phase, fixtureReady, failure, ::diagnosticSnapshot)
-            } finally {
-                val observed = diagnosticPeer
-                diagnosticPeer = null
-                if (observed != null) {
-                    runCatching {
-                        sessionErrorPeerTrace(observed.second.recorded(observed.first)).forEach {
-                            Log.i("SessionErrorRecovery", "arm=$arm observer=legacy $it")
-                        }
-                    }
-                }
             }
         }
         // Regression: this Application/Koin graph is reused by subsequent instrumentation methods.
@@ -131,6 +117,7 @@ internal class SessionErrorRecoveryScenario(
             }
         }
         assertSame("preceding host connection was replaced", precedingConnection, registry.connectionFor(precedingHost))
+        Log.i("SessionErrorRecovery", "pairings_restored=true preceding_connection_restored=true")
     }
 
     private fun runCase(
@@ -150,90 +137,129 @@ internal class SessionErrorRecoveryScenario(
                 relayUrl = fixture.value("relayUrl"),
                 serverStaticPublicKey = fixture.value("serverStaticPublicKey"),
             ),
-        ).also { diagnosticPeer = conversation to it }.use { peer ->
-            stage(arm, "observer_open")
-            runBlocking { peer.open(30_000) }
-            stage(arm, "channel_open")
-            val channel = hasText(fixture.value("channel")) and hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)
-            await(channel)
-            compose.onNode(channel).performScrollTo().performClick()
-            await(hasSetTextAction())
-            request(arm, "ready") // The child has closed stdin; its first exit remains gated.
-            stage(arm, "held_send")
-            send(heldPrompt)
-            val queued = runBlocking { peer.awaitQueue(conversation, 20_000) { it.size == 1 && it.single().text == heldPrompt } }.single()
-            assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
-            assertEquals("the closed-stdin child must not receive a turn", 0, deliveries(peer, conversation).size)
-            assertTrue("crash signal preceded queued observation", errors(peer, conversation).isEmpty())
-            val queuedRow =
-                hasText(heldPrompt) and
-                    SemanticsMatcher.expectValue(
-                        SemanticsProperties.StateDescription,
-                        context.getString(R.string.thread_queued_state_desc),
+            threadEnabled = true,
+        ).use { peer ->
+            try {
+                stage(arm, "observer_open")
+                runBlocking { peer.open(30_000) }
+                val producer = runBlocking { peer.observeProduction(conversation, 30_000) }
+                val observer = SessionErrorRecoveryObservation(producer)
+                var observationSequence = 0
+
+                fun <T : Any> observe(
+                    timeout: Long,
+                    predicate: (SessionErrorRecoveryObservation) -> T?,
+                ): T =
+                    runBlocking {
+                        peer.awaiting("canonical recovery observation", timeout) {
+                            var result: T? = null
+                            while (result == null) {
+                                peer.catchUpProduction(producer, timeout)
+                                result = predicate(observer)
+                                Log.i(
+                                    "SessionErrorRecovery",
+                                    "arm=$arm observer=canonical sequence=${++observationSequence} query_complete=${producer.evidence() != null} matched=${result != null}",
+                                )
+                                if (result == null) delay(25)
+                            }
+                            result
+                        }
+                    }
+                stage(arm, "channel_open")
+                val channel = hasText(fixture.value("channel")) and hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)
+                await(channel)
+                compose.onNode(channel).performScrollTo().performClick()
+                await(hasSetTextAction())
+                request(arm, "ready") // The child has closed stdin; its first exit remains gated.
+                stage(arm, "held_send")
+                send(heldPrompt)
+                val queued = observe(20_000) { it.queued()?.singleOrNull()?.takeIf { row -> row.text == heldPrompt } }
+                assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
+                assertEquals("the closed-stdin child must not receive a turn", 0, observer.deliveries()?.size)
+                assertTrue("crash signal preceded queued observation", errors(peer, conversation).isEmpty())
+                val queuedRow =
+                    hasText(heldPrompt) and
+                        SemanticsMatcher.expectValue(
+                            SemanticsProperties.StateDescription,
+                            context.getString(R.string.thread_queued_state_desc),
+                        )
+                request(arm, "exit")
+                val expected: RecoveryAcceptance
+                if (arm == "retained") {
+                    stage(arm, "retained_status")
+                    awaitError(peer, conversation, "session.child_crashing")
+                    assertPill(CRASHING)
+                    compose.onNode(queuedRow).assertIsDisplayed()
+                    observe(5_000) { it.takeIf { state -> state.retained(queued) && state.queued()?.size == 1 } }
+                    assertEquals(0, observer.deliveries()?.size)
+                    assertTrue("retained backlog gave up", "session.blocked" !in errors(peer, conversation))
+                    expected = queued
+                    request(arm, "release")
+                } else {
+                    stage(arm, "dropped_status")
+                    awaitError(peer, conversation, "session.blocked")
+                    observe(10_000) { it.takeIf { state -> state.dropped(queued) && state.queued()?.isEmpty() == true } }
+                    assertPill(BLOCKED)
+                    compose.waitUntil(10_000) { nodes(queuedRow).isEmpty() }
+                    compose.onAllNodes(queuedRow).assertCountEquals(0)
+                    assertEquals("dropped turn was delivered", 0, observer.deliveries()?.size)
+                    // The 3s give-up can precede the crash notice; observe its pill as it arrives.
+                    awaitError(peer, conversation, "session.child_crashing")
+                    request(arm, "release")
+                    request(arm, "recovered") // Automatic respawn, before a fresh phone send.
+                    stage(arm, "fresh_send")
+                    send(freshPrompt)
+                    val freshDelivery = observe(120_000) { it.deliveries()?.singleOrNull() }
+                    assertTrue("fresh delivery text differs", freshPrompt == freshDelivery.text)
+                    assertTrue(
+                        "dropped identity silently replayed",
+                        freshDelivery.id != queued.id && freshDelivery.messageId != queued.messageId,
                     )
-            request(arm, "exit")
-            val expectedId: String
-            if (arm == "retained") {
-                stage(arm, "retained_status")
-                awaitError(peer, conversation, "session.child_crashing")
-                assertPill(CRASHING)
-                compose.onNode(queuedRow).assertIsDisplayed()
-                val stillQueued = runBlocking { peer.awaitQueue(conversation, 5_000) { it.size == 1 } }.single()
-                assertEquals(queued.messageId, stillQueued.messageId)
-                assertEquals(queued.queuedMsgId, stillQueued.queuedMsgId)
-                assertEquals(0, deliveries(peer, conversation).size)
-                assertTrue("retained backlog gave up", "session.blocked" !in errors(peer, conversation))
-                expectedId = queued.messageId
-                request(arm, "release")
-            } else {
-                stage(arm, "dropped_status")
-                awaitError(peer, conversation, "session.blocked")
-                runBlocking { peer.awaitQueue(conversation, 10_000) { it.isEmpty() } }
-                assertPill(BLOCKED)
-                compose.waitUntil(10_000) { nodes(queuedRow).isEmpty() }
-                compose.onAllNodes(queuedRow).assertCountEquals(0)
-                assertEquals("dropped turn was delivered", 0, deliveries(peer, conversation).size)
-                // The 3s give-up can precede the crash notice; observe its pill as it arrives.
-                awaitError(peer, conversation, "session.child_crashing")
-                request(arm, "release")
-                request(arm, "recovered") // Automatic respawn, before a fresh phone send.
-                stage(arm, "fresh_send")
-                send(freshPrompt)
-                runBlocking {
-                    peer.awaiting("fresh phone delivery", 120_000) {
-                        while (deliveries(peer, conversation).isEmpty()) delay(25)
+                    assertTrue("held terminal resolution lost", observer.dropped(queued))
+                    expected = freshDelivery
+                }
+
+                stage(arm, "reply_complete")
+                observe(120_000) { it.takeIf { state -> state.completed(expected) } }
+                observe(10_000) { it.queued()?.takeIf { rows -> rows.isEmpty() } }
+                stage(arm, "reply_render")
+                val reply = sessionErrorReplyMatcher()
+                await(reply, unmerged = true)
+                compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
+                compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }
+                request(arm, "complete") // Independently counts actual prompts read by the completed child.
+                stage(arm, "recovery_assertions")
+                val delivered = observe(10_000) { it.deliveries() }
+                assertEquals("one recovery must deliver exactly one user message", 1, delivered.size)
+                assertTrue(
+                    "delivery acceptance identity changed",
+                    expected.id == delivered.single().id &&
+                        expected.messageId == delivered.single().messageId &&
+                        expected.queuedMsgId == delivered.single().queuedMsgId,
+                )
+                if (arm == "retained") {
+                    assertTrue("retained delivery text changed", heldPrompt == delivered.single().text)
+                    assertTrue("retained message reached give-up", "session.blocked" !in errors(peer, conversation))
+                } else {
+                    assertTrue(
+                        "dropped prompt replayed",
+                        delivered.none {
+                            it.id == queued.id ||
+                                it.messageId == queued.messageId ||
+                                it.text == heldPrompt
+                        },
+                    )
+                    assertTrue("held terminal resolution lost", observer.dropped(queued))
+                }
+                assertLocalStatusAbsent()
+            } finally {
+                // Observe before peer disposal, on success and failure, without replacing either result.
+                runCatching {
+                    sessionErrorPeerTrace(peer.recorded(conversation)).forEach { record ->
+                        Log.i("SessionErrorRecovery", "arm=$arm observer=canonical $record")
                     }
                 }
-                val freshDelivery = deliveries(peer, conversation).single()
-                assertEquals(freshPrompt, freshDelivery.text)
-                assertTrue("dropped identity silently replayed", freshDelivery.messageId != queued.messageId)
-                expectedId = freshDelivery.messageId
             }
-
-            stage(arm, "reply_complete")
-            runBlocking {
-                peer.awaiting("assistant reply followed by idle", 120_000) {
-                    while (!completed(peer, conversation)) delay(25)
-                }
-                peer.awaitQueue(conversation, 10_000) { it.isEmpty() }
-            }
-            stage(arm, "reply_render")
-            val reply = sessionErrorReplyMatcher()
-            await(reply, unmerged = true)
-            compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
-            compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }
-            request(arm, "complete") // Independently counts actual prompts read by the completed child.
-            stage(arm, "recovery_assertions")
-            val delivered = deliveries(peer, conversation)
-            assertEquals("one recovery must deliver exactly one user message", 1, delivered.size)
-            assertEquals(expectedId, delivered.single().messageId)
-            if (arm == "retained") {
-                assertEquals(heldPrompt, delivered.single().text)
-                assertTrue("retained message reached give-up", "session.blocked" !in errors(peer, conversation))
-            } else {
-                assertTrue("dropped prompt replayed", delivered.none { it.messageId == queued.messageId || it.text == heldPrompt })
-            }
-            assertLocalStatusAbsent()
         }
         stage(arm, "list_return")
         Espresso.pressBack()
@@ -313,25 +339,6 @@ internal class SessionErrorRecoveryScenario(
         peer: SecondClientPeer,
         conversation: String,
     ): List<String> = peer.recorded(conversation).filter { it.type == "session_error" }.mapNotNull { peer.field(it, "code") }
-
-    private fun deliveries(
-        peer: SecondClientPeer,
-        conversation: String,
-    ): List<MessagePayloadDto> =
-        peer
-            .recorded(conversation)
-            .filter { it.type == "message" }
-            .map { MobileJson.decodeFromJsonElement(MessagePayloadDto.serializer(), it.payload) }
-            .filter { it.role == WireRole.User }
-
-    private fun completed(
-        peer: SecondClientPeer,
-        conversation: String,
-    ): Boolean {
-        val frames = peer.recorded(conversation)
-        val reply = frames.indexOfLast { it.type == "assistant_delta" && !peer.field(it, "text").isNullOrBlank() }
-        return reply >= 0 && frames.drop(reply + 1).any { it.type == "turn_state" && peer.field(it, "state") == "idle" }
-    }
 
     private fun assertPill(text: String) {
         await(hasText(text))

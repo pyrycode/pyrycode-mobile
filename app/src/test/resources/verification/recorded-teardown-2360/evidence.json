@@ -1,0 +1,48 @@
+{
+  "ticket": 2360,
+  "platform": "macOS",
+  "outsideVerificationScope": ["Linux"],
+  "candidateRevision": "31ef54b52d59db58939deafeff639042b1066ea7",
+  "preRepairBaseRevision": "56954cd3510d4c2a7aad04e7296e3d4c224cbb71",
+  "privateEvidenceRoot": "/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/evidence/2360/builder-20261021",
+  "diagnosis": "The foreground guard excluded phone closes following test-end. Activity teardown could cancel pending query work, then delayed process stop closed the phone while outer test-end cleanup waited. The controlled old-player regression reproduces that lifecycle mismatch; subsequent cleanup reports the sticky failure.",
+  "originalEvidence": {
+    "revision": "96c4e6303f1da310f7c22de5df46a4ca0e972b23",
+    "folder": "original",
+    "failedGate": "verifier-gate_#2349_5.stderr.log",
+    "firstFailure": "phone/host-0/1:close while request 13/checkpoint 28 remained pending",
+    "passingRerun": "2026-10-21T03-36-00-854Z_verifier-gate-rerun_#2349.log",
+    "namedMethodFailedInOriginalGate": 1,
+    "namedMethodPassedInRerun": 1,
+    "precedingTestStateOrLoad": "not established"
+  },
+  "unchangedRecording": {
+    "path": "app/src/androidTest/assets/recorded/suite/interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk.json",
+    "sha256": "02f08011950d5be8069b3069631fea03108fea19fbda806ddd4a4f8e987a7a7a"
+  },
+  "unitCommand": "python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.recording.<selection> --console=plain",
+  "unitRuns": [
+    {"folder": "red", "selection": "SuiteConnectionsTest.phoneTeardownRetainsRequiredWorkBeforeTestEnd", "executed": 1, "passed": 0, "failed": 1, "errors": 0, "skipped": 0, "source": "preRepairBaseRevision plus regression.patch", "outcome": "Original strict close/thread_catch_up/test-end lifecycle mismatch"},
+    {"folder": "intermediate-test-clock-failure", "selection": "SuiteConnectionsTest", "executed": 24, "passed": 23, "failed": 1, "errors": 0, "skipped": 0, "source": "preRepairBaseRevision plus source.patch", "outcome": "New test blocked its virtual delivery dispatcher in synchronous control; corrected to send final control through the strict tape"},
+    {"folder": "connections-green", "selection": "SuiteConnectionsTest", "executed": 24, "passed": 24, "failed": 0, "errors": 0, "skipped": 0, "source": "preRepairBaseRevision plus source.patch, before formatting"},
+    {"folder": "probes-green", "selection": "RecordedPhoneTeardownTest", "executed": 5, "passed": 5, "failed": 0, "errors": 0, "skipped": 0, "source": "pre-commit probe source, before formatting; repeated on candidateRevision below"},
+    {"folder": "tape-green", "selection": "RecordedSuiteTapeTest", "executed": 44, "passed": 44, "failed": 0, "errors": 0, "skipped": 0, "source": "preRepairBaseRevision plus source.patch, before formatting"},
+    {"folder": "rule-green", "selection": "RecordedActivityRuleTest", "executed": 2, "passed": 2, "failed": 0, "errors": 0, "skipped": 0, "source": "preRepairBaseRevision plus source.patch, before formatting"},
+    {"folder": "candidate-probes-green", "selection": "RecordedPhoneTeardownTest", "executed": 5, "passed": 5, "failed": 0, "errors": 0, "skipped": 0, "source": "candidateRevision", "additionalTasks": ["lint", "assembleDebug", "compileDebugAndroidTestKotlin"], "exitCode": 0}
+  ],
+  "nativeCommand": "python3 scripts/android-test-gate.py ui --tests de.pyryco.mobile.recording.RecordedMobileSuiteTest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk",
+  "nativeSource": "candidateRevision, clean working tree throughout all five consecutive invocations",
+  "nativeRuns": [
+    {"folder": "native-1", "report": "ui-8ya2zwfy/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "0cd0361240a91453f6e3e18b98df25980d1da00e4d4352ca6dbd45a4018d8bb9"},
+    {"folder": "native-2", "report": "ui-20957trf/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "5628111f947a32338391e5200e2285852864d332f3df480b4945a525c35db7b1"},
+    {"folder": "native-3", "report": "ui-z9yswlmc/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "8890cb78a2624491b25a32062afefa2a616e38484bc2103c4105caffa8389153"},
+    {"folder": "native-4", "report": "ui-57li8d75/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "24a09ccb20b23a919678eeb525063fd0db47d072538f8e4b066bce6296106027"},
+    {"folder": "native-5", "report": "ui-j48tqg5o/dispatcher.xml", "executed": 1, "passed": 1, "failed": 0, "errors": 0, "skipped": 0, "sha256": "e4b22e6bba12d510ed72eb74a54520a1f0d5c90fcd9fb8ebee24928605c0e3eb"}
+  ],
+  "otherAttempts": [
+    "Combined four-class selector was refused by scope admission before execution; rerun as separate focused class invocations, zero tests from the refused selection.",
+    "Initial forced Spotless check reported one chained-Boolean line break; corrected and forced check passed."
+  ],
+  "preservation": "Raw XML, native phone logs, phases, source revisions and patches are private. Native copies were compared byte for byte with original gate folders; SHA256SUMS manifests verify retained files.",
+  "remainingAcceptance": "Dispatcher configured UI gate must execute and pass the named method before verifier PASS; complete suites remain dispatcher-owned."
+}

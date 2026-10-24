@@ -1,0 +1,2 @@
+{"event": "daemon_fault_transition", "time": 1792737870.6499765, "action": "spawn", "http_status": 0, "running": true, "pid": 726338, "generation": 1, "ready": false, "phase": "spawned", "log_offset": 0, "elapsed_ms": 0}
+{"event": "daemon_fault_transition", "time": 1792737870.9437394, "action": "start", "http_status": 503, "running": true, "pid": 726338, "generation": 1, "ready": false, "phase": "registration_timeout", "log_offset": 0, "elapsed_ms": 250}

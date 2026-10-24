@@ -16,6 +16,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -32,19 +33,126 @@ import java.io.Closeable
 @OptIn(ExperimentalCoroutinesApi::class)
 class InitialAttentionQueryTest {
     private val savedSink = RelayLog.sink
+    private val replays = mutableListOf<Replay>()
+
+    private fun replay() = Replay().also { replays += it }
 
     @Before fun muteLogs() {
         RelayLog.sink = { _, _, _ -> }
     }
 
     @After fun restoreLogs() {
-        RelayLog.sink = savedSink
+        try {
+            replays.forEach(Replay::close)
+        } finally {
+            RelayLog.sink = savedSink
+        }
+    }
+
+    @Test fun delayedNavigationCannotRestartAcquisitionDeadline() =
+        runTest {
+            val replay = replay()
+            try {
+                ThreadAcquisitionGate.arm(replay.thread, "b", 30_000) { testScheduler.currentTime }.use {
+                    advanceTimeBy(20_000)
+                    val navigation =
+                        async { runCatching { ThreadAcquisitionGate.negotiated(replay.thread).acquire("b", replay.connection) } }
+                    runCurrent()
+                    advanceTimeBy(10_001)
+                    runCurrent()
+                    assertTrue("time spent navigating must not restart acquisition's original deadline", navigation.isCompleted)
+                    assertTrue(navigation.await().isFailure)
+                }
+            } finally {
+                replay.progress.close()
+            }
+        }
+
+    @Test fun fixtureTeardownRetiresItsReadySource() {
+        val replay = replay()
+        try {
+            replay.queries.open("b")
+            replay.deliverBatch()
+            replay.deliverTerminal()
+            assertTrue(checkNotNull(ThreadQueryReadiness.current("host", "b")).isCurrent())
+            restoreLogs()
+            assertEquals("fixture teardown must retire its registration", null, ThreadQueryReadiness.current("host", "b"))
+        } finally {
+            replay.progress.close()
+        }
+    }
+
+    @Test fun navigationAcquisitionAndNextQueryUseOneDeadline() =
+        runTest {
+            for (queryDelay in listOf(4_000L, 15_000L)) {
+                val replay = replay()
+                ThreadAcquisitionGate.arm(replay.thread, "b", 30_000) { testScheduler.currentTime }.use { gate ->
+                    replay.queries.open("b")
+                    replay.deliverBatch()
+                    advanceTimeBy(20_000)
+                    val acquisition = async { ThreadAcquisitionGate.negotiated(replay.thread).acquire("b", replay.connection) }
+                    runCurrent()
+                    advanceTimeBy(5_000)
+                    replay.deliverTerminal()
+                    runCurrent()
+                    checkNotNull(acquisition.await()).use {
+                        val nextQuery = async { runCatching { gate.awaitNextQuery() } }
+                        runCurrent()
+                        assertFalse(nextQuery.isCompleted)
+                        advanceTimeBy(queryDelay)
+                        replay.assertExactQueriesAndComplete()
+                        runCurrent()
+                        if (queryDelay == 4_000L) {
+                            assertTrue("a distinct completion at 29 seconds remains valid", nextQuery.await().getOrThrow().isCurrent())
+                        } else {
+                            assertTrue("a completion at 40 seconds cannot extend the original deadline", nextQuery.await().isFailure)
+                        }
+                    }
+                }
+            }
+        }
+
+    @Test fun navigationCannotBeginAcquisitionAfterDeadline() =
+        runTest {
+            val replay = replay()
+            ThreadAcquisitionGate.arm(replay.thread, "b", 30_000) { testScheduler.currentTime }.use {
+                advanceTimeBy(30_001)
+                val result = runCatching { ThreadAcquisitionGate.negotiated(replay.thread).acquire("b", replay.connection) }
+                assertTrue(result.isFailure)
+                assertTrue(replay.sent.isEmpty())
+            }
+        }
+
+    @Test fun oldFixtureTeardownPreservesReadyReplacement() {
+        val old = replay()
+        val replacement = replay()
+        replacement.queries.open("b")
+        replacement.deliverBatch()
+        replacement.deliverTerminal()
+        val receipt = checkNotNull(ThreadQueryReadiness.current("host", "b"))
+        old.close()
+        assertTrue(receipt.isCurrent())
+        restoreLogs()
+        assertEquals(null, ThreadQueryReadiness.current("host", "b"))
+    }
+
+    @Test fun fixtureCloseRetiresSourceAfterAnAssertionFailure() {
+        assertThrows(AssertionError::class.java) {
+            replay().use { replay ->
+                replay.queries.open("b")
+                replay.deliverBatch()
+                replay.deliverTerminal()
+                assertTrue(checkNotNull(ThreadQueryReadiness.current("host", "b")).isCurrent())
+                throw AssertionError("controlled owner failure")
+            }
+        }
+        assertEquals(null, ThreadQueryReadiness.current("host", "b"))
     }
 
     @Test fun destinationGateAllowsMetadataBeforeInitialQueryAndDefersOnlyAcquisition() =
         runTest {
-            val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use { gate ->
+            val replay = replay()
+            ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use { gate ->
                 val source =
                     object : ConversationRepository by FakeConversationRepository() {
                         override val negotiatedThread = replay.thread
@@ -76,17 +184,17 @@ class InitialAttentionQueryTest {
 
     @Test fun unarmedOrDifferentTargetAcquisitionKeepsProviderAdmission() =
         runTest {
-            val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "other", 30_000).use {
-                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+            val replay = replay()
+            ThreadAcquisitionGate.arm(replay.thread, "other", 30_000).use {
+                val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                 val lease = checkNotNull(destination.acquire("b", replay.connection))
                 assertEquals(1, replay.sent.size)
                 replay.deliverBatch()
                 replay.deliverTerminal()
                 lease.close()
             }
-            val after = Replay()
-            val lease = checkNotNull(InitialAttentionQueryGate.negotiated(after.thread).acquire("b", after.connection))
+            val after = replay()
+            val lease = checkNotNull(ThreadAcquisitionGate.negotiated(after.thread).acquire("b", after.connection))
             assertEquals(1, after.sent.size)
             after.deliverBatch()
             after.deliverTerminal()
@@ -96,15 +204,18 @@ class InitialAttentionQueryTest {
     @Test fun acquisitionGateRejectsRetiredConnectionAndClosedScope() =
         runTest {
             for (condition in listOf("connection", "scope")) {
-                val replay = Replay()
-                val gate = InitialAttentionQueryGate.arm(replay.thread, "b", 30_000)
+                val replay = replay()
+                val gate = ThreadAcquisitionGate.arm(replay.thread, "b", 30_000)
                 try {
                     replay.queries.open("b")
-                    val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+                    val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                     val navigation = async { destination.acquire("b", replay.connection) }
                     runCurrent()
                     assertFalse(navigation.isCompleted)
                     if (condition == "connection") replay.support.value = ThreadSupport.Supported(Any()) else gate.close()
+                    runCurrent()
+                    assertTrue("retirement must end acquisition without waiting for another reply", navigation.isCompleted)
+                    assertEquals(null, navigation.await())
                     replay.deliverBatch()
                     replay.deliverTerminal()
                     runCurrent()
@@ -119,9 +230,9 @@ class InitialAttentionQueryTest {
 
     @Test fun acquisitionGateCannotSpendAReplacementGenerationsCertificate() =
         runTest {
-            val replay = Replay()
-            InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
-                val destination = InitialAttentionQueryGate.negotiated(replay.thread)
+            val replay = replay()
+            ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use {
+                val destination = ThreadAcquisitionGate.negotiated(replay.thread)
                 val navigation = async { destination.acquire("b", replay.connection) }
                 runCurrent()
                 replay.store.reset("host", "b", "e")
@@ -149,7 +260,7 @@ class InitialAttentionQueryTest {
 
     @Test fun activeInitialQueryDefersAcquisitionUntilCertified() =
         runTest {
-            val replay = Replay()
+            val replay = replay()
             replay.queries.open("b")
             val navigation =
                 async {
@@ -173,21 +284,61 @@ class InitialAttentionQueryTest {
 
     @Test fun completedInitialQueryAcquiresWithoutAnotherWait() =
         runTest {
-            val replay = Replay()
+            val replay = replay()
             replay.queries.open("b")
             replay.deliverBatch()
             replay.deliverTerminal()
             awaitInitialAttentionQuery(replay.store.observe("host", "b"))
             val lease =
-                InitialAttentionQueryGate.arm(replay.thread, "b", 30_000).use {
-                    checkNotNull(InitialAttentionQueryGate.negotiated(replay.thread).acquire("b", replay.connection))
+                ThreadAcquisitionGate.arm(replay.thread, "b", 30_000).use {
+                    checkNotNull(ThreadAcquisitionGate.negotiated(replay.thread).acquire("b", replay.connection))
                 }
             replay.assertExactQueriesAndComplete()
             lease.close()
         }
 
+    @Test fun replacementSourceAcquiresDuringAndAfterItsConsumedTerminal() =
+        runTest {
+            for (duringQuery in listOf(true, false)) {
+                val retired = replay()
+                retired.queries.open("b")
+                retired.deliverBatch()
+                retired.deliverTerminal()
+                checkNotNull(retired.queries.acquire("b")).use { retired.assertExactQueriesAndComplete() }
+                val oldReceipt = checkNotNull(ThreadQueryReadiness.current("host", "b"))
+
+                val replacement = replay()
+                retired.close()
+                assertFalse("retired source must not certify its replacement", oldReceipt.isCurrent())
+                replacement.queries.open("b")
+                replacement.deliverBatch()
+                if (!duringQuery) replacement.deliverTerminal()
+
+                ThreadAcquisitionGate.arm(replacement.thread, "b", 30_000).use { gate ->
+                    val destination = ThreadAcquisitionGate.negotiated(replacement.thread)
+                    val navigation = async { destination.acquire("b", replacement.connection) }
+                    runCurrent()
+                    if (duringQuery) {
+                        assertFalse("replacement acquisition must wait for consumed completion", navigation.isCompleted)
+                        assertEquals("acquisition must not coalesce into the replacement query", 1, replacement.sent.size)
+                        replacement.deliverTerminal()
+                        runCurrent()
+                    }
+                    checkNotNull(navigation.await()).use {
+                        val distinctCompletion = async { gate.awaitNextQuery() }
+                        runCurrent()
+                        assertFalse("dispatch alone must not finish the reopened destination", distinctCompletion.isCompleted)
+                        replacement.assertExactQueriesAndComplete()
+                        runCurrent()
+                        assertTrue(distinctCompletion.await().isCurrent())
+                        assertFalse(oldReceipt.isCurrent())
+                    }
+                }
+            }
+        }
+
     @Test fun unfencedAcquisitionLeavesRequiredQueryAndPhoneCompletionPending() {
-        val replay = Replay()
+        val replay = replay()
         replay.queries.open("b")
         val lease = checkNotNull(replay.queries.acquire("b"))
         replay.deliverBatch()
@@ -201,7 +352,7 @@ class InitialAttentionQueryTest {
 
     @Test fun cancellationCannotAcquireOrCompleteMissingQuery() =
         runTest {
-            val replay = Replay()
+            val replay = replay()
             replay.queries.open("b")
             var acquired = false
             val navigation =
@@ -251,7 +402,7 @@ class InitialAttentionQueryTest {
 
     @Test fun fullQueryPayloadOwnerAndCountRemainStrict() {
         for (condition in listOf("owner", "generation", "conversation", "epoch", "checkpoint", "extra", "duplicate")) {
-            val replay = Replay()
+            val replay = replay()
             replay.queries.open("b")
             replay.deliverBatch()
             replay.deliverTerminal()
@@ -299,10 +450,11 @@ class InitialAttentionQueryTest {
         tape.assertComplete()
     }
 
-    private class Replay {
+    private class Replay : Closeable {
         val store = AuthoritativeThreadStore()
         val connection = Any()
         val support = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(connection))
+        val progress = ThreadQueryReadiness.register("host") { (support.value as? ThreadSupport.Supported)?.connection === connection }
         val sent = mutableListOf<Envelope>()
         private val pending = mutableListOf<Envelope>()
         var peerDismissed = false
@@ -329,6 +481,7 @@ class InitialAttentionQueryTest {
                 { true },
                 { ++nextId },
                 { request ->
+                    progress.sending(request)
                     sent += request
                     for (step in tape.request(PHONE, request)) {
                         if (step.owner == PHONE) {
@@ -338,6 +491,7 @@ class InitialAttentionQueryTest {
                             peerDismissed = true
                         }
                     }
+                    progress.sent(request.id, true)
                     true
                 },
                 { 0L },
@@ -365,11 +519,15 @@ class InitialAttentionQueryTest {
             }
 
         fun deliverBatch() {
-            queries.accept(pending.removeAt(0))
+            val reply = pending.removeAt(0)
+            queries.accept(reply)
+            progress.consumed(reply)
         }
 
         fun deliverTerminal() {
-            queries.accept(pending.removeAt(0))
+            val reply = pending.removeAt(0)
+            queries.accept(reply)
+            progress.consumed(reply)
         }
 
         fun assertExactQueriesAndComplete() {
@@ -379,6 +537,11 @@ class InitialAttentionQueryTest {
             deliverTerminal()
             assertEquals(13L, store.current("host", "b").checkpoint)
             tape.assertComplete()
+        }
+
+        override fun close() {
+            progress.close()
+            queries.abandon()
         }
     }
 
