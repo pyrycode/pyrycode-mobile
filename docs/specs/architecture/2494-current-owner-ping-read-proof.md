@@ -239,3 +239,72 @@ Draft PR #2531 is the concrete handoff. The required native pair remains short o
 2/2; manual hold, independent review, configured acceptance and documentation stay
 pending. #2514 retains separate Linux 2/2 and configured acceptance. #2469 retains
 occurrence reconciliation; no dependency edge or workflow label was changed.
+
+### 2026-10-24: reviewed integration and normal verifier handoff
+
+The existing owner resumed under explicit authority to integrate the reviewed
+stack and hand back to normal independent review. PR #2535 at
+`c991edc3823097fb2cc08ee12592a328a257c03e` is integrated by an ordinary merge into
+PR #2531, preserving its original commits and #2514 provenance. Current main
+`a9ddcb1f3204a463261be5bde6940d3e85d26c9c` is merged without conflicts. No GitHub
+PR merge, production deployment or runtime pin change is part of this handoff.
+
+Core #3857 is now closed after independent acceptance, documentation and PR #3858.
+Its accepted contract distinguishes correct pre-capture live cancellation from a
+consumer obligation to query again from the last completed checkpoint. The fresh
+instrumented occurrence attributed query 3/checkpoint 2 cancellation to newer
+same-epoch live progress before selection. It does not establish the cause of the
+original uninstrumented failure or historical configured final-read failures.
+Those failures, the planning MISSED disposition and unavailable identity/exclusive
+cause facts remain retained. Core acceptance does not certify Mobile acceptance.
+
+The integrated producer recovery recognizes only exact retryable
+`thread.query_failed`, records the refusal, abandons partial decoder/store facts,
+restores the last certified snapshot and requires a fresh current-physical-source
+successful final marker. The original accepted send is retained; neither sends nor
+`markRead` are retried. The original 90000 ms deadline and all proof fences remain.
+
+Retained producer tests at the repaired source executed 25: the red run passed 22
+and failed 3; the first green attempt passed 23 and failed 2 due to request-wrapper
+equality assertions; payload comparisons corrected those test assertions and the
+final run passed 25/25 with zero errors/skips. The deadline unit injects catch-up;
+the actual peer loop has separate source, compile and native proof.
+
+The repaired normal macOS pair at `c991edc3823097fb2cc08ee12592a328a257c03e` executed
+2/2 passed, zero failures/errors/skips. It retained a real query-3 refusal, then
+fresh query-21 certification at checkpoint 253 and durable phone recovery at 495.
+Both original methods and every assertion passed. The integrated selected source,
+production tree and relevant build/launcher inputs are unchanged from that run;
+current-main differences concern other test scenarios and documentation. Reuse is
+supported by the private `work/resume-source-proof.json` object comparison and
+seven reverified evidence manifests; it is not a new native execution or a claim
+that the whole instrumentation APK is identical after the main merge.
+
+Native manifest: `912f13ae7391d400ff4bde542ba64e77c33c7ebfe72d83e1d61cf931bb321361`
+(27 entries plus nested harness 4). Retained daemon SHA-256:
+`3df9f8c510735f4e1f8834624c8fb2cbe6d96ca97c4b01afca292f74e699ff83`;
+relay: `17e24131cfd3f5a0bc48f972021db17925347311e3dcdf362f2aa8cfe48fc710`.
+The daemon has no embedded VCS binding; recorded Core checkout `64ef0e0f` does not
+independently bind those bytes to source. Built app/test APK hashes:
+`685ba7a6d63ae5c1f0572fd3a1aaf217a4901a04213e67f6372fac3609e3d5da` /
+`df97e6404e31f54e2a21962871ba4bc5b80a0d8b375bfb7ae7ac9c8112d8b3c5`.
+These identify built bytes, not installed readback. Debug metadata remains fixed
+`dev`/999999; clean Git and the harness establish the recorded Mobile source.
+
+The final author gate runs all five pre-verify checks, including current-main,
+Spotless and every Kotlin compilation, through the unchanged checker functions.
+Its GitHub label-read input is replaced only by a fresh protected operator Mobile
+snapshot; no check is omitted or weakened. Exact checker/adapter hashes, source,
+input revision and results belong in the final private receipt and PR description.
+This is explicitly not an unmodified pre-verify CLI invocation, nor the earlier
+four-entrypoint-only validation. The normal verifier still runs its own gates.
+
+After required author checks pass, publish the exact integrated head and establish
+normal independent verifier custody through the protected workflow. Release only
+the obsolete #2494 manual takeover and active builder/escalation markers, retaining
+error-retry history, closed prerequisite links, priority, claim and unrelated state.
+Do not declare ticket PASS from author evidence. Normal configured acceptance and
+actual documentation are mandatory. Documentation retains the Phone read-mark
+proof (#1912), Unavailable-summary recording integration (#2467), and #2514 failure
+isolation provenance. #2514's separate Linux acceptance and #2469's occurrence
+reconciliation remain with their owners; this integration accepts neither.
