@@ -1,0 +1,16 @@
+test_competing_checks_serialize_and_nested_shells_do_not_deadlock (test_test_admission.AdmissionTests.test_competing_checks_serialize_and_nested_shells_do_not_deadlock) ... Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+ok
+test_darwin_signal_to_exited_group_is_allowed_only_without_live_members (test_test_admission.AdmissionTests.test_darwin_signal_to_exited_group_is_allowed_only_without_live_members) ... ok
+test_inherited_descriptor_for_another_file_cannot_bypass_the_hold (test_test_admission.AdmissionTests.test_inherited_descriptor_for_another_file_cannot_bypass_the_hold) ... ok
+test_killed_waiter_never_starts_and_killed_owner_child_keeps_the_lock (test_test_admission.AdmissionTests.test_killed_waiter_never_starts_and_killed_owner_child_keeps_the_lock) ... Test admission: waiting (0 s so far).
+Test admission: acquired after 0s waiting
+ok
+test_stale_inherited_descriptor_and_failed_exec_cannot_keep_a_place (test_test_admission.AdmissionTests.test_stale_inherited_descriptor_and_failed_exec_cannot_keep_a_place) ... ok
+test_successful_child_and_graceful_signal_cleanup_keep_the_exit_status (test_test_admission.AdmissionTests.test_successful_child_and_graceful_signal_cleanup_keep_the_exit_status) ... ok
+test_termination_stops_child_before_next_check (test_test_admission.AdmissionTests.test_termination_stops_child_before_next_check) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 5.967s
+
+OK

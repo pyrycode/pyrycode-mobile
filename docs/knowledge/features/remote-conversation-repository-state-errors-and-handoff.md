@@ -240,6 +240,14 @@ pending-ack races, teardown, stable switching with and without held readings, ca
 delegation without disk writes, and the default fake observation. Keep the numeric
 routing-id and pending-ack cases: ordinary valid-frame tests cannot catch either trap.
 
+The debug phase observation records only the decoded enum, on both legacy and
+supplied `thread` + `interactive` admission paths (#2338). Peer receipt cannot prove
+phone admission when their negotiated capabilities differ. Keep content and idle
+non-clearing assertions alongside malformed-state and later-error cases; a reply
+rendering successfully does not prove that non-idle progress reached the phone.
+See [the publisher probe and integrated recovery evidence](../../e2e-interactive-stream.md#publisher-probe-and-integrated-linux-diagnostics-2338)
+for the causal Core repair, bounded private trace and counted Linux results.
+
 ## Hand-off — the live binding
 
 The downstream DI / connection-coordinator work, and where it landed:

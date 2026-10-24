@@ -364,7 +364,8 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    The shared scenario retains safe arm/phase/fixture-readiness diagnostics (#1977);
    this adds no scenario or Claude turn and does not establish a historical pairing repair.
    Its independent queue/delivery/completion observer uses certified canonical catch-up
-   (#2522); focused Linux passes and pending complete acceptance are recorded below.
+   (#2522); integrated Linux focused proof, configured recovery acceptance (#2338)
+   and remaining #2327 acceptance are recorded below.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -10344,9 +10345,175 @@ Verifier fleet run
 retains the accepted verdict (`handoff/verifier-2522.md`) and normalized scripted XML
 (`logs/verifier-gate__2522_6.log`); ephemeral gate `build/` paths
 are not persistent references. Focused success does not certify criterion 4's
-successful configured recovery execution, complete acceptance for #2338/#2327, or
-the shared five-method/selector investigation. Those acceptance limits remain open;
-reconcile #2509's separate diagnostics after this observer repair.
+successful configured recovery execution or complete acceptance for #2338/#2327.
+The later #2338 integration below supplies its own configured recovery pass and
+comparison disposition; this child's failed execution remains unchanged.
+
+#### Publisher probe and integrated Linux diagnostics (#2338)
+
+[PR #2509](https://github.com/pyrycode/pyrycode-mobile/pull/2509) integrates its
+publisher probe and diagnostics with merged #2522 / PR #2532
+(`0dfe9ad91c8fbd46fca0c404fe2fa2c2591bf1d8`). The publisher cause is the
+[Core #3711 progress-publication defect](#progress-publication-and-macos-recovery-2344):
+admitted responding could be overtaken by same-generation idle during publisher
+enumeration. The controlled probe holds enumeration after selection, admits idle,
+then releases publication. Immediate delivery preserves responding/idle. Its original
+collector could itself stop before observing the terminal sequence, even on repaired
+Core; collect through terminal idle under one five-second deadline before asserting
+the full sequence. Preserve the held-enumeration barrier and bounded cancellation
+cleanup. The corrected probe on old Core
+`f90990dd142f206422bfd4a24a8feedcc94f8274` executes two leaf cases: one passed,
+one failed, zero errors/skips, with held delivery `[idle]`. On repaired Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, both pass with `[responding idle]`.
+The original collector's repaired-Core result remains two executed, one passed,
+one failed. Probe SHA-256 is
+`8375c2bd13529a59b40735f0263cacfa5624cd9c3884d8098212acf20d8b3474`.
+This proves the controlled publisher boundary; the unobserved historical native
+schedule remains unknown. No distinct residual Mobile producer defect was demonstrated.
+
+Phone diagnostics record only decoded `thinking`, `responding` and `idle` phases
+at the existing admission boundary. Legacy and authoritative `thread` + `interactive`
+repository tests preserve error validation, same-session clears, malformed states,
+content/idle non-clearing, later errors and disconnect. Peer order alone cannot prove
+phone admission: the earlier `observer=legacy` trace used different negotiated
+capabilities. The integrated peer negotiates canonical observation and publishes
+exactly one `observer=canonical` trace per reached arm from `runCase`'s `finally`,
+before disposal on success or failure. Publication cannot replace the scenario's
+failure. Keep the last 256 observations, original ordinals and omitted count;
+allowlist types, phases, known error classifications and clear flags. Never publish
+routing identities, arbitrary codes, prose, prompts, payloads or credentials.
+Malformed arrays/objects and absent, false, true and malformed clear flags remain
+covered by the consolidated privacy tests. Canonical acceptance, dropped resolution
+and completion proof remain owned by #2522's observer above. Content or idle alone still cannot clear the error; recognized
+non-idle progress must clear it within the unchanged 20-second assertion.
+
+Historical Linux evidence remains separate:
+
+- The unchanged-source fresh/reused captures at Mobile
+  `e64f0cd096aea1ee4793be9444122858ad17c763` and old Core each executed one method,
+  passed zero, failed one, zero errors/skips at retained status clearing. Phone logs
+  showed error applied, no clear and no later apply. Dropped recovery and final
+  restoration were not reached; owned fixture processes were absent afterward.
+  Persistent roots were agents `logs/evidence/2338/fresh-20261020/` and
+  `reused-20261020/`. The original 45-file manifest SHA-256 is
+  `e81cbe96d1dd3b113e44be7f586b5ec584c618d711f07d537f6d7e0fcaeba824`.
+- Repaired-Core continuation at Mobile
+  `66f97d7b4d94c8342aba1c62a527b1623742db93` passed the exact method in both
+  `reused/scripted-all-kbykkx7n/` and `final-managed-install/scripted-kekfxsi1/`:
+  each 1 executed/passed, zero failures/errors/skips. App SHA-256
+  `df4bfbade1564781b92c77500c76f9e0763a685faf397ccdf768ce9dd24d3c4c`,
+  test APK `3bb5726c4773020f217efdb665fefa344425bfe8e66744c435bd7e647679befd`
+  and tagged daemon `b2f16834d212b3113e7a8af781404283335254b8dddac9037ed40a2a4b13e2e3`
+  matched. Phone order was error → responding → clear → idle. The earlier fresh
+  pass had a different instrumentation APK. Root:
+  `logs/evidence/2338/continuation-linux-20261023/`; 68-file manifest SHA-256
+  `dd6ae053b473096d29de1eb180c0d7ce04075fb5418987656f0822f8c06c1519`.
+- The original #2338 verifier FAIL at `0d658ef83d0bf7853e7f0fc6577b4d8f24d336d1`
+  remains **24 executed, 19 passed, five failed, zero errors/skips**. Recovery
+  failed at retained `held_send`, before status clearing; earlier-session agent,
+  background agent, durable-gap and ping also failed. Both comparison attempts
+  executed zero tests (`selected method is not a supported scripted scenario`).
+  Their launcher selection failures established no baseline pass. The PR's
+  [original verdict](https://github.com/pyrycode/pyrycode-mobile/pull/2509#issuecomment-6369017377)
+  retains those findings; agents logs
+  `2026-10-23T15-49-43-210Z_verifier-gate-rerun_#2338.stderr.log` and
+  `2026-10-23T15-50-55-209Z_verifier-gate-base_#2338.stderr.log` retain the
+  zero-test comparisons. The later same-APK/raw-frame comparison and child focused
+  passes/configured failure remain as recorded in #2522 above.
+
+Historical custody/admission interruptions and the refused foreign Core priority edit
+remain in the ticket's `board-second-sweep-original-20261021` history. The protected
+2026-10-21 scoped continuation permitted preserved Mobile work against merged #3711;
+no refused foreign workflow operation was replayed. A separately protected custody
+receipt was not exposed to the verifier. Queued/cancelled zero-test requests and the
+old diagnostic failures are not native acceptance.
+
+The integrated exact deterministic method ran on Linux through
+`python3 scripts/android-test-gate.py scripted session-error`:
+
+| Private capture under `integration-linux-20261024/` | Mobile | Executed | Passed | Failed | Errors | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `fresh/scripted-1dw9hs_7/` | `a622b6d21ea8cd8767f764212e0a71f818b37520` | 1 | 1 | 0 | 0 | 0 |
+| `reused/scripted-hiumew3f/` | `e51627c81871ad29708c8a0a572673bdda97db18` | 1 | 0 | 1 | 0 | 0 |
+| `final-reused/scripted-y2mnw2hu/` | `e51627c81871ad29708c8a0a572673bdda97db18` | 1 | 1 | 0 | 0 | 0 |
+
+The intervening failure reached dropped `held_send` before child exit/status clearing;
+no completed canonical catch-up returned. Its cause remains unestablished by the
+later pass. Fresh and final tracked executable/build inputs match, but a documentation
+merge regenerated revision metadata and the test APK. Only the failed and final
+reused captures share that instrumentation APK; the final build's 73 APK tasks were
+up to date. Record effective hashes rather than inferring reuse from source revision.
+
+All three use Core `64ef0e0fba71a723b7fdc97141cfc144f6355664`, containing #3711
+and raw-frame retirements, agents `3105b6f49d4bb72859fdea020bea3ebc98810aeb`, and
+relay `9939bc1ff8afec5021c09862e6f14dadba33ad42`. Effective SHA-256 identities:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| App APK, all three | `b6a210153033237867df1392f1201c7af130511919be24a26307ebb08ad02918` |
+| Fresh test APK | `19cb48ab5a29c35b344c2421e0a98f1144317fedb7baa9d8d29f537e5a1c13d1` |
+| Failed/final reused test APK | `8275f8f9b36eee9f3bba1d5b70e4684dc872ea26ccbe540d9554765d81a56341` |
+| Main harness daemon | `b6ef9a2ce97d2d0a9e3436ce94ff2f39cc89867511559499bcbb0ca726bfa658` |
+| Dedicated tagged recovery daemon | `2310e8087b383651ff2f660cd3a3d76c7be5bf0041ef6f377e839c7f1e2a69de` |
+| Relay | `27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10` |
+
+The dedicated binary lacks an embedded revision; its clean Core tree and separate
+`go build -tags e2e_realclaude` command supply attribution. Each `provenance.json`
+and recovery `context.json` retains actual source/build/binary identities. Both
+successful captures verify held/fresh child inputs **1/0 retained, 0/1 dropped**,
+stable daemon/Runner/session identities, pairing cleanup and preceding-host restoration.
+Phone logs show error → responding → clear → idle. Completed-query counts are
+115 fresh and 106 final. All reached arms in all three captures publish one bounded
+canonical trace with unique ordinals; owned daemons are absent afterward.
+
+Private persistent root: agents `logs/evidence/2338/integration-linux-20261024/`.
+Raw `0-TEST-pixel2Api33Atd-_app-.xml`, phone phases/logcat, canonical observation order,
+dedicated daemon/control/child transcripts, relay diagnostics, provenance and cleanup
+receipts are retained there. The verifier checked all 61 manifest entries; manifest
+SHA-256 is `3a09922a8f39c4df79d872387c3c60f663fb48c1763d80738d112b7c93b81072`.
+The original 45, continuation 68 and rework 49 historical entries remain verified.
+Focused JVM XML under `jvm/` records recovery observer **7/7**, producer observer
+**20/20**, owned reply **42/42**, diagnostics **12/12** and repository session error
+**21/21**, each zero failures/errors/skips. This integrated proof uses its own APKs,
+not the child's focused APK results.
+
+#### Configured Linux recovery acceptance and remaining work (#2338 / #2327)
+
+Accepted verifier fleet run
+`b8fb0d854eb72efdd146a2fd8826aa58be8b232d0b11f2bdb1d9b1247c501452`
+reviews PR #2509 candidate `e51627c81871ad29708c8a0a572673bdda97db18` against
+main `76822ac37f2a363ee60af47eb7f061c1cc9eb5b0`:
+
+| Configured gate | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JVM/build | 5556 | 5556 | 0 | 0 | 0 |
+| UI | 250 | 250 | 0 | 0 | 0 |
+| Scripted-all | 24 | 20 | 4 | 0 | 0 |
+
+The exact recovery method **executed/passed 1/1, zero failures/errors/skips within
+scripted-all**. This is configured suite evidence, not another focused invocation.
+Its logcat records both canonical traces and final pairing/preceding-host restoration.
+The four failures also failed on the compared main: earlier-session agent,
+background agent and durable-gap are accepted inherited failures under #2521;
+scripted ping is under #2469. The configured recovery pass and these matching
+comparisons reconcile the original five-method finding and satisfy #2338's explicit
+configured recovery requirement. They do not rewrite the old five-failure result,
+zero-test comparisons, or #2522's failed configured recovery/disposition as passes.
+
+The fleet bundle retains `handoff/verifier-2338.md`, normalized counted XML
+`logs/verifier-gate__2338_6.log`, and matching rerun/base logs. Bundle digest:
+`4d02a591274dd02f7a0fcb657f3f2944d23b475232279f47b331ecab304b99ea`.
+Use those persistent references instead of the removed gate worktree's `build/` paths.
+The named phase/privacy regressions also passed in the 5556-method JVM gate.
+
+Shared investigation
+`e8eb73b8adb1eb31878b5943ed35240ab7a764fac68bd4d1e71decdb996eab55`
+last retains **assessment-queued, zero executions**; no later counted result was
+established. The accepted current comparison resolves this ticket's gate requirement
+independently; do not repeat selector repair or infer that investigation passed.
+Integration evidence and remaining broader complete acceptance go to #2327. The four
+inherited failures are not repaired by this ticket. Linux is the verification OS;
+no real-Claude turn or other-OS result is claimed.
 
 #### Progress publication and macOS recovery (#2344)
 
