@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -3982,7 +3983,7 @@ class InteractiveStreamE2ETest {
             assertSaved(chatY.id, rowB.value, effortY)
 
             leaveThread()
-            openChatRow(nameX)
+            openChatRowAfterCurrentQuery(nameX, twoHostArg(ARG_SERVER_ID), chatX.id)
             val reopenedX = freshSettings(chatX.id)
             assertEquals("X's model on a fresh settings reply", target.value, reopenedX.model)
             awaitFooter(changeModelLabel, target.dropdownLabel(ConversationAgent.Claude))
@@ -4871,7 +4872,7 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
         val (serverId, peer) = answerHostPeer()
-        var acquisitionGate: InitialAttentionQueryGate? = null
+        var acquisitionGate: ThreadAcquisitionGate? = null
         try {
             pairAnswerHost()
             runBlocking {
@@ -4937,10 +4938,10 @@ class InteractiveStreamE2ETest {
                     }
                     android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
                     // Destination metadata starts the attention query; fence only the subsequent acquisition.
-                    val gate = InitialAttentionQueryGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
+                    val gate = ThreadAcquisitionGate.arm(checkNotNull(coordinator.negotiatedThread), chatB, THREAD_TIMEOUT_MS)
                     acquisitionGate = gate
                     composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
-                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { gate.finished }
+                    composeTestRule.waitUntil(gate.remainingMillis()) { gate.finished }
                     gate.awaitAcquired()
                     composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                         composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
@@ -6161,6 +6162,28 @@ class InteractiveStreamE2ETest {
                 markerMatcher = marker,
                 expandLabel = string(R.string.tool_run_expand),
                 collapseLabel = string(R.string.tool_run_collapse),
+                currentFamily = { remaining ->
+                    val current =
+                        runBlocking {
+                            withTimeoutOrNull(minOf(1_000L, remaining)) {
+                                liveRepositories.firstOnLive({ harnessThreadEvidence(it).observe(chat) }) { true }
+                            }
+                        }
+                    val family = current?.takeIf { it.settledTurnReply(childReplyTurn, agentId) != null }?.renderedAgent(agentId)
+                    family?.takeIf { it.ownsTools(lateTools) && it.runId != null }?.let { f ->
+                        AgentRunNavigationFamily(
+                            f.agentId,
+                            checkNotNull(f.runId),
+                            f.childIds,
+                            SemanticsMatcher("nonempty attributed assistant paragraph") { node ->
+                                node.config
+                                    .getOrNull(SemanticsProperties.Text)
+                                    .orEmpty()
+                                    .any { it.text.isNotBlank() }
+                            } and hasAnyAncestor(hasTestTag("background-agent-child:${f.agentId}")),
+                        )
+                    }
+                },
                 evidence = { Log.i("AgentRunProof", "proof_run=$proofRun $it") },
             )
             // The expanded family can exceed the viewport once it contains prose, so compare list
@@ -7682,13 +7705,24 @@ class InteractiveStreamE2ETest {
      * the relaunch. Close the returned scenario in the test's `finally`.
      */
     private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
+        fun awaitBackground() =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    ProcessLifecycleOwner
+                        .get()
+                        .lifecycle.currentStateFlow
+                        .first { !it.isAtLeast(Lifecycle.State.STARTED) }
+                }
+            }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         RecordedSuiteNative.beforePhoneRestart()
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+        awaitBackground()
         instrumentation.runOnMainSync {
             (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
         }
         beforeLaunch()
+        awaitBackground()
         return ActivityScenario.launch(MainActivity::class.java)
     }
 
@@ -8915,15 +8949,36 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** Keep acquisition separate from the current query without adding a reader or a request. */
+    private fun openChatRowAfterCurrentQuery(
+        name: String,
+        host: String,
+        conversation: String,
+    ) {
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val thread = checkNotNull(checkNotNull(registry.connectionFor(host)).coordinator.negotiatedThread)
+        ThreadAcquisitionGate.arm(thread, conversation, THREAD_TIMEOUT_MS).use { gate ->
+            openChatRow(name, gate::remainingMillis)
+            composeTestRule.waitUntil(gate.remainingMillis()) { gate.finished }
+            // Back must not release the new destination's producer before its own reply finishes.
+            runBlocking { gate.awaitNextQuery() }
+        }
+    }
+
     /** Tap the Chats row whose name contains [name] and wait for its thread, as [openRow] does for channels. */
-    private fun openChatRow(name: String) {
+    private fun openChatRow(
+        name: String,
+        remainingMillis: (() -> Long)? = null,
+    ) {
         val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(row) }.isSuccess }
+        composeTestRule.waitUntil(minOf(LIST_TIMEOUT_MS, remainingMillis?.invoke() ?: LIST_TIMEOUT_MS)) {
+            runCatching { scrollListTo(row) }.isSuccess
+        }
         composeTestRule.onAllNodes(row).onFirst().performClick()
         // A reopened chat can already be running (#1313), including while it awaits permission. Its
         // empty composer shows Stop rather than Send, so either control proves the thread arrived.
         val composerControl = hasContentDescription(CD_SEND_MESSAGE) or hasContentDescription(string(R.string.cd_thread_interrupt))
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+        composeTestRule.waitUntil(remainingMillis?.invoke() ?: THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(composerControl).fetchSemanticsNodes().isNotEmpty() &&
                 composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
         }

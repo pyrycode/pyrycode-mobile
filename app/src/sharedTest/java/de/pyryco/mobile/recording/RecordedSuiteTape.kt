@@ -63,6 +63,7 @@ internal class RecordedSuiteTape(
     private var matched = 0
     private var failure: String? = null
     private var readReceipts: SuiteReadReceipts? = null
+    private val pendingReadReplies = mutableListOf<Pair<SuiteStep, Set<Long>>>()
     private var polledReads: SuitePolledReads? = null
     private val daemonIds = mutableMapOf<String, Long>()
 
@@ -451,7 +452,7 @@ internal class RecordedSuiteTape(
     private fun mappedFrame(frame: Envelope): Envelope =
         MobileJson.decodeFromJsonElement(Envelope.serializer(), mapped(MobileJson.encodeToJsonElement(Envelope.serializer(), frame)))
 
-    /** This chooses omission only after the real later terminal boundary is attempted. */
+    /** Terminal cleanup may omit only tails whose complete coverage has already been delivered. */
     private fun prepareTails(
         boundary: Int,
         owner: String? = null,
@@ -537,6 +538,37 @@ internal class RecordedSuiteTape(
     }
 
     @Synchronized fun testEndReady(actual: Envelope): Boolean = precedingWorkReleased(testEndBoundary(actual), allowDeferredReads = true)
+
+    private fun phoneTeardownBoundary(): Int? {
+        val end =
+            steps.indices.firstOrNull {
+                it !in consumed && steps[it].owner == "control" && steps[it].message?.type == "test-control:test-end"
+            } ?: return null
+        return minOf(end, checkpointBoundary())
+    }
+
+    /** Foreground cleanup shares terminal-tail validation, without sending the terminal control. */
+    @Synchronized fun preparePhoneTeardown(): List<SuiteStep> {
+        failure?.let { fail(it) }
+        val boundary = phoneTeardownBoundary() ?: return emptyList()
+        if (boundary == commandBoundary() && steps[boundary].message?.type == "test-control:test-end") {
+            prepareTails(boundary)
+        }
+        return drain()
+    }
+
+    /** Keep request-producing activity jobs alive even when the phone closes after test-end. */
+    @Synchronized fun phoneWorkBeforeTestEndReady(): Boolean {
+        failure?.let { fail(it) }
+        val boundary = phoneTeardownBoundary() ?: return true
+        return (0 until boundary).all { index ->
+            val step = steps[index]
+            !step.owner.startsWith("phone/") ||
+                step.direction !in setOf("client", "daemon", "settings_snapshot") ||
+                index in released ||
+                readReceipts?.permits(step) == false
+        }
+    }
 
     /** A foreground fence must not wait for later cleanup controls or registry disposal. */
     @Synchronized fun phoneClosesBeforeTeardown(): List<String> {
@@ -624,7 +656,8 @@ internal class RecordedSuiteTape(
             return try {
                 val response = readReceipts!!.send(owner, actual)
                 actualIds.getOrPut(owner) { mutableSetOf() } += actual.id
-                SuiteOutcome(listOf(response) + drain(), true)
+                pendingReadReplies += response
+                SuiteOutcome(drain(), true)
             } catch (error: Exception) {
                 val detail = error.message?.takeIf { it.startsWith("Read receipt checkpoint rejected:") }.orEmpty()
                 fail("Recorded read receipt rejected $detail")
@@ -1056,6 +1089,10 @@ internal class RecordedSuiteTape(
 
     private fun drain(): List<SuiteStep> {
         val result = mutableListOf<SuiteStep>()
+        val ready = pendingReadReplies.filter { (reply, queries) -> queries.all { reply.owner to it in requests } }
+        pendingReadReplies.removeAll(ready.toSet())
+        // A matched prerequisite can also release termination; acknowledge while its channel is open.
+        result += ready.map { it.first }
         val blockedOwners = mutableSetOf<String>()
         val blockedReplies = mutableSetOf<String>()
         for (index in 0 until commandBoundary()) {
@@ -1202,6 +1239,7 @@ internal class RecordedSuiteTape(
     @Synchronized fun assertComplete() {
         failure?.let { fail(it) }
         check(released.size == steps.size) { progress() }
+        check(pendingReadReplies.isEmpty()) { "Recorded read reply prerequisites incomplete" }
         readReceipts?.assertComplete()
         polledReads?.assertComplete()
     }

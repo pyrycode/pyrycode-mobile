@@ -20,7 +20,7 @@ class NegotiatedLocalHistoryDecoratorTest {
 
     @Test fun recordedRouteRetainsLocalRetry() = verify { tapped(it, passive = false) }
 
-    @Test fun attentionGateRetainsLocalRetry() = verify { InitialAttentionQueryGate.negotiated(it) }
+    @Test fun attentionGateRetainsLocalRetry() = verify { ThreadAcquisitionGate.negotiated(it) }
 
     @Test fun passiveProbeRetainsLocalRetry() = verify { PassiveThreadProbe.negotiated(it) }
 
