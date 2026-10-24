@@ -453,22 +453,14 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
                 runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (!observation.completedPost(proof.lastOlderPost)) {
-                            peer.catchUpProduction(observation, REPLY_TIMEOUT_MS)
-                            if (!observation.completedPost(proof.lastOlderPost)) delay(50)
-                        }
-                    }
-                    observation.expectReply()
-                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (observation.produced() == null) {
-                            peer.catchUpProduction(observation, REPLY_TIMEOUT_MS)
-                            if (observation.produced() == null) delay(50)
-                        }
-                    }
-                    produced = checkNotNull(observation.produced()) { "producer reply was not certified" }
-                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
+                    produced =
+                        observation
+                            .awaitReplyAfterPost(
+                                proof.lastOlderPost,
+                                REPLY_TIMEOUT_MS,
+                                catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
+                                send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
+                            ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
                 }
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))

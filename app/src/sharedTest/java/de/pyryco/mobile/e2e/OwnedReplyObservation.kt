@@ -372,6 +372,19 @@ internal class OwnedReplyObservation(
         current: Any?,
     ): CompletedReplyObservation? {
         checkCurrent(current)
+        return admit(evidence)
+    }
+
+    /** Producer recovery treats a lost source as unavailable, keeping strict screen checks separate. */
+    @Synchronized fun admittedIfCurrent(
+        evidence: ThreadEvidence,
+        current: Any?,
+    ): CompletedReplyObservation? {
+        if (current !== before.owner.connection || closed || !pumpCurrent()) return null
+        return admit(evidence)
+    }
+
+    private fun admit(evidence: ThreadEvidence): CompletedReplyObservation? {
         val expected = if (queryWitness == null) before.owner else queryWitness.owner() ?: return null
         if (!producerCompleted() || !evidence.admitted || !expected.matches(evidence.owner)) return null
         val produced = if (producerStore != null) authoritativeReply() else null

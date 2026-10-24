@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.network.ThreadQueryRequest
 import de.pyryco.mobile.data.repository.AuthoritativeThreadOutcome
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
 import de.pyryco.mobile.data.repository.AuthoritativeThreadStore
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -264,10 +266,11 @@ internal class ProducerThreadObservation(
                 ((it.content as? JsonObject)?.get("text") as? JsonPrimitive)?.content == text
         } != null
 
-    @Synchronized fun expectReply() {
+    @Synchronized fun expectReply(): Boolean {
         check(reply == null) { "producer reply already armed" }
-        beforeReply = checkNotNull(evidence()) { "producer baseline incomplete" }
+        beforeReply = evidence() ?: return false
         rebuildReply()
+        return true
     }
 
     private fun rebuildReply() {
@@ -287,6 +290,31 @@ internal class ProducerThreadObservation(
     @Synchronized fun produced(): ProducedReplyEvidence? {
         val evidence = evidence() ?: return null
         val observation = reply ?: return null
-        return observation.produced()?.takeIf { observation.admitted(evidence, connection) != null && owns(connection) }
+        return observation.produced()?.takeIf { observation.admittedIfCurrent(evidence, connection) != null && owns(connection) }
+    }
+}
+
+/** The durable-gap scenario's bounded producer sequence; the input is submitted only once. */
+internal suspend fun ProducerThreadObservation.awaitReplyAfterPost(
+    post: String,
+    timeoutMs: Long,
+    catchUp: suspend () -> Unit,
+    send: suspend () -> Unit,
+): ProducedReplyEvidence {
+    withTimeout(timeoutMs) {
+        while (!completedPost(post) || !expectReply()) {
+            catchUp()
+            if (!completedPost(post)) delay(50)
+        }
+    }
+    send()
+    return withTimeout(timeoutMs) {
+        var frozen = produced()
+        while (frozen == null) {
+            catchUp()
+            frozen = produced()
+            if (frozen == null) delay(50)
+        }
+        frozen
     }
 }

@@ -355,6 +355,117 @@ class ProducerThreadObservationTest {
         assertNotNull(target.produced())
     }
 
+    @Test fun sourceLossBetweenCompletionAndAdmissionRequiresFreshReplacementCertification() {
+        var closing = false
+        var reads = 0
+        val target =
+            ProducerThreadObservation("host", "chat", source, setOf("thread", "interactive")) {
+                if (closing && ++reads == 5) current = false
+                current
+            }
+        baseline(target)
+        send(target)
+        finish(target, request(target), reply(), 4)
+        closing = true
+        // Evidence and producer completion both read a live source; admission sees its retirement.
+        assertNull(target.produced())
+        assertEquals(5, reads)
+        val replacement = Any()
+        target.ended(source)
+        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+        assertNull(target.produced())
+        val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+        target.sending(replacement, query)
+        target.sent(replacement, query, true)
+        target.received(replacement, batch(query, emptyList(), 4, final = true))
+        assertEquals("send-id", target.produced()?.messageId)
+        assertEquals("ping", target.produced()?.text)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun sourceLossAfterCompletedPostRecoversArmingWithinOriginalBound() =
+        runTest {
+            var reads = 0
+            var closing = false
+            val target =
+                ProducerThreadObservation("host", "chat", source, setOf("thread", "interactive")) {
+                    val open = current
+                    if (closing && ++reads == 2) current = false
+                    open
+                }
+            baseline(target)
+            closing = true
+            val replacement = Any()
+            var sends = 0
+            var queries = 0
+            val produced =
+                target.awaitReplyAfterPost("older", 90_000, catchUp = {
+                    if (target.connection === source) {
+                        assertFalse(current)
+                        target.ended(source)
+                        target.replaceConnection(replacement, setOf("thread", "interactive")) { true }
+                    }
+                    val query = target.nextQuery().let { Envelope(++sequence, it.type, "", it.payload()) }
+                    target.sending(replacement, query)
+                    target.sent(replacement, query, true)
+                    target.received(replacement, batch(query, if (sends == 0) emptyList() else reply(), if (sends == 0) 1 else 4))
+                    target.received(replacement, batch(query, emptyList(), if (sends == 0) 1 else 4, final = true))
+                    queries++
+                }, send = {
+                    assertTrue(target.connection === replacement)
+                    val envelope = sendEnvelope("send-id")
+                    target.sending(replacement, envelope)
+                    target.sent(replacement, envelope, true)
+                    sends++
+                })
+            assertEquals(1, sends)
+            assertEquals(2, queries)
+            assertEquals("send-id", produced.messageId)
+            assertEquals("ping", produced.text)
+            assertTrue(testScheduler.currentTime < 90_000)
+            assertThrows(IllegalStateException::class.java) { target.expectReply() }
+        }
+
+    @Test fun retirementAfterSuccessfulFreezeDoesNotRequireAnotherEvidenceRead() =
+        runTest {
+            var reads = 0
+            var retireOnRead: Int? = null
+            val target =
+                ProducerThreadObservation("host", "chat", source, setOf("thread", "interactive")) {
+                    val open = current
+                    if (++reads == retireOnRead) current = false
+                    open
+                }
+            baseline(target)
+            var sends = 0
+            var queries = 0
+            val produced =
+                target.awaitReplyAfterPost("older", 90_000, catchUp = {
+                    error("completed reply must be returned without another query")
+                }, send = {
+                    val envelope = sendEnvelope("send-id")
+                    target.sending(source, envelope)
+                    target.sent(source, envelope, true)
+                    sends++
+                    finish(target, request(target), reply(), 4)
+                    reads = 0
+                    assertNotNull(target.produced())
+                    // Retire immediately after the last ownership read that successfully freezes the reply.
+                    retireOnRead = reads
+                    reads = 0
+                    queries++
+                })
+            assertFalse(current)
+            assertNull(target.produced())
+            assertEquals(1, sends)
+            assertEquals(1, queries)
+            assertEquals("send-id", produced.messageId)
+            assertEquals("reply", produced.turn)
+            assertEquals("session", produced.session)
+            assertEquals("ping", produced.text)
+        }
+
     @Test fun refusedSendDoesNotOccupyReplacementReceipt() {
         val target = observer()
         baseline(target)
