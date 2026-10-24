@@ -144,7 +144,12 @@ class CompactAncestorCaptureTest {
         assertRead(stale, false)
         assertCertificates(before, stale)
         assertEquals(if (childPage) 1 else 0, f.details.size)
-        f.repo.demandToolBodies("c", this, stale, setOf(20))
+        if (!childPage) {
+            f.push(f.marker(lower = 1, upper = 90, older = false), request)
+            runCurrent()
+        }
+        val fetchBase = store.current("h", "c")
+        f.repo.demandToolBodies("c", this, fetchBase, setOf(20))
         val body = f.details.last()
         assertEquals("thread_read_tool_body", body.type)
         for (final in listOf(false, true)) {
@@ -158,6 +163,6 @@ class CompactAncestorCaptureTest {
         val evicted = fetched.copy(bodyContents = emptyMap(), bodyLoads = emptyMap())
         assertFalse(evicted.hasToolBody(full))
         assertRead(evicted, false)
-        assertCertificates(stale, fetched)
+        assertCertificates(fetchBase, fetched)
     }
 }
