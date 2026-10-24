@@ -7701,7 +7701,9 @@ class InteractiveStreamE2ETest {
                 resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).size
             }
             val observedViews = stub.answered.count { it.action == Intent.ACTION_VIEW } - views
-            val diagnostic = "stage=viewer-timeout resumed=$resumed viewerIntents=$observedViews answered=${stub.answered.size} phases=$phases"
+            val diagnostic =
+                "stage=viewer-timeout resumed=$resumed viewerIntents=$observedViews " +
+                    "answered=${stub.answered.size} phases=$phases"
             Log.i("AttachmentOpenProbe", diagnostic)
             failure.addSuppressed(AssertionError(diagnostic))
             throw failure
