@@ -37,6 +37,9 @@ internal class ThreadItemDto private constructor(
     val shown: Boolean = raw.threadBoolean("shown")
     val summary: String = raw.threadString("summary")
     val subtype: String? = optionalFields.optionalString("subtype")
+
+    /** Exact computed association: omitted is unknown, while an empty string explicitly clears it. */
+    val summaryTaskId: String? = summaryPayload?.optionalString("task_id")
     val content: JsonElement = requireNotNull(raw["content"])
     val hasToolBody: Boolean get() = raw["detail_omitted"] != JsonPrimitive(true) && content is JsonObject
 

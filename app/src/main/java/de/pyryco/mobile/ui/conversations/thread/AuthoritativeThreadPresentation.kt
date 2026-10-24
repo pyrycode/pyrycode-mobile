@@ -665,6 +665,10 @@ private fun ThreadItemDto.toolName(): String? =
         }
 
 private fun ThreadItemDto.recordedTask(): Pair<String, String>? {
+    if (summaryPayload != null) {
+        val id = summaryTaskId?.takeUnless { it.isEmpty() } ?: return null
+        return id to if (kind == "agent") "local_agent" else ""
+    }
     val fields = content as? JsonObject ?: return null
     val link = fields.obj("task_link") ?: return null
     val id = fields.text("task_id")?.takeIf { it.isNotBlank() } ?: return null

@@ -4,10 +4,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNode
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.AuthoritativeThreadSnapshot
@@ -42,6 +48,7 @@ class CompactRootPagesScreenTest {
                             "order" to JsonPrimitive(20),
                             "parent" to JsonPrimitive(0),
                             "headline" to JsonPrimitive("agent-1"),
+                            "task_id" to (agent.content as JsonObject).getValue("task_id"),
                             "detail_omitted" to JsonPrimitive(true),
                             "public_child_count" to JsonPrimitive(8332),
                             "has_public_children" to JsonPrimitive(true),
@@ -114,6 +121,14 @@ class CompactRootPagesScreenTest {
                 }
             }
             compose.waitForIdle()
+            assertEquals(listOf("task-1"), presentation.tasks.tasks.map { it.taskId })
+            assertEquals(1, presentation.tasks.liveCount)
+            val launch = presentation.rows.filterIsInstance<ThreadRow.AgentStartMarker>().single()
+            assertTrue(!launch.finished)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Go to agent ↓"))
+            compose.onNodeWithText("Go to agent ↓").performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("background-agent:${launch.agentId}").assertIsDisplayed()
             compose.onAllNodesWithText("hidden-output").assertCountEquals(0)
             assertTrue(conversions.isEmpty())
             assertTrue(demands.all { it.isEmpty() })
