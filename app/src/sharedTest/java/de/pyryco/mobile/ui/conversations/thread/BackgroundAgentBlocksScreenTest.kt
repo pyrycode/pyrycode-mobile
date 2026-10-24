@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.AgentRunNavigationFamily
 import de.pyryco.mobile.e2e.assertFinishedAgentMarker
 import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.e2e.verifyAgentRunNavigation
@@ -762,6 +763,84 @@ class BackgroundAgentBlocksScreenTest {
             },
         )
         assertTrue("the proof must observe the reset before restoring the exact Agent", resetObserved)
+    }
+
+    @Test fun generationAfterReadinessUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = true)
+    }
+
+    @Test fun generationDuringNavigationRevealUsesTheCurrentOwnedNavigationFamily() {
+        navigationAcrossGenerationReplacement(afterReadiness = false)
+    }
+
+    private fun navigationAcrossGenerationReplacement(afterReadiness: Boolean) {
+        var agent = "a"
+        var run = "child"
+        var second = "child2"
+
+        fun paragraph() =
+            ThreadItem.MessageItem(Message("prose-$agent", "s", Role.Assistant, "Owned paragraph", ts, false, parentToolUseId = agent))
+
+        fun children() = listOf(run, second, "prose-$agent")
+
+        fun ownedText() = hasText("Owned paragraph") and hasAnyAncestor(hasTestTag("background-agent-child:$agent"))
+
+        fun family() = AgentRunNavigationFamily(agent, run, children(), ownedText(), ownedChildKey = "prose-$agent")
+
+        fun items() =
+            listOf(
+                tool(agent, "Agent"),
+                launch().copy(toolCallId = agent),
+                tool(run, "Read", agent),
+                tool(second, "Glob", agent),
+                paragraph(),
+                finish(),
+            ) +
+                (0 until 35).map { user("Later $it") }
+        mount(items(), collapsed = true, compact = true)
+        val initial = family()
+        var beforeNavigation = false
+        var replaced = false
+        var usedReplacement = false
+        compose.verifyAgentRunNavigation(
+            agentId = initial.agentId,
+            runId = initial.runId,
+            childIds = initial.childIds,
+            ownedChild = initial.ownedChild,
+            ownedChildKey = initial.ownedChildKey,
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            currentFamily = {
+                if (replaced) usedReplacement = true
+                family()
+            },
+            evidence = { sample ->
+                println(sample)
+                if (sample.startsWith("event=agent_run_proof stage=before-navigation")) beforeNavigation = true
+                val boundary =
+                    if (afterReadiness) {
+                        sample.startsWith("event=agent_run_readiness") && "ready=true" in sample
+                    } else {
+                        beforeNavigation && sample.startsWith("event=question_answer_reveal stage=before")
+                    }
+                if (boundary && !replaced) {
+                    replaced = true
+                    compose.runOnIdle { state = state.copy(items = emptyList(), hasMessages = false) }
+                    compose.waitForIdle()
+                    agent = "a-next"
+                    run = "child-next"
+                    second = "child2-next"
+                    compose.runOnIdle { state = state.copy(items = items(), hasMessages = true) }
+                    compose.waitForIdle()
+                    val index = list().fetchSemanticsNode().config[SemanticsProperties.IndexForKey]
+                    assertTrue("the retired family's marker must be absent", index("agent-start:a") < 0)
+                    assertTrue("the same raw owned family has its replacement marker", index("agent-start:$agent") >= 0)
+                }
+            },
+        )
+        assertTrue("replace the family at the selected proof boundary", replaced)
+        assertTrue("the proof must resolve the replacement instead of reusing retired identity", usedReplacement)
     }
 
     @Test fun missingListCannotPassTheAgentNavigationProof() {
