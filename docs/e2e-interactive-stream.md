@@ -363,6 +363,8 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    shipped in pyrycode#2859 / PR #2863. See [recovery evidence and boundaries](#session-error-recovery-1731).
    The shared scenario retains safe arm/phase/fixture-readiness diagnostics (#1977);
    this adds no scenario or Claude turn and does not establish a historical pairing repair.
+   Its independent queue/delivery/completion observer uses certified canonical catch-up
+   (#2522); focused Linux passes and pending complete acceptance are recorded below.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -3783,6 +3785,46 @@ Switch back. The [repaired-daemon Linux proof](#authoritative-fixture-migration-
 executed this exact method once and passed, with zero failures/skips, preserving the original
 90000 ms combined reply/clickable-control deadline and fresh-settings assertion. Passing retries
 against the old daemon remain historical comparisons, not post-repair acceptance.
+
+The [#2380 occurrence reconciliation](specs/architecture/2380-refusal-occurrence-reconciliation.md)
+retains two additional Linux `build-hp-1` sightings of this exact method:
+
+| Historical execution | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| #2246 original scripted-all | 1 | 0 | 1 | 0 |
+| #2246 exact retry | 1 | 1 | 0 | 0 |
+| #2373 original scripted-all | 1 | 0 | 1 | 0 |
+| #2373 exact retry | 1 | 1 | 0 | 0 |
+
+Both failed daemon traces record `baseline_required` and teardown 4414 on old Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`. They fit the controlled publication defect;
+original batching, which operand of the reply/control predicate was missing, and suite-order
+or machine-load causation remain unknown. Retries establish intermittency only. The #2373
+bundle lacks its original refusal phone log and raw device XML; counted reports and primary
+daemon/relay evidence survive. The reconciliation retains exact source/binary identities,
+bundle digests, manifest counts and private capture locations, including failures.
+
+The reconciliation reuses #2374's separate repaired-source Linux proof above: **1 executed, 1 passed,
+0 failed, 0 skipped**. Production, the refusal method, fixture and relevant harness inputs
+match that proof; intervening executable changes concern the separate reply-suggestion
+scenario. The scripted reply, exactly one clickable control, disappearance after tapping,
+fresh unheld `haiku` settings, live-only arming and 90000 ms deadline remain unchanged.
+Neither historical occurrence establishes a distinct residual Mobile defect.
+
+The accepted #2380 verifier record, run
+`d9796af5bb24b9849266bf5196076eae03cb9aff09040fcc6c8f09335b371165`, covers candidate
+`8410b69dfb1933f66ada47fe3836331ddd536ce3` on Linux. Configured `scripted-all` XML records
+**24 executed, 19 passed, 5 failed, 0 skipped**; this exact refusal method executed and
+passed once with no skips. The five failures remain failures, accepted as inherited from
+main and tracked by #2353, #2521 and #2469. JVM/build checks recorded **5547 executed,
+5547 passed, 0 failed, 0 skipped**. The UI gate took its documented docs-only skip and
+executed no UI methods. The verifier bundle retains counted XML in
+`logs/verifier-gate__2380_6.log` and refusal daemon/relay inputs under
+`evidence/harness/fault-b32a8ea0881f847586f4feb3af5e20e2/`; its 160 manifest entries
+were verified. Reused raw phone/device proof was retained at
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2380/builder-20261024/2374-native/`
+at review time, subject to pruning. No additional real Claude turn was needed; macOS is
+outside this Linux ticket's verification scope.
 
 `offline-retry` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
@@ -9362,6 +9404,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   [fixture migration evidence](#authoritative-fixture-migration-evidence-2366) for the retained failure,
   old-daemon comparison limits, runtime identities and missing-original-batching uncertainty.
 
+  [#2380](specs/architecture/2380-refusal-occurrence-reconciliation.md) reconciles the additional
+  #2246 and #2373 sightings: each original failed 1/1 and each exact retry passed 1/1,
+  all without skips. It reuses #2374's matching repaired-source Linux proof (1/1 passed,
+  no failures/skips). Original batching and the missing combined-predicate operand remain
+  unknown. The [scenario record](#scenarios-454) retains these failures, evidence limits
+  and #2380's separately accepted configured gate result; retries do not prove the repair.
+
 - **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
   `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
   to the curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted
@@ -10186,8 +10235,118 @@ first-exit fence; an unread open pipe can otherwise falsely acknowledge delivery
 are bounded state observations. Only the dropped private daemon receives the shipped `3s`
 give-up setting; retained uses the default. Give-up can publish blocked before child_crashing,
 so assert its pill and empty backlog immediately after blocked, then require the crash notice
-before release. A settled optimistic user row can remain after give-up: absence of its queued
-state, delivery IDs and completed child inputs prove non-delivery, not disappearance of text.
+before release. A settled optimistic user row can remain after give-up: its explicit hidden,
+inactive canonical `dropped` resolution and independent child-input counts prove non-delivery,
+not disappearance of text. Absence from a newest window cannot prove removal.
+
+#### Canonical recovery observer and Linux evidence (#2522)
+
+The shared `SessionErrorRecoveryScenario` negotiates `thread` and `interactive` on its
+independent authenticated peer and establishes a certified baseline before sending.
+`SessionErrorRecoveryObservation` reads the underlying source snapshot through
+`ProducerThreadObservation`; projected phone rows omit the hidden dropped resolution.
+Sequential explicit catch-up starts from the last successfully completed correlated query,
+including the final no-replay checks. Partial, abandoned, foreign, reset-needed or stale
+queries establish neither absence nor completion. A replacement connection needs its own
+current certification; an epoch change cannot reuse this observer's baseline.
+
+Every active queued user item contributes to the current queue. Retained delivery preserves
+the permanent item ID, exact unsigned 64-bit queue handle, text and client correlation
+metadata across revisions. Give-up requires that same acceptance explicitly hidden,
+inactive and `dropped`, without a delivery order; its resolution stays alongside the
+fresh acceptance, whose permanent ID differs. Identical text or correlation metadata
+does not merge acceptances. Completion requires the exact delivered user item followed
+in source order by its session/turn-owned main-thread assistant content and successful
+terminal item. Idle, unrelated text, old turns and wrong-session terminals cannot settle it.
+Raw `queue_state`, `message`, `assistant_delta`, legacy history and phone snapshots supply
+no observer proof. Live `session_error` and phone status remain separate assertions:
+only admitted non-idle progress clears the held error, still within the original
+20-second status-clear deadline. Both arms retain duplicate local-status checks,
+independent child-input counts, pairing cleanup and preceding-host connection restoration.
+
+This observer incompatibility is distinct from [Core #3711's producer repair](#progress-publication-and-macos-recovery-2344).
+Before migration, identical Mobile `cbb3621eb0d4247286ff7d2bbd5033d376dc4711` APKs
+failed retained `held_send` on Core `5ba6b8dacc0916533df8b8d9c60090190a9e6f4d`
+(1 executed, 1 failed), but passed both arms on Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7` (1 executed/passed). Both Core
+revisions contain #3711. These reports remain under agents
+`logs/evidence/2338/rework-linux-20261023/scripted-ud69y14_/` and
+`repaired-control/scripted-wjv_51k6/`, respectively; builder bundle
+`5e4c9bee987a5d26fd6b39f162e0ab4ecb1bf0a822e94e117a73a01d17b6899a`
+retains the comparison. It establishes no residual Mobile producer defect and does
+not replace the earlier failed captures or Core publisher red/green.
+
+The causal regression `SessionErrorRecoveryObservationTest.canonicalCatchUpReplacesRetiredFramesForBothArms`
+supplies only canonical query facts, requiring explicit catch-up for retained delivery
+and dropped-then-fresh completion. The extracted old raw-queue predicate failed once
+(1 executed, 1 failed, 0 errors/skips); the migrated class passed all 7 methods.
+Its other probes reject partial/foreign/stale evidence, uncertified reconnects,
+changed acceptance metadata, identical-text acceptances and misowned or unordered
+completion, while preserving all active queued items and terminal dropped facts.
+The surrounding `ProducerThreadObservationTest` and `OwnedReplyObservationTest`
+passed 20 and 42 methods. Each green class had zero failures/errors/skips.
+
+Linux focused `python3 scripts/android-test-gate.py scripted session-error` results
+each name the exact deterministic recovery method above and exit 0:
+
+| Effective inputs | Private run directory | Executed | Passed | Failed | Errors | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Fresh test APK build and managed install | `fresh/scripted-f_k_dlz6/` | 1 | 1 | 0 | 0 | 0 |
+| Reused binaries/APKs and managed install | `reused/scripted-jv70e139/` | 1 | 1 | 0 | 0 | 0 |
+
+Both used Mobile `0b30525bf36ff3f2178d65ab9a5e170a8abf54f5`, agents
+`3105b6f49d4bb72859fdea020bea3ebc98810aeb`, Core
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` (publisher repair and raw-frame
+retirements), and relay `9939bc1ff8afec5021c09862e6f14dadba33ad42`.
+Source trees and effective binary/APK identities match between runs; the later
+reviewed head `3669bb9d5210ce3fbb851a077df0910a545b4235` adds no relevant input
+change. SHA-256 identities are:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| App APK | `f060dfbe3c19b57616900416b965169f50730ae5b788e16551596049db7925d2` |
+| Test APK | `7307472a863fb02e3692ab21356c5d7a7a454d28996ef28200425596a5c5cf91` |
+| Relay | `27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10` |
+| Main harness daemon | `582f312209a45dcd28bfc83c8777b367cce46e85ef406452b3e2cb90d01c041b` |
+| Dedicated tagged recovery daemon | `88b55e3d470fe97c2e1c3e3f99072eb48f8bafd7f6d71e3d2cf78b638e307cfd` |
+
+The recovery binary has no embedded VCS revision; its clean supplied Core tree,
+separate `go build -tags e2e_realclaude` command and actual hash provide provenance.
+Private persistent root: agents `logs/evidence/2522/builder-linux-20261024/`.
+`red/` retains the failing source/XML, `jvm/` the three green class reports, and each
+focused run retains raw `0-TEST-pixel2Api33Atd-_app-.xml`, phone phases/logcat,
+canonical query ordering, `provenance.json`, `counted-recovery-receipt.json` and
+dedicated daemon/control/child transcripts. Both arms complete with held/fresh
+inputs **1/0 retained, 0/1 dropped**, stable daemon/Runner/session identities,
+owned daemons absent after cleanup, and pairing/preceding-connection restoration.
+There are 133 fresh and 134 reused completed-query observations. The verifier
+verified all 45 private manifest entries. Fleet builder bundle
+`ada723869164fd5a924b1a78fd8bb92b3d3029f3737fdc0b66312a0984a0a211`
+(digest `b5d35de4ffb4cece363f8768fe4e013f6d5b5b806bdd0aea6ec04c590cc9cd94`)
+retains this evidence. No real-Claude turn or second-OS result is claimed.
+
+Configured Linux gates remain distinct from those focused passes:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| JVM/build | 5554 | 5554 | 0 | 0 | 0 |
+| UI | 250 | 250 | 0 | 0 | 0 |
+| Scripted-all | 24 | 19 | 5 | 0 | 0 |
+
+All seven observer regressions passed in the JVM gate. Configured scripted recovery
+executed once and failed at dropped `fresh_send`; it did not pass. The accepted
+verifier verdict for PR #2532 uses the dispatcher's explicit main comparison against
+`00dbea8e033aa78b750d05b54dc56d0e5fdc46e3`: recovery is tracked under #2353,
+earlier-session agent, background agent and durable-gap failures under #2521, and
+scripted ping under #2469. This disposition does not turn those failures into passes.
+Verifier fleet run
+`01fca9c0ba26eb9a8563e440cc9988aff8bee8460c124e4fae8475609071dc29`
+retains the accepted verdict (`handoff/verifier-2522.md`) and normalized scripted XML
+(`logs/verifier-gate__2522_6.log`); ephemeral gate `build/` paths
+are not persistent references. Focused success does not certify criterion 4's
+successful configured recovery execution, complete acceptance for #2338/#2327, or
+the shared five-method/selector investigation. Those acceptance limits remain open;
+reconcile #2509's separate diagnostics after this observer repair.
 
 #### Progress publication and macOS recovery (#2344)
 
