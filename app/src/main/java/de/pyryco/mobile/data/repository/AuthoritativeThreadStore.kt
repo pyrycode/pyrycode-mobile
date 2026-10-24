@@ -605,6 +605,7 @@ internal class AuthoritativeThreadStore {
         val admitted =
             data.map { child ->
                 val held = winners[child.id]?.takeIf { it.rev == child.rev } ?: return@map child
+                if (held.raw["subtree_version"] == child.raw["subtree_version"]) return@map held
                 val summary = held.summaryPayload ?: return@map child
                 // Equal revision preserves structural facts, not a previous query's optional freshness.
                 val freshness = child.raw["subtree_version"]?.let { mapOf("subtree_version" to it) }.orEmpty()
