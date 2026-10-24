@@ -17,7 +17,10 @@ internal data class ExpansionDetailValidity(
     /** Retained full bodies cannot be revived by evicting their fetched replacement. */
     val staleFullBodies: Map<Long, Long> = emptyMap(),
 ) {
-    internal data class FullSource(val revision: Long, val version: Long)
+    internal data class FullSource(
+        val revision: Long,
+        val version: Long,
+    )
 
     internal data class Observation(
         val revision: Long,
@@ -170,9 +173,12 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
     val ancestorCapture = firstKnownAncestors.mapNotNull { detailValidity.observations[it]?.version }.maxOrNull()
     val restoredStale =
         incoming.filter { item ->
-            item.hasToolBody && item.id in stale &&
-                (ancestorCapture == null ||
-                    detailValidity.fullSources[item.id]?.let { it.revision == item.rev && it.version > ancestorCapture } != true)
+            item.hasToolBody &&
+                item.id in stale &&
+                (
+                    ancestorCapture == null ||
+                        detailValidity.fullSources[item.id]?.let { it.revision == item.rev && it.version > ancestorCapture } != true
+                )
         }
     // These captures were admitted against the current source before the disk read completed.
     val fetchedChildren = (childPages.keys + childLoads.keys).mapTo(mutableSetOf()) { it.first }

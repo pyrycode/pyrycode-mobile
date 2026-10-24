@@ -26,9 +26,13 @@ import org.junit.Test
 class CompactAncestorCaptureTest {
     private val oldSink = RelayLog.sink
 
-    @Before fun quiet() { RelayLog.sink = { _, _, _ -> } }
+    @Before fun quiet() {
+        RelayLog.sink = { _, _, _ -> }
+    }
 
-    @After fun restoreLog() { RelayLog.sink = oldSink }
+    @After fun restoreLog() {
+        RelayLog.sink = oldSink
+    }
 
     @Test fun olderRootAncestorKeepsCurrentTool() = runTest { current(false, "tool_call") }
 
@@ -54,7 +58,10 @@ class CompactAncestorCaptureTest {
             ),
         )
 
-    private fun assertRead(snapshot: AuthoritativeThreadSnapshot, usable: Boolean) {
+    private fun assertRead(
+        snapshot: AuthoritativeThreadSnapshot,
+        usable: Boolean,
+    ) {
         val p = projectDeferredAuthoritativeThread("h", "c", snapshot)
         val expanded = setOf("${p.scope}:10", "${p.scope}:17", "${p.scope}:20")
         val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
@@ -62,7 +69,10 @@ class CompactAncestorCaptureTest {
         assertEquals(usable, p.matchesReadContents(row.listKey(0), row.item, 110))
     }
 
-    private fun assertCertificates(before: AuthoritativeThreadSnapshot, after: AuthoritativeThreadSnapshot) {
+    private fun assertCertificates(
+        before: AuthoritativeThreadSnapshot,
+        after: AuthoritativeThreadSnapshot,
+    ) {
         assertEquals(before.coverage, after.coverage)
         assertEquals(before.checkpoint, after.checkpoint)
         assertEquals(before.completeCoverage, after.completeCoverage)
@@ -85,9 +95,17 @@ class CompactAncestorCaptureTest {
         return f to f.roots.last()
     }
 
-    private fun TestScope.ancestor(f: CompactRootFixture, request: Envelope, childPage: Boolean, version: Long = 100) {
-        val summary = JsonObject(header(17, kind = "agent", facts = ",\"subtree_version\":$version") +
-            ("parent" to JsonPrimitive(if (childPage) 10 else 0)))
+    private fun TestScope.ancestor(
+        f: CompactRootFixture,
+        request: Envelope,
+        childPage: Boolean,
+        version: Long = 100,
+    ) {
+        val summary =
+            JsonObject(
+                header(17, kind = "agent", facts = ",\"subtree_version\":$version") +
+                    ("parent" to JsonPrimitive(if (childPage) 10 else 0)),
+            )
         if (childPage) {
             val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":$version,\"item_id\":10,\"rev\":90"
             f.push(obj("""{$scope,"children":[$summary],"final":false}"""), request, "thread_children")
@@ -98,7 +116,10 @@ class CompactAncestorCaptureTest {
         runCurrent()
     }
 
-    private suspend fun TestScope.current(childPage: Boolean, kind: String) {
+    private suspend fun TestScope.current(
+        childPage: Boolean,
+        kind: String,
+    ) {
         val (f, request) = start(childPage)
         val store = f.repo.authoritativeThreads
         val full = full(kind)
@@ -120,10 +141,13 @@ class CompactAncestorCaptureTest {
         runCurrent()
         assertEquals("current contents need no body refresh", demandCount, f.details.size)
         // A genuinely newer ancestor observation must still invalidate these contents.
-        val changed = ThreadItemDto.decodeSummary(
-            JsonObject(header(17, rev = 17, kind = "agent", facts = ",\"subtree_version\":120") +
-                ("parent" to JsonPrimitive(if (childPage) 10 else 0))),
-        )
+        val changed =
+            ThreadItemDto.decodeSummary(
+                JsonObject(
+                    header(17, rev = 17, kind = "agent", facts = ",\"subtree_version\":120") +
+                        ("parent" to JsonPrimitive(if (childPage) 10 else 0)),
+                ),
+            )
         store.applyBatch("h", "c", "e", 120, listOf(changed), 0)
         val invalidated = store.current("h", "c")
         assertFalse(invalidated.hasToolBody(full))
