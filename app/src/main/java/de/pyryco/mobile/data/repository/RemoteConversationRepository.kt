@@ -175,13 +175,14 @@ class RemoteConversationRepository internal constructor(
                     snapshot.generation == generation &&
                     item?.kind == "turn_end"
                 ) {
+                    invalidateWithdrawnReadSummary(conversation)
                     if (item.isCompletion()) {
                         authoritativeQueries.refreshAttention(conversation)
                         RelayLog.d { "event=attention_completion source=live outcome=recovery_requested" }
                     } else {
                         authoritativeQueries.refresh(conversation, generation)
                     }
-                    refreshAuthoritativeReadFacts(conversation, generation)
+                    refreshAuthoritativeReadFacts(conversation, generation, liveCompletion = true)
                 }
             },
         )
@@ -250,6 +251,24 @@ class RemoteConversationRepository internal constructor(
     internal val authoritativeCompletions: StateFlow<List<AuthoritativeCompletion>> = completionFacts
 
     @Volatile private var authoritativeCommandsEnded = false
+
+    private data class LiveReadSummaryRequest(
+        val generation: Long,
+        val requestId: Long,
+        val answered: Boolean = false,
+        val recoveryQueued: Boolean = false,
+    )
+
+    /** One live or opening observation per conversation, consumed before its recovery request. */
+    private val liveReadSummaryRequests = java.util.concurrent.ConcurrentHashMap<String, LiveReadSummaryRequest>()
+    private val certifiedReadGenerations = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private data class OpeningReadSummaryRequest(
+        val generations: Map<String, Long>,
+        val withdrawn: Set<String> = emptySet(),
+    )
+
+    private val openingReadSummaryRequests = java.util.concurrent.ConcurrentHashMap<Long, OpeningReadSummaryRequest>()
 
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -351,7 +370,12 @@ class RemoteConversationRepository internal constructor(
             authoritativeNowMillis,
             retireAuthoritativeConnection,
             onCertified = { conversation, generation, reply ->
-                publishAuthoritativeCompletions(conversation, generation, certificate = reply)
+                if (publishAuthoritativeCompletions(conversation, generation, certificate = reply)) {
+                    certifiedReadGenerations[conversation] = generation
+                    refreshUnavailableAuthoritativeReadFacts(conversation, generation)
+                } else {
+                    invalidateWithdrawnReadSummary(conversation)
+                }
             },
             expansionEnabled = { authoritativeLiveEnabled() && "thread_expansion" in negotiatedCapabilities() },
             compactEnabled = {
@@ -685,6 +709,9 @@ class RemoteConversationRepository internal constructor(
                     queryExpiry.cancel()
                     authoritativeQueries.abandon()
                     authoritativeRoute.abandon()
+                    liveReadSummaryRequests.clear()
+                    certifiedReadGenerations.clear()
+                    openingReadSummaryRequests.clear()
                     endSwitchAgentRequests()
                     endBackgroundTaskStops()
                     sessionErrorProjection.reset()
@@ -700,6 +727,9 @@ class RemoteConversationRepository internal constructor(
                 queryExpiry.cancel()
                 authoritativeQueries.abandon()
                 authoritativeRoute.abandon()
+                liveReadSummaryRequests.clear()
+                certifiedReadGenerations.clear()
+                openingReadSummaryRequests.clear()
                 // Completion also runs if cancellation prevents the collector body from starting.
                 endSwitchAgentRequests()
             }
@@ -713,17 +743,132 @@ class RemoteConversationRepository internal constructor(
     private fun refreshAuthoritativeReadFacts(
         conversationId: String,
         generation: Long,
+        liveCompletion: Boolean = false,
+        recovery: LiveReadSummaryRequest? = null,
     ) {
+        val request = listConversationsRequest()
+        val owner = LiveReadSummaryRequest(generation, request.id)
+        if (liveCompletion) liveReadSummaryRequests[conversationId] = owner
         scope.launch {
-            if (authoritativeCommandsEnded ||
-                !authoritativeLiveEnabled() ||
-                authoritativeThreads.current(authoritativeHostId, conversationId).generation != generation
-            ) {
-                return@launch
+            var sent = false
+            try {
+                if (authoritativeCommandsEnded ||
+                    !authoritativeLiveEnabled() ||
+                    authoritativeThreads.current(authoritativeHostId, conversationId).generation != generation
+                ) {
+                    return@launch
+                }
+                if (!liveCompletion &&
+                    (
+                        !hasCurrentCertifiedCompletion(conversationId, generation) ||
+                            recovery == null ||
+                            !liveReadSummaryRequests.remove(conversationId, recovery)
+                    )
+                ) {
+                    return@launch
+                }
+                sent = pump.send(request)
+                RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
+            } finally {
+                if (!sent && liveCompletion) liveReadSummaryRequests.remove(conversationId, owner)
+                if (recovery != null) liveReadSummaryRequests.remove(conversationId, recovery)
             }
-            val sent = pump.send(listConversationsRequest())
-            RelayLog.i { "event=thread_summary_refresh code=${if (sent) "requested" else "refused"}" }
         }
+    }
+
+    private fun refreshUnavailableAuthoritativeReadFacts(
+        conversation: String,
+        generation: Long,
+    ) {
+        val owner =
+            liveReadSummaryRequests[conversation]?.takeIf {
+                it.generation == generation && it.answered && !it.recoveryQueued
+            } ?: return
+        if (currentReadMarks(conversation)?.let { it.threadSupported && it.unreadWatermark == null } != true) {
+            liveReadSummaryRequests.remove(conversation, owner)
+            return
+        }
+        val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+        if (snapshot.generation != generation || snapshot.resetNeeded) {
+            liveReadSummaryRequests.remove(conversation, owner)
+            return
+        }
+        invalidateWithdrawnReadSummary(conversation)
+        if (liveReadSummaryRequests[conversation] != owner) return
+        if (!hasCurrentCertifiedCompletion(conversation, generation)) return
+        // Certification and the response may arrive in either order. Only daemon facts restore availability.
+        // Consume the observation once, but keep its identity revocable until dispatch.
+        // Withdrawal removes this queued owner; later certification cannot recreate it.
+        val queued = owner.copy(recoveryQueued = true)
+        if (liveReadSummaryRequests.replace(conversation, owner, queued)) {
+            refreshAuthoritativeReadFacts(conversation, generation, recovery = queued)
+        }
+    }
+
+    private fun hasCurrentCertifiedCompletion(
+        conversation: String,
+        generation: Long,
+    ): Boolean {
+        val snapshot = authoritativeThreads.current(authoritativeHostId, conversation)
+        return snapshot.generation == generation &&
+            !snapshot.repairNeeded &&
+            !snapshot.resetNeeded &&
+            snapshot.checkpoint >= snapshot.completedVersion &&
+            completionFacts.value.any {
+                it.conversation == conversation && it.certifiedVersion >= snapshot.completedVersion && completionIsCurrent(it)
+            }
+    }
+
+    private fun invalidateWithdrawnReadSummary(conversation: String) {
+        val generation = certifiedReadGenerations[conversation] ?: return
+        if (generation != authoritativeThreads.current(authoritativeHostId, conversation).generation) return
+        val completions = completionFacts.value.filter { it.conversation == conversation }
+        if (completions.isEmpty() || completions.any(::completionIsCurrent)) return
+        if (!certifiedReadGenerations.remove(conversation, generation)) return
+        liveReadSummaryRequests.remove(conversation)
+        openingReadSummaryRequests.replaceAll { _, owner -> owner.copy(withdrawn = owner.withdrawn + conversation) }
+        RelayLog.d { "event=thread_summary_refresh code=withdrawn" }
+    }
+
+    private fun completeAuthoritativeReadSummary(envelope: Envelope) {
+        if (!authoritativeLiveEnabled()) return
+        val request = envelope.inReplyTo ?: return
+        val rows =
+            try {
+                MobileJson.decodeFromJsonElement<ConversationsPayload>(envelope.payload).conversations
+            } catch (_: IllegalArgumentException) {
+                return
+            }
+        val opening = openingReadSummaryRequests.remove(request)
+        if (opening != null) {
+            rows.forEach { row ->
+                val generation = opening.generations[row.id] ?: 0L
+                if (row.id !in opening.withdrawn && authoritativeThreads.current(authoritativeHostId, row.id).generation == generation) {
+                    liveReadSummaryRequests.compute(row.id) { _, held ->
+                        if (held == null ||
+                            held.generation != generation
+                        ) {
+                            LiveReadSummaryRequest(generation, request, answered = true)
+                        } else {
+                            held
+                        }
+                    }
+                }
+            }
+        }
+        rows.forEach { row ->
+            val pending = liveReadSummaryRequests[row.id]?.takeIf { it.requestId == request } ?: return@forEach
+            if (pending.answered || liveReadSummaryRequests.replace(row.id, pending, pending.copy(answered = true))) {
+                refreshUnavailableAuthoritativeReadFacts(row.id, pending.generation)
+            }
+        }
+    }
+
+    private fun sendOpeningConversationSummary() {
+        val request = listConversationsRequest()
+        val owner = OpeningReadSummaryRequest(authoritativeThreads.generations(authoritativeHostId))
+        if (authoritativeLiveEnabled()) openingReadSummaryRequests[request.id] = owner
+        if (!pump.send(request)) openingReadSummaryRequests.remove(request.id)
     }
 
     /** Supplied transient progress, never a durable item or read checkpoint. */
@@ -873,6 +1018,13 @@ class RemoteConversationRepository internal constructor(
             envelope.type in setOf("thread_items", "thread_reset", "thread_tool_body", "thread_children", TYPE_ERROR) &&
             authoritativeQueries.accept(envelope)
         ) {
+            val conversation =
+                (
+                    (envelope.payload as? JsonObject)?.get(
+                        "conversation_id",
+                    ) as? JsonPrimitive
+                )?.takeIf { it.isString }?.content
+            conversation?.let(::invalidateWithdrawnReadSummary)
             return
         }
         if (authoritativeLiveEnabled() && SessionLiveAdmission.family(envelope.type) != null) {
@@ -909,9 +1061,11 @@ class RemoteConversationRepository internal constructor(
         if (messageCommands.routeAttachmentUpload(envelope)) return
         if (attachmentRetrievals.route(envelope)) return
         when (envelope.type) {
-            TYPE_CONVERSATIONS ->
+            TYPE_CONVERSATIONS -> {
                 // A full-list snapshot, reply or unsolicited push: see [ConversationListProjection.applySnapshot].
                 conversationListProjection.applySnapshot(envelope)
+                completeAuthoritativeReadSummary(envelope)
+            }
             TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED -> {
                 // Updates include correlated replies and other-device pushes, keyed by payload id.
                 // Creates are replies only; the host announces new conversations with an update.
@@ -1214,14 +1368,14 @@ class RemoteConversationRepository internal constructor(
             // Request on every subscription: redundant requests are absorbed by StateFlow conflation,
             // and re-subscribing (e.g. on lifecycle resume) naturally re-issues. A pre-Open send returns
             // false and is dropped — the coordinator (#302) wires this against an Open pump.
-            pump.send(listConversationsRequest())
+            sendOpeningConversationSummary()
             emitAll(conversationListProjection.observe(filter))
         }
 
     /** Host snapshots retain the distinction between early upserts and a fully loaded list. */
     internal fun observeConversationSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
         flow {
-            pump.send(listConversationsRequest())
+            sendOpeningConversationSummary()
             emitAll(conversationListProjection.observeSnapshots(filter))
         }
 
