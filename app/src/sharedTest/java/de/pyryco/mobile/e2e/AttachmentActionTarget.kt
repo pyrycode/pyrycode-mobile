@@ -4,5 +4,8 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.ComposeTestRule
 
-/** The physical target used for both attachment open and save in the native scenarios. */
-internal fun ComposeTestRule.attachmentActionTarget(matcher: SemanticsMatcher): SemanticsNodeInteraction = onNode(matcher)
+/** Reveal the physical open/save target between thread chrome before the caller's single gesture. */
+internal fun ComposeTestRule.attachmentActionTarget(
+    matcher: SemanticsMatcher,
+    evidence: (String) -> Unit = {},
+): SemanticsNodeInteraction = questionAnswerTarget(matcher, evidence = evidence)

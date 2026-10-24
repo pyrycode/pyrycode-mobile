@@ -36,7 +36,8 @@ No new application state or jobs. Attachment retrieval remains owned by the thre
 | Event | Coverage |
 | --- | --- |
 | Offer arrives, row caches, old Activity and graph close, replacement opens the same conversation | `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` |
-| Deferred tap retrieves, opens once, then long-press saves the retrieved file | Same scenario with original digest/read-grant assertions; controlled causal regression to be named in Revisions |
+| Deferred tap retrieves, opens once, then long-press saves the retrieved file | Same scenario with original digest/read-grant assertions; controlled native composer-placement red/green and `AttachmentActionTargetTest` |
+| A composed restored file starts behind the header or composer | `restoredDeferredOffer_behindHeader_receivesOneOpenRequest`, `restoredDeferredOffer_behindComposer_receivesOneSaveRequest` |
 | Shared helper opens history-restored and interrupted/retried attachments | `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`, `interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` if shared helper/monitor changes |
 | Fresh instrumentation and repeated restored IDs | Five consecutive focused executions, each through the managed launcher |
 
@@ -54,7 +55,7 @@ Estimate remains approximately 600 written lines, no new exported production typ
 
 ## Open Questions
 
-- Which of click delivery, retrieval completion or intent interception explains the historical viewer timeout? Resolve with failing-phase evidence and a controlled regression; passing unchanged replays alone are insufficient.
+- Resolved for the reproduced defect: physical click delivery is lost behind thread chrome, before retrieval or intent dispatch. The historical bundles lack pre-cleanup phase telemetry and cannot uniquely attribute those earlier failures; the controlled native restart reproduction and its repair establish the causal helper defect without treating passing unchanged runs as proof.
 
 ## Revisions
 
@@ -63,3 +64,11 @@ Estimate remains approximately 600 written lines, no new exported production typ
 The unchanged exact method passed 1/1 on macOS; a diagnostic-only execution also passed 1/1. Neither is repair evidence. The original helper used a physical center tap after semantic list placement. That placement does not account for the header and composer drawn over the list. `AttachmentActionTargetTest.restoredDeferredOffer_behindHeader_receivesOneOpenRequest` reproduces a composed, clickable deferred offer whose physical tap produces no request (1 executed, 1 failed, 0 skipped). Extract the existing target selection into `attachmentActionTarget` so the same seam is exercised by the native open/save helper and regression; repair it with the existing `questionAnswerTarget` geometry correction before a single gesture. Add a composer/save control as the second regression. No app code, intent monitor, recording bytes, consumption checks or deadlines change.
 
 The native controlled restart experiment and historical causal attribution remain pending at this revision. Keep pre-tap bounds and request/load/open phases, with resumed Activity and monitor counts sampled on timeout before cleanup. Restore the borrowed log sink on every exit. Raw evidence is retained under the agents repository's `logs/evidence/2526/builder-20261024/`.
+
+### 2026-10-24 — confirm native cause and repair
+
+The original restarted recorded scenario, with only a controlled scroll placing the restored row behind the composer, reproduced the exact 90-second viewer wait: 1 executed, 1 failed, 0 skipped. Before the gesture its bounds were `(106,1450)-(585,1608)` and the composer began at 1489; its center was behind the composer. At timeout, before cleanup, one Activity was RESUMED, the monitor had answered zero intents and the captured request/load/open phases were empty. The later launcher-focus snapshot showed both Activities destroyed, independently confirming that this teardown snapshot cannot diagnose the earlier loss. This reproduction distinguishes a missing physical row tap from a stalled retrieval or missed intent observation.
+
+Keeping that identical native placement control and changing only `attachmentActionTarget` to use `questionAnswerTarget` passed 1/1, failed/skipped 0, with request, retrieved, opened and saved events and all original URI, read-grant, digest, restored-row uniqueness and strict-consumption assertions. Both shared screen controls passed (2 executed, 0 failed/skipped). The forced native placement is an evidence-only experiment retained in the source snapshots; it is removed from the final scenario. The permanent tests reproduce the obscured initial geometry. The final helper corrects geometry before one physical gesture, with no gesture retries, longer deadline or omitted assertion. Retain the content-free geometry callback and timeout phase probe for any recurrence.
+
+Final scope remains one attachment-helper repair, about 250 written lines including tests and plan, zero production files, no exported production types, three scenario consumers, four acceptance criteria and one test-only timeout diagnostic branch. Dispatcher-owned configured acceptance remains pending after builder-focused evidence; other operating systems are outside this macOS ticket.

@@ -31,7 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
 
-/** A composed, clickable restored offer can still sit behind the thread's pointer-intercepting header. */
+/** A composed, clickable restored offer can still sit behind the thread's pointer-intercepting chrome. */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AttachmentActionTargetTest {
@@ -83,7 +83,7 @@ class AttachmentActionTargetTest {
         val obscured = compose.onNode(matcher).fetchSemanticsNode().boundsInRoot
         assertTrue(
             "control must begin behind chrome: $obscured / $header / $composer",
-            obscured.center.y < header.bottom || obscured.center.y > composer.top,
+            if (action == AttachmentAction.OPEN) obscured.center.y < header.bottom else obscured.center.y > composer.top,
         )
         assertTrue("the offer has not been fetched", requested.isEmpty())
 
