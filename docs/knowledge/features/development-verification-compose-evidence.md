@@ -162,7 +162,32 @@ on Kotlin/Compose libraries supplied only by the target APK during
 instrumentation. The service declaration requires `BIND_INPUT_METHOD` and remains
 under `app/src/androidTest`.
 
-For a separate dialog, translate dialog-root bounds into screen coordinates before subtracting the Activity's effective `DesignCapture.insets()` status inset. Platform root insets alone omit ATD's synthetic bars and can turn a correct 312 dp screen-area origin into 336 dp. This geometry calculation is separate from proving real bars: retain `requireRealSystemBars=true` and nonblank pixels for visual evidence. Fresh managed-device captures may be in `app/build/intermediates/managed_device_android_test_additional_output/` while a legacy outputs folder still holds older ATD sidecars. Check timestamps, API and `syntheticBars` before retaining PNGs and metadata together. See [Delete evidence](../../../app/src/androidTest/assets/design-1220/list/1861-delete-evidence.txt).
+For a separate dialog, translate semantics bounds by its own root's screen
+location. Independently inset Activity `currentWindowMetrics.bounds` once per edge
+by the union of effective system bars and display cutout from `DesignCapture.insets()`
+(per-edge maxima, not additive overlap), then compare vertical centres within
+2 dp. Do not subtract status clearance again or substitute the dialog window's
+zero bar insets. Effective Activity insets retain ATD synthetic geometry coverage;
+visual proof still requires `requireRealSystemBars=true` and nonblank pixels.
+At 412×892 dp, a 220 dp surface has expected screen top 336 for 24/24 clearance
+(312 status-relative), or 348.5 for 49/24 (299.5 status-relative). A fixed 312
+offset both rejects correct asymmetric centering and can accept displacement.
+`DeleteCaptureGeometryTest` covers displacement, cutouts, origins, density and synthetic insets.
+
+The [#2534 report and provenance](../../../app/src/androidTest/assets/design-1220/list/2534-delete-evidence.txt)
+and [counted XML](../../../app/src/androidTest/assets/design-1220/list/2534-delete-results.xml)
+record fresh Linux full `pixel8Api35` evidence, 2026-10-24: **2 executed/passed,
+0 failures/errors/skips**. Both `ListDesignCaptureTest.listFramesAt412By892` and
+`listFramesAt320By700LargeText` passed and reached `hostStates`. Both centre errors were −0.5 dp.
+The [#1861 24/24 reference](../../../app/src/androidTest/assets/design-1220/list/1861-delete-evidence.txt)
+remains valid. The [original reproduction and provenance](https://github.com/pyrycode/pyrycode-mobile/issues/2534#issuecomment-6383263057)
+remains 2 executed, 1 passed, 1 failed, 0 errors/skips; the old-rule regression
+control remains 7 executed, 2 passed, 5 failed, 0 errors/skips. #2418 still owns
+its candidate captures and host comparisons. See the [Delete confirmation entry](../../../app/src/androidTest/assets/design-1220/list/index.md#delete-confirmation--6733665)
+for bounds, provenance and retained Delete checks.
+
+Before retaining PNGs and sidecars together, check timestamps, API and
+`syntheticBars`: legacy outputs can hold older ATD evidence.
 
 ATD can also report zero physical system-bar insets and return black framebuffer
 captures while geometry assertions pass. `MainActivityInsetsDeviceTest` injects
