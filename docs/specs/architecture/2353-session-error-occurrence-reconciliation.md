@@ -7,7 +7,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/SessionErrorProjection.kt`: `apply`, `clear` and `reset` retain connection-local error state without retaining daemon prose.
 - `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositorySessionErrorTest.kt`: admitted progress clears errors; content and idle alone do not.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/SessionErrorRecoveryObservation.kt`: `RecoveryAcceptance` and `SessionErrorRecoveryObservation` require current certified authoritative evidence and permanent acceptance identity.
-- `app/src/sharedTest/java/de/pyryco/mobile/e2e/SessionErrorRecoveryObservationTest.kt`: `canonicalCatchUpReplacesRetiredFramesForBothArms`, ownership, stale-query, drop and completion regressions cover #2522's repair.
+- `app/src/test/java/de/pyryco/mobile/e2e/SessionErrorRecoveryObservationTest.kt`: `canonicalCatchUpReplacesRetiredFramesForBothArms`, ownership, stale-query, drop and completion regressions cover #2522's repair.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/ProducerThreadObservation.kt`: `sending`, `sent`, `received` and `completed` correlate completed queries to their physical producer connection.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt`: `catchUpProduction` waits for certified query completion independently of the phone.
 - `scripts/session-error-publisher-probe_test.go`: `TestSessionError2338PublisherDelivery` controls publication ordering and collects through terminal idle.
