@@ -320,7 +320,7 @@ See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-8
 **`UpdateRequired` gets its own control and caption (#1009).** The row-level Play Store action
 \#1008 deferred has landed, the way #842 changed the target for `PairingRejected`. `TreeHostRow` computes
 `val update = connectionStatus.relay as? RelayLinkStatus.UpdateRequired` and, when non-null, swaps the
-plug for `TreeRowControl(icon = Icons.Filled.Download, …)` tagged `treeHostUpdateTestTag(serverId)`
+plug for `TreeRowControl(painter = painterResource(R.drawable.ic_tree_update), …)` tagged `treeHostUpdateTestTag(serverId)`
 (shares `boundedTagId`'s clamp with the other row tags) — the update control never carries the reconnect
 tag, so a test can assert "no plug" directly. Tap still reports through the row's one `onReconnectTapped`
 callback, so the row itself stays agnostic; `treeHost`'s `onReconnectTapped` switch (`ChannelListScreen.kt`)
@@ -362,7 +362,7 @@ deferred to #2245, so this opt-in row contract does not yet advertise thread sup
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected() || daemonUpdate` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
 today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
-and the name when disconnected. A `TreeRowControl` with `Icons.Filled.Power` is drawn before the pencil,
+and the name when disconnected. A `TreeRowControl` with the shared `ic_tree_pair` painter is drawn before the pencil,
 tagged `treeHostReconnectTestTag(serverId)` (sharing `boundedTagId`'s clamp with
 the edit tag). Tap emits `TreeHostReconnectTapped(serverId)` for the row's own host. There is no long press.
 
@@ -370,6 +370,63 @@ Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") 
 already-`boundedRowText`-clamped display name, for the same reason the other host controls' descriptions
 are. The row's fold chevron is unchanged and still present on a disconnected row — the whole row remains
 the fold control, and removing that affordance for one state was explicitly left out of scope.
+
+**Approved status artwork (#2418).** Reconnect and re-pair use `ic_tree_pair` at
+9 × 10.8dp; Update uses `ic_tree_update` at 12 × 12dp. The shared vectors retain the
+approved SVG paths and clipped viewports from Figma frame `672:3493` (Pair component
+`486:995`, Update `581:1606`). `TreeRowControl` centers the artwork in the existing
+24 × 28dp host slot and applies `colorScheme.primary`. The error accent above belongs
+to the host name and server glyph, not these action glyphs. The persistent host pen,
+caption, bounded accessible names, host-specific targets and independent fold action
+keep their existing contracts. Cluster placement and connected-pen comparison belong
+to #2419; #1650 retains final integration acceptance and its historical evidence and holds.
+
+**Glyph regression and accepted captures.** Semantics and control bounds cannot distinguish
+the old Power/Download substitutes from the approved artwork.
+`ConversationTreeRowsTest.hostRow_statusGlyphs_matchApprovedPairAndUpdateArtwork`
+therefore samples native primary-coloured pixels, including plug pins/body and update
+arrow/tray, separately from the slot. Its original substitute run executed once and
+failed (0 passed/skipped). Retained Linux green XML has 37 executed/passed, 0
+failed/errors/skipped: 27 `ConversationTreeRowsTest`, 3 `TreeHostRowThreadMissingTest`
+and 7 affected `ChannelListScreenTest` checks. Reuse depends on unchanged glyph code
+and relevant test inputs. The configured JVM gate also passed the named glyph regression
+within 5567 executed/passed, 0 failed/skipped; it did not run the device capture methods.
+
+On Linux, the final full-API35 run at source
+`383abc92943bb8688d24590778df70f8a7aa366c` executed
+`ListDesignCaptureTest.listFramesAt412By892` and
+`listFramesAt320By700LargeText`: one pass each, 2 executed/passed total,
+0 failed/errors/skipped. Full Google Play x86_64 image revision 9 used hardware
+rendering, density 1, real system bars (`syntheticBars=false`) and zero IME insets.
+The 412 × 892 viewport used font scale 1 and top/bottom bars 49/24px; 320 × 700
+used font scale 1.5 and bars 39/24px. All three host states were reached in both.
+All six unscaled comparisons against the approved frame show Pair ink 9 × 10px
+and Update ink 12 × 11px: dimension errors ≤1dp, slot-center offsets ≤0.5dp,
+symmetric ink-mask distance 1px, with exact theme-primary pixels present.
+Existing-slot alignment proves glyph geometry without accepting the cluster offset.
+The [independent verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2434#issuecomment-6387554625)
+accepted these results; other host operating systems were outside this ticket's scope.
+
+At acceptance, raw XML (`gate/0-TEST-pixel8Api35_0-_app-.xml`), phone logs,
+viewport sidecars, screenshots, original design inputs and 1:1 comparisons were under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2418/builder-20261024-api35-final/`.
+Its 110-file manifest SHA256 was
+`f334b311cb24e66bc14137ccb38857d5113e11fe624890dfe77eef206f9772ec`.
+App APK SHA256: `abd70f29d3b45d1871c0b77c835111faa68544c94b1b4bd7189b3e0e054ff3ae`;
+test APK SHA256: `c497a65ef86860ac68f8db8c04fc912736c56496aa26bc1079899531ae8f2276`.
+The checked-in [evidence receipt](../../../app/src/androidTest/assets/design-1220/list/2418-glyph-evidence.txt)
+also retains image fingerprint and launcher identities; these are retained identities,
+not a claim that the original APK binaries remain available.
+
+Historical results remain distinct: `builder-20261021-1808/` retains the original
+red/green reports and zero-execution launcher refusal resolved by #2435.
+`builder-20261024-api35/` retains 2 executed, 1 passed, 1 failed, 0 errors/skips:
+the compact method passed, while 412 × 892 failed the unchanged Delete geometry
+assertion before host capture (312dp expected, 299dp observed after the real top inset).
+After #2534 repaired that assertion, both methods passed as counted above.
+A whole-method failure cannot establish a host-state capture it never reached;
+real-bar inset geometry must be checked separately from artwork geometry. See
+[emulator evidence](development-verification-emulator-evidence.md).
 
 **Figma token deviation.** The frame binds the disconnected name to `Schemes/error-container`, which
 renders `#ffdad6` on the light scheme's near-white surface — legible against a dark background, illegible

@@ -483,6 +483,19 @@ to A, peer-only answer/dismissal, actual Finished display, five-second virtual e
 (clock advanced 5,100 ms), absence after reopening A and complete tape consumption.
 Original deadlines remain in force.
 
+Finished publication must already own its registered five-second expiry (#2490).
+`observeThreadAttention` starts the expiry child undispatched through its first
+delay before publishing the pill. Seeing Finished alone previously proved neither
+timer registration nor a new turn: certification changes can republish the same
+terminal fact. Within the RESUMED destination's collection, eligible completions
+are deduplicated by host, conversation and completion key. A repeated identity
+cannot renew or resurrect Finished; only a new terminal identity restarts its
+five-second lifetime. Identity admission precedes Waiting suppression, so a
+discarded completion cannot replay when Waiting clears. Collection cancellation
+owns the subscription and timer; reopening starts with current Waiting and no
+old Finished. This expiry repair preserves the separate acquisition fence above,
+the recording, strict query matching, tape consumption and existing deadlines.
+
 #### Counted macOS replay evidence, 2026-10-21
 
 The exact native method was
@@ -517,6 +530,59 @@ Raw focused XML, logcat, source identities, exit statuses and manifests were ret
 identify evidence retained at review time; the counts above survive raw-file pruning.
 No daemon or Claude launch, replacement recording or current-provider compatibility
 claim was needed. Linux was outside this ticket's verification scope.
+
+#### Counted macOS expiry evidence (#2490), 2026-10-24
+
+The controlled red on unchanged production executed 18 cases: 15 passed, 3 failed,
+zero errors/skips. It directly rejected publication before registration, duplicate
+renewal and replay after Waiting suppression. The repaired `ThreadAttentionTest`
+passed all 18, including `finishedPublicationAlreadyOwnsItsScheduledExpiry`
+(present at 4,999 ms, actually absent at 5,000 ms),
+`recertifyingSameCompletionCannotRenewOrResurrectFinished` and
+`recertifyingCompletionSuppressedByWaitingCannotReplayIt`. The new-completion
+renewal and cross-host/conversation key-collision controls also passed. A pill
+that never expires still fails the controlled check.
+
+Three consecutive separate invocations of the exact recorded method named above
+used `python3 scripts/android-test-gate.py ui --tests <qualified method>`:
+
+| Attempt | Source | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `native-attention-1` | Resolved merge before commit, retained patch | 1 | 1 | 0 | 0 |
+| `native-attention-2` | `f2921821cad5a6487f7a2eb43ef118aad1c4adf8` | 1 | 1 | 0 | 0 |
+| `native-attention-3` | `f2921821cad5a6487f7a2eb43ef118aad1c4adf8` | 1 | 1 | 0 | 0 |
+| Configured UI gate, reviewed `064c7b76b` | Integrated candidate | 250 | 250 | 0 | 0 |
+
+All focused attempts exited 0 with zero errors; relevant executable inputs match
+across the three attempts. The configured UI gate executed and passed this method
+and the Model method. Combined JVM/build checks executed/passed 5,570, zero
+failed/skipped. Focused presentation, navigation, acquisition and readiness checks
+passed 10/10, 4/4, 18/18 and 12/12 respectively, zero failures/errors/skips.
+The [accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2496#issuecomment-6387647718)
+retains the scripted gate's initial 24 executed, 19 passed, 5 failed, zero skipped:
+four failures reproduced on main (#2521, #2469); the session-error case passed
+its dispatcher rerun and remains tracked by #2353. Those initial failures remain
+failed evidence.
+
+The [original evidence index](../app/src/test/resources/verification/attention-expiry-2490/evidence.json)
+retains causal ordering: expiry, repeated completion during the clock advance,
+duplicate suppression, then actual absence. The
+[integrated validation index](../app/src/test/resources/verification/attention-expiry-2490/resume.json)
+records every focused attempt, counts, source identities and manifests. Raw XML,
+phone logs and source patches were retained at
+`$AGENTS_REPO_PATH/logs/evidence/2490/`, with integrated checks in
+`resume-20261024/`. These are retention-time paths, subject to pruning.
+
+Merge `f2921821c` separately integrates the accepted shared-current-query
+acquisition repair from #2505/#2356. Model scenario, helpers, controls and fixture
+match the accepted #2356 source; current focused and configured Model passes
+support that integration. They do not establish the exact earlier branch/main
+interleaving: the original three-method investigation request executed zero checks.
+Likewise, the historical #2462 final-absence stack remains retained, but its phone
+log and host-load samples were unavailable. Controlled failures and fresh native
+diagnostics establish the expiry mechanisms without reconstructing that historical
+scheduler sequence. No live Claude turn or recording refresh was required; Linux
+was outside this macOS ticket's verification scope.
 
 ## Verified evidence, 2026-10-16
 
