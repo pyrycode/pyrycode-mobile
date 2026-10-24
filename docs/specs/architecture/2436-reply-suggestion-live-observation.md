@@ -66,6 +66,9 @@ the suggestion or retry the gesture. UI lifecycle and production state are uncha
 | Connection retires while awaiting delivered echo or clear | `ReplySuggestionReadsTest.echoAndClearFollowReplacement` |
 | No valid offer or newer clear arrives | Existing timeout stays active; negative assertions in controlled tests. |
 | Native placeholder and gesture through actual daemon delivery | Focused `reply-suggestion` scenario plus existing `ScriptedReplySuggestionTest`. |
+| Cold reply arrives before the controlled connection replacement; conversation/session IDs are reused | `interactiveTurn_seededChannel_replySuggestionLongPressSends`: same reply identity on a fresh evidence owner before release. |
+| Restored thread content precedes transient busy-phase reconciliation | Same native method: accept exact content and non-idle phase together inside `firstOnLive`. |
+| Original result/native suggestion released after recovery, then consumed once | Same native method and unchanged `assertReplySuggestionLongPress` echo/clear/placeholder checks. |
 
 Process recreation and rotations introduce no retained state here; observation is
 owned by one test invocation and its existing deadline.
@@ -184,6 +187,105 @@ reject branches, one native consumer, three acceptance criteria. In-flight #2462
 and other deterministic-class branches change different methods; edits stay local.
 Run the affected JVM classes, the focused scripted scenario, lint, assembly,
 instrumented compilation, formatting and final pre-verification on Linux.
+
+### 2026-10-22 — Native causal reproduction and release boundary
+
+Controlled native run `scripted-rf1u00z5` executed one test and failed at the
+unchanged 90-second placeholder wait. Phone logs show the actual offer accepted
+and shown, then hidden with `reason=session` during retirement, then accepted on
+the replacement without being shown again. `firstOnLive` reaches the placeholder
+checkpoint: publication, delivery and current-source observation have succeeded;
+the missing UI placeholder precedes the gesture. The run also retained a natural
+`baseline_required` teardown. This proves the post-repair revocation mechanism,
+without asserting an unretained checkpoint for the historical #2388 occurrence.
+Raw reports, phone trace, diagnostic source/patch and APK hashes are retained at
+`logs/evidence/2436/reopened-controlled-red-20261022/` in the agents checkout.
+
+Refine the planned split to hold **both result and suggestion**, leaving the
+assistant reply arrived but its turn busy across the controlled reconnect.
+Core's two-second native-suggestion window begins at result; withholding only the
+suggestion could let fallback win first. No new text is authored: move the two
+original lines together to the existing phone-controlled second fragment.
+The native regression asserts the initial delivered user echo and exact reply,
+busy state before and after replacement, recovered reply identity and absent
+placeholder, then releases once and runs the original long-press proof unchanged.
+It must fail against the original single terminal fixture before wiring the split.
+No production code or live-twin change is required. Existing deadlines remain.
+
+The first fenced-fixture attempt exposed an overconstrained new preparation
+checkpoint: the original fixture does not replay the initial user's message, so
+its delivered echo cannot gate the still-held result. Keep the actual initial
+assistant arrival and busy-state proof as the release prerequisite instead.
+The required exactly-one delivered **suggestion** echo after the real gesture is
+unchanged in `assertReplySuggestionLongPress`. Preserve the failed 1/1 native
+attempt under `reopened-held-precondition-red-20261022/`; do not count it as a pass.
+
+The next native probe reached held content on the replacement before its transient
+phase reconciliation: the checkpoint sampled Idle at 23:25:30.028, then the phone
+accepted Responding at 23:25:30.060. Make busy phase part of the same `firstOnLive`
+acceptance predicate as the exact arrived reply, using the original deadline,
+instead of asserting on the first content snapshot. The failed run is retained at
+`reopened-phase-observation-red-20261022/` (one executed, one failed).
+
+### 2026-10-22 — Focused development verification
+
+The corrected fenced scenario `scripted-6xipuf9p` executed/passed the exact native
+method once, with zero failures/errors/skips. Both held-content/busy checkpoints
+used distinct connection owners with the same reply identity, followed by every
+original offer/placeholder/gesture/echo/clear checkpoint. Raw reports, phone logs,
+source patch and APK hashes are retained at `reopened-development-green-20261022/`.
+Core source was `647a4e7526f581f78d422195cb22b3e9b979e767`, binary SHA-256
+`871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a`.
+The two fragments concatenate byte-for-byte to the original fixture (SHA-256
+`c42b502052c3ec258a0af6d9a260fa1a1964076df792bc24833c9bd7949ec648`).
+
+The four focused JVM classes passed all 19 tests: `ReplySuggestionReadsTest` (4),
+`LiveConnectionReadsTest` (4), `ThreadViewModelReplySuggestionTest` (9) and
+`ScriptedReplySuggestionTest` (2), with zero failures/errors/skips. Each ran as a
+separate focused invocation. Raw XML and a hash manifest are retained at
+`reopened-jvm-20261022/`. These evidence paths are beneath
+`$AGENTS_REPO_PATH/logs/evidence/2436/`. Final pushed-candidate native checks and
+pre-verification are recorded in the PR; complete configured scripted acceptance
+remains dispatcher/verifier-owned. macOS is outside this Linux ticket's scope.
+
+### 2026-10-24 — Bounded continuation and retained-artifact review
+
+The preserved source at `b821a18a4245a01793251d69efb90fabf1d11da7`, its five
+changed/untracked files and all saved native attempts were archived before edits.
+The complete retained evidence inventory verified 607 manifest entries with no
+mismatch. The unpublished commit changes only this plan. The proposed two
+scripted fragments concatenate byte-for-byte to the original fixture, SHA-256
+`c42b502052c3ec258a0af6d9a260fa1a1964076df792bc24833c9bd7949ec648`.
+They contain the existing scripted reply/result/suggestion, not a newly captured
+Claude exchange. No recorded-client fixture or strict recorded contract changes.
+Raw phone and daemon artifacts remain private in the retained evidence area.
+
+Requirements remain relevant: native offer, exact empty-composer placeholder,
+pointer long-press/release, single verbatim delivered suggestion echo, newer clear
+for the offered session, placeholder removal, replacement-source regressions,
+product revocation and original deadlines. The prototype's initial-user-echo
+precondition is not part of the final design: the original fixture does not supply
+that echo before its held result. Delivered assistant identity plus non-idle phase
+is the recovery prerequisite; the required post-gesture suggestion echo remains.
+The failed precondition attempt stays retained. No acceptance criterion is waived.
+
+The approved published Core repair is merged PR #3726 at
+`3d5379ec4b778c569c27b7639a2ae495b32cee0d`. Ancestry confirms the prototype's
+`647a4e7526f581f78d422195cb22b3e9b979e767` lacks it, while the effective daemon
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` includes it. Only approved source and
+published evidence were used; the historical refused Core stage-record request
+was not repeated or reclassified as an approval.
+
+The original unfenced scenario at the preserved Mobile commit passed on that
+effective daemon: `scripted-mdbiqij7`, 1 executed/passed, zero failures/errors/skips,
+with all seven original checkpoints. Daemon SHA-256 is
+`9d1b74bbfa1163c2043ecdbb53b321c3574cfaf60af4bdced90a62c447476d66`.
+This is a current baseline, not proof that arbitrary offer retirement is safe or
+that the historical #2388 failure had the same checkpoint. The existing product
+regressions deliberately reject same-revision reconciliation after disconnect.
+The saved controlled-retirement diagnostic is being compared on the same daemon
+through ordinary Linux admission before finalizing the release-boundary evidence.
+Final candidate checks and the independent configured gate remain pending.
 
 ## Documentation handoff
 
