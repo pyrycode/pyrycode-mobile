@@ -77,6 +77,65 @@ client process. Matching client/build JVM options avoid the detached single-use
 worker that --no-daemon alone can create. Kotlin compilation stays in that JVM.
 Build-cache reuse remains enabled.
 
+### Shared cache and deployed admission identity (#2327)
+
+Admission regressions prove serialization only when participants use the same
+lock file. Compare the effective Gradle user home, journal lock and admission
+device/inode across containers and namespaces before changing worker cleanup.
+An identical path string alone does not establish a shared host-backed inode.
+Correlate live owners using PID/start identity, namespace and cgroup; a historical
+PID alone cannot identify a surviving worker.
+
+In the Linux #2327 failure, dispatcher and native Android containers shared
+`/home/agent/.gradle`, but dispatcher admission used
+`/work/Projects/.pyry-test-admission.lock` while native Android defaulted to
+`/home/agent/.local/share/pyry-fleet/test-admission.lock`. On HP, the journal was
+`66306:1082682`, native admission `66306:3566050`, and dispatcher admission
+`66306:1100311` (operator-reported). Live journal and admission owners belonged
+to the native service; this did not identify original sweep owner PID 279774 or
+establish a detached survivor. No Mobile runtime repair was required.
+
+The [operator's persistent correction](https://github.com/pyrycode/pyrycode-mobile/issues/2327#issuecomment-6290582719)
+sets `Environment=PYRY_TEST_ADMISSION_LOCK=/work/Projects/.pyry-test-admission.lock`
+in the native Quadlet's `[Container]` section and verifies generated systemd
+output. The operator reported that Podman 4.9 ignored `.container.d` overrides,
+so the actual `.container` source needed correction. HP and Fractal activated
+the change after existing workers completed. Persistent deployment documentation
+and host configuration remain owned by the agents/deployment maintainer.
+Keep inherited-descriptor validation, process-group cleanup custody and build-cache
+reuse intact; changing the admission path does not replace those controls.
+
+The [hashed fixture receipt](../../../scripts/e2e-fixtures/2327-journal-lock/receipt.json)
+indexes the original startup error, ownership/configuration captures, protected
+private POSIX journal comparison and seven lifecycle regressions. Before rollout,
+two clients executed: one passed and one failed with `BlockingIOError`; afterward,
+both passed with sequential journal ownership (zero skips in either comparison).
+This surrogate proves cross-container serialization separately from Gradle startup.
+The seven Linux regressions passed with zero failures/skips, covering competing
+and nested acquisition, stale/foreign descriptors, failed exec, waiter/owner
+cancellation, graceful exit status and child cleanup; the Darwin-specific signal
+branch is mocked, not macOS execution.
+
+HP's admitted APK build at `3c57ef21efaefb487de2c16e7543325f0a53ec38`
+succeeded in 86.705 seconds (Gradle 1m25s; 27 tasks executed, 13 cached), with
+zero device tests. Initial script-fixture output remains 185 executed, 182 passed,
+three failed, zero skipped; removing the manual runner's incorrectly injected
+`PYRY_GATE_EVIDENCE_DIR` produced 185/185 with zero failures/skips and no source edit.
+The [Fractal activation report](https://github.com/pyrycode/pyrycode-mobile/issues/2327#issuecomment-6295410964)
+records Mobile `89b2fb23dd5f16b51ba98d007746bf7dbd39b22d`, agents
+`e2f17c0ca3173e2991cfbd5d853fd3f6dc8239d0`, common admission inode
+`2050:12099325`, two serialized clients, a legitimate 139-second wait, seven
+passing regressions (zero failures/skips), and a 1m13s APK build (18 tasks
+executed, 22 cached; zero device tests). Its raw directory was not locally
+inspected. HP's historical agents revision, original sweep-owner lifetime and
+exact admission-request timestamps remain unknown. The withdrawn unstarted native
+diagnostic task remains failed/withdrawn with zero executed checks.
+
+See [configured Linux acceptance](development-verification-gates.md#shared-admission-and-linux-acceptance-2327)
+for the separately accepted session-error dependency and integrated candidate.
+The receipt's original pending fields describe its capture time, not the later
+verifier verdict. The earlier suite-timeout investigation remains with #2179.
+
 ### Managed build heap and Linux acceptance (#2270)
 
 `gradle.properties` sets `org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8`.

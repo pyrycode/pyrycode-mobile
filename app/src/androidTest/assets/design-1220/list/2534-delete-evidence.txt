@@ -1,0 +1,52 @@
+Ticket #2534: Linux full-API35 Delete viewport geometry repair, 2026-10-24.
+Mobile capture source: aec83491a105111ca25653c3b0fe598644caf0f4 (pushed before execution).
+Agents launcher: 3105b6f49d4bb72859fdea020bea3ebc98810aeb.
+Dispatcher: 91310c59a1c0834526ee0f2f356a80a763611566.
+OS: Linux 7.0.0-38-generic x86_64; managed pixel8Api35, API35 sdk_gphone64_x86_64.
+Command:
+env DEVICE=pixel8Api35 ANDROID_GATE_WAIT_SECONDS=2700 'ORG_GRADLE_PROJECT_android.testInstrumentationRunnerArguments.requireRealSystemBars=true' python3 scripts/android-test-gate.py ui --tests 'de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText'
+Exit 0; raw XML timestamp 2026-10-24T11:09:09: 2 executed, 2 passed, 0 failures, 0 errors, 0 skipped.
+Both named methods in 2534-delete-results.xml executed; raw XML confirms the same inventory.
+Both walks reached hostStates and saved nonblank host-rows PNGs after Delete's geometry and physical dismissal assertions.
+The gate finished successfully, including managed cleanup; phases.jsonl records finished at epoch 1792840152.4534175.
+
+Coordinates below are pixels in one screen coordinate system. Density 1 throughout.
+Default: 412x892, fontScale 1; effective bars top/bottom 49/24; cutout top 49 overlaps the status bar.
+Screen viewport (0,0)..(412,892); usable viewport (0,49)..(412,868).
+Measured Delete (48,348)..(364,568), 316x220; expected (48,348.5)..(364,568.5).
+Vertical center error -0.5 dp, within the unchanged 2 dp tolerance; x=48, dimensions and three body lines passed.
+Compact: 320x700, fontScale 1.5; effective bars top/bottom 39/24; cutout top 39 overlaps the status bar.
+Screen viewport (0,0)..(320,700); usable viewport (0,39)..(320,676).
+Measured Delete (24,157)..(296,557), 272x400; expected centered placement (24,157.5)..(296,557.5).
+Compact expected size uses its measured growing surface, not Default's fixed dimensions; center error -0.5 dp.
+Both sidecars: hardwareAccelerated=true, syntheticBars=false; Activity and dialog IME zero.
+The separate dialog root reports zero bar/cutout insets; effective Activity bar/cutout union defines clearance once.
+Default and compact PNGs were inspected: complete body/actions, growing compact surface, no clipping; Default surface matches inspected Figma 673:3665 dimensions, spacing and tokens. Background thread content is fixture content.
+Cancel, actual Back, far outside tap, and taps beside both surface edges each left Channel Info closed and the conversation present.
+Real-bar and nonblank-pixel checks stayed enabled. No host glyph comparison or #2418 acceptance is claimed.
+
+Focused JVM: DeleteCaptureGeometryTest 7 executed/passed; ThreadDeleteGeometryTest 6 executed/passed; each 0 failures/errors/skips.
+Test-first control: extracted old 312 dp offset rule, after plan b1cdde392 with new uncommitted tests, executed 7: 2 passed, 5 failed, 0 errors/skips.
+It reproduced expected 312 / actual 299.5 and accepted a deliberately misplaced dialog; geometry-red.xml retains that failure.
+Historical 04fa786126a5e6bb37315b15ad4f3a189969c27a remains a reported failed run (2 executed, 1 passed, 1 failed, 0 errors/skips).
+Original provenance: https://github.com/pyrycode/pyrycode-mobile/issues/2534#issuecomment-6383263057 ; #1861's real 24/24 reference remains in 1861-delete-evidence.txt.
+
+Durable private evidence root (89 source files copied and hash-verified, owner-only):
+/work/Projects/pyrycode-mobile-agents/logs/evidence/2534/builder-20261024-api35-aec83491a/
+gate/ holds unchanged raw XML, counted dispatcher.xml, phone logs and phases.jsonl; device-results/ holds UTP reports and device diagnostics.
+captures/design-1220/list/ holds all fresh hardware PNGs and original sidecars, including both delete-confirmation and host-rows variants.
+apks/ holds both captured APKs; jvm/ holds red and green raw focused XML. provenance.json and SHA256SUMS identify and verify every retained file.
+Raw captures are retained privately; this public report and counted XML contain only measurements, identities and outcomes.
+
+SHA-256 (original retained files):
+7beeadc3a013e33aff6f4d8c466d894eebe247b0c8ad1c1c6d11a7a867b7d2d2  apks/app-debug.apk
+d020df7d03471156f0956687cdfb6b83c19d04fb345ac2b3e294b2d8c3c5073d  apks/app-debug-androidTest.apk
+a5f1d750932be78558cf2b363a7ccd3abd1a11587fa4ea810a10ab8e39a29fae  gate/0-TEST-pixel8Api35_0-_app-.xml
+9307b7c5daf3f961dc0fd765df9afc1ba6da4c42c46a8b27789b9d3aad819c9b  captures/design-1220/list/delete-confirmation.png
+df6c51381dd04ebca989d9564996c5373fe2663f7230e2b6a5017bd378e730e2  captures/design-1220/list/delete-confirmation-compact.png
+c5745de77a8abd4a9394af3bfe14f44415b0aa2a048fa8bd4f544da7ec6ff6d8  captures/design-1220/list/host-rows.png
+8669bfd9500938790e2a0850d658563ff142634f86c4b09b926260030054abdf  captures/design-1220/list/host-rows-compact.png
+8e2d3afae46dc449adb290c1d3e2153ae1a623df110c2a8e06884b5d0997c012  agents/scripts/android-test-gate.py
+98e62d3a0a76caefa4ef4bf72b5688dfefcc96a3ffd6d8faca95f183f68402d4  dispatcher/scripts/test-selection.py
+
+Documentation stage: update the dialog-coordinate paragraph in docs/knowledge/features/development-verification-compose-evidence.md and the Delete confirmation entry in list/index.md with both-edge mapping and this fresh counted evidence. Preserve historical failures.

@@ -468,7 +468,7 @@ class ListDesignCaptureTest {
             awaitText("Delete conversation?")
             rule.onNodeWithText("About").assertDoesNotExist()
             design.capture(FOLDER, "delete-confirmation$suffix", "673:3665")
-            assertDeleteGeometry(compact = suffix.isNotEmpty())
+            assertDeleteGeometry(compact = suffix.isNotEmpty(), captureName = "delete-confirmation$suffix")
             // Real dialog-window dismissal: none of these routes reopens the sheet or deletes the channel.
             rule.onNodeWithText("Cancel").performClick()
             assertDeleteDismissed()
@@ -519,17 +519,65 @@ class ListDesignCaptureTest {
         rule.waitUntil(5_000) { rule.onAllNodes(hasText("Delete conversation?")).fetchSemanticsNodes().isEmpty() }
         rule.onNodeWithText("About").assertDoesNotExist()
         assertTrue(!checkNotNull(design.inputs.thread.value).state.value.deleteConfirmVisible)
+        val conversationId = checkNotNull(design.inputs.thread.value).state.value.conversationId
+        assertTrue(
+            runBlocking {
+                GlobalContext
+                    .get()
+                    .get<FakeConversationRepository>()
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .any { it.id == conversationId }
+            },
+        )
     }
 
     private fun deleteSurfaceBounds(): Rect {
         val node = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode()
         val location = IntArray(2)
-        (checkNotNull(node.root) as ViewRootForTest).view.getLocationOnScreen(location)
+        rule.runOnIdle { (checkNotNull(node.root) as ViewRootForTest).view.getLocationOnScreen(location) }
         return node.boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
     }
 
-    private fun assertDeleteGeometry(compact: Boolean) {
+    private fun assertDeleteGeometry(
+        compact: Boolean,
+        captureName: String,
+    ) {
         val surface = deleteSurfaceBounds()
+        var screen = Rect.Zero
+        checkNotNull(design.scenario).onActivity { activity ->
+            val bounds = activity.windowManager.currentWindowMetrics.bounds
+            screen = Rect(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.bottom.toFloat())
+        }
+        val effectiveInsets = design.insets()
+        val viewport = usableDialogViewport(screen, effectiveInsets)
+        val dialog = (checkNotNull(rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode().root) as ViewRootForTest).view
+        val dialogInsets = rule.runOnIdle { checkNotNull(ViewCompat.getRootWindowInsets(dialog)) }
+        val expectedWidth = if (compact) surface.width else 316f * rule.density.density
+        val expectedHeight = if (compact) surface.height else 220f * rule.density.density
+        val expected =
+            Rect(
+                viewport.center.x - expectedWidth / 2,
+                viewport.center.y - expectedHeight / 2,
+                viewport.center.x + expectedWidth / 2,
+                viewport.center.y + expectedHeight / 2,
+            )
+        File(
+            checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+            "design-1220/$FOLDER/$captureName.txt",
+        ).appendText(
+            "deleteScreenViewportPx=$screen deleteUsableViewportPx=$viewport " +
+                "effectiveBarsPx=${effectiveInsets.getInsets(WindowInsetsCompat.Type.systemBars())} " +
+                "effectiveCutoutPx=${effectiveInsets.getInsets(WindowInsetsCompat.Type.displayCutout())} " +
+                "dialogBarsPx=${dialogInsets.getInsets(WindowInsetsCompat.Type.systemBars())} " +
+                "dialogCutoutPx=${dialogInsets.getInsets(WindowInsetsCompat.Type.displayCutout())} " +
+                "dialogImePx=${dialogInsets.getInsets(WindowInsetsCompat.Type.ime())} " +
+                "deleteMeasuredScreenPx=$surface deleteExpectedScreenPx=$expected toleranceDp=2\n",
+        )
+        assertEquals(1f, rule.density.density, 0f)
+        assertTrue(!dialogInsets.isVisible(WindowInsetsCompat.Type.ime()))
+        assertEquals(0, dialogInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+        assertDeleteCentered(surface, viewport, rule.density.density)
         val body = rule.onNodeWithText("This permanently deletes", substring = true)
         val layouts = mutableListOf<TextLayoutResult>()
         body.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -560,9 +608,13 @@ class ListDesignCaptureTest {
             assertEquals(316f, surface.width, 2f)
             assertEquals(220f, surface.height, 2f)
             assertEquals(48f, surface.left, 2f)
-            // Dialog windows use screen coordinates; remove the Activity's effective real or synthetic inset.
-            val topInset = design.insets().getInsets(WindowInsetsCompat.Type.statusBars()).top
-            assertEquals(312f, surface.top - topInset, 2f)
+            assertEquals(
+                1f,
+                layouts
+                    .single()
+                    .layoutInput.density.fontScale,
+                0f,
+            )
             assertEquals(3, layouts.single().lineCount)
         }
     }
