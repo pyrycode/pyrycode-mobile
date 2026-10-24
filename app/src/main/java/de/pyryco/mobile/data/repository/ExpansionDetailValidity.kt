@@ -12,9 +12,13 @@ internal data class ExpansionDetailValidity(
     val floors: Map<Long, Long> = emptyMap(),
     val bodies: Set<Long> = emptySet(),
     val children: Set<Long> = emptySet(),
+    /** Runtime full-source captures are never restored from disk or borrowed from fetched bodies. */
+    val fullSources: Map<Long, FullSource> = emptyMap(),
     /** Retained full bodies cannot be revived by evicting their fetched replacement. */
     val staleFullBodies: Map<Long, Long> = emptyMap(),
 ) {
+    internal data class FullSource(val revision: Long, val version: Long)
+
     internal data class Observation(
         val revision: Long,
         val freshness: Long?,
@@ -98,6 +102,16 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
     val validity =
         detailValidity.copy(
             observations = observations,
+            fullSources =
+                if (restoring) {
+                    detailValidity.fullSources
+                } else {
+                    detailValidity.fullSources +
+                        incoming.filter { it.id in completeBodies }.associate { item ->
+                            val previous = detailValidity.fullSources[item.id]?.takeIf { it.revision == item.rev }
+                            item.id to ExpansionDetailValidity.FullSource(item.rev, maxOf(version, previous?.version ?: 0))
+                        }
+                },
             serials = detailValidity.serials + affected.associateWith { detailValidity.serial(it) + 1 },
             floors = detailValidity.floors + affected.associateWith { maxOf(version, detailValidity.floors[it] ?: 0) },
             bodies = (detailValidity.bodies + affectedBodies) - completeBodies,
@@ -152,7 +166,14 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
         if (!stale.add(id)) continue
         descendants[id].orEmpty().forEach { pending.addLast(it.id) }
     }
-    val restoredStale = incoming.filter { it.hasToolBody && it.id in stale }
+    // Every first-known ancestor in one observation belongs to that same query capture.
+    val ancestorCapture = firstKnownAncestors.mapNotNull { detailValidity.observations[it]?.version }.maxOrNull()
+    val restoredStale =
+        incoming.filter { item ->
+            item.hasToolBody && item.id in stale &&
+                (ancestorCapture == null ||
+                    detailValidity.fullSources[item.id]?.let { it.revision == item.rev && it.version > ancestorCapture } != true)
+        }
     // These captures were admitted against the current source before the disk read completed.
     val fetchedChildren = (childPages.keys + childLoads.keys).mapTo(mutableSetOf()) { it.first }
     val fetched = (bodyContents.keys + bodyLoads.keys).mapTo(fetchedChildren.toMutableSet()) { it.first }
