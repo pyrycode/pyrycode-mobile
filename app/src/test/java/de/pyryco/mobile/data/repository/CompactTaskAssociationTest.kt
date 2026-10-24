@@ -158,7 +158,14 @@ class CompactTaskAssociationTest {
                 )
             }
             runCurrent()
-            if (!restoreFirst) store.restore("h", "c", saved.toSnapshot(), 0)
+            if (!restoreFirst) {
+                val beforeRestore = store.current("h", "c")
+                assertEquals(
+                    "same-owner restore: generation=${beforeRestore.generation}, reset=${beforeRestore.resetNeeded}, " +
+                        "epoch=${beforeRestore.epoch}, incarnationMatches=${beforeRestore.incarnation == saved.incarnation}",
+                    AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0),
+                )
+            }
             val snapshot = store.current("h", "c")
             val current = snapshot.expansionItems.single { it.id == 18L }
             assertTrue("current child metadata wins over equal-revision saved content", current.summaryPayload != null)
