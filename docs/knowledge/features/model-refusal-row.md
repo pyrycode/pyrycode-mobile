@@ -354,6 +354,17 @@ against the old daemon cannot validate it. See the
 [counted Linux phone proof](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366).
 The historical reset fits this defect, but missing raw segments leave its exact batching unknown.
 
+The [#2380 reconciliation](../../specs/architecture/2380-refusal-occurrence-reconciliation.md)
+adds the #2246 and #2373 Linux sightings: each original exact-method execution failed once,
+then its exact retry passed once, all with zero skips. Both old-daemon traces show
+`baseline_required` and teardown 4414, consistent with the controlled defect. Original
+publication boundaries and which half of the combined reply/control predicate timed out
+remain unknown; retries prove intermittency only. Matching source and refusal inputs allow
+reuse of #2374's repaired-source native proof, without a duplicate producer repair. See the
+[scripted scenario evidence](../../e2e-interactive-stream.md#scenarios-454) for counts,
+retained failures, missing captures and #2380's accepted configured-gate result. No distinct
+residual Mobile defect was demonstrated.
+
 Restoring the refusal row after a continuity reset proves content recovery only. A new Switch back
 offer still requires fresh live refusal delivery on the current owner; history restoration must
 never compensate for a lost live effect by authorizing a model write.
