@@ -27,7 +27,7 @@ class CompactChildAuthorityTest {
     @Before fun quiet() { RelayLog.sink = { _, _, _ -> } }
     @After fun restoreLog() { RelayLog.sink = oldSink }
 
-    private fun parent() = ThreadItemDto.decode(obj("""{"id":17,"rev":17,"order":17,"parent":0,"kind":"agent","status":"done","shown":true,"active":false,"content":{},"subtree_version":90}"""))
+    private fun parent() = ThreadItemDto.decode(obj("""{"id":17,"rev":17,"order":17,"parent":0,"kind":"agent","summary":"Agent","status":"done","shown":true,"active":false,"content":{},"subtree_version":90}"""))
 
     private fun child(kind: String = "assistant_message", freshness: Long? = null) = ThreadItemDto.decode(
         JsonObject(CompactRootFixture.message(20) + mapOf("kind" to JsonPrimitive(kind), "parent" to JsonPrimitive(17)) + freshness?.let { mapOf("subtree_version" to JsonPrimitive(it)) }.orEmpty()),
