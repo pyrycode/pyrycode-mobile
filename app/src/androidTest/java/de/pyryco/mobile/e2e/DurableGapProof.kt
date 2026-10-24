@@ -218,6 +218,10 @@ internal class DurableGapProof(
                             "page=$pulls current=${observation.current} accounted=${observation.exactlyAccounted} " +
                                 "accepted_delta=${observation.requests.size - requests.size} " +
                                 "certificate_delta=${observation.certificates.size - proofs.size} " +
+                                "page_delta=${observation.requests.count { it is ThreadQueryRequest.Page } -
+                                    requests.count { it is ThreadQueryRequest.Page }} " +
+                                "catchup_delta=${observation.requests.count { it is ThreadQueryRequest.CatchUp } -
+                                    requests.count { it is ThreadQueryRequest.CatchUp }} " +
                                 "source_matches=${evidence?.let { source.matches(it.owner) }} " +
                                 "previous_lower=${previous.lowerOrder} lower=$lower " +
                                 "advanced=${lower?.let { it < previous.lowerOrder }}"

@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
@@ -76,17 +77,20 @@ internal class OlderHistoryGesture(
         touching = true
         flingEligible = false
         flinging = false
+        RelayLog.d { "event=older_history_input code=started" }
         onStart()
     }
 
     fun onGestureEnd() {
         touching = false
+        RelayLog.d { "event=older_history_input code=released" }
     }
 
     fun onGestureCancel() {
         touching = false
         flingEligible = false
         flinging = false
+        RelayLog.d { "event=older_history_input code=cancelled" }
     }
 
     override fun onPostScroll(
@@ -97,12 +101,20 @@ internal class OlderHistoryGesture(
         val touchMovement = touching && source == NestedScrollSource.UserInput
         if (touchMovement) flingEligible = true
         val readerMovement = touchMovement || flinging && source == NestedScrollSource.SideEffect
-        if (readerMovement && consumed.y + available.y > 0f && nearOldestEnd()) onDemand()
+        if (readerMovement && consumed.y + available.y > 0f) {
+            val near = nearOldestEnd()
+            RelayLog.d {
+                "event=older_history_input code=older_movement touching=$touching flinging=$flinging " +
+                    "consumed_y=${consumed.y} available_y=${available.y} near=$near"
+            }
+            if (near) onDemand()
+        }
         return Offset.Zero
     }
 
     override suspend fun onPreFling(available: Velocity): Velocity {
         flinging = flingEligible && available.y > 0f
+        RelayLog.d { "event=older_history_input code=pre_fling eligible=$flingEligible velocity_y=${available.y} flinging=$flinging" }
         touching = false
         flingEligible = false
         return Velocity.Zero
@@ -112,6 +124,7 @@ internal class OlderHistoryGesture(
         consumed: Velocity,
         available: Velocity,
     ): Velocity {
+        RelayLog.d { "event=older_history_input code=post_fling flinging=$flinging" }
         flinging = false
         return Velocity.Zero
     }

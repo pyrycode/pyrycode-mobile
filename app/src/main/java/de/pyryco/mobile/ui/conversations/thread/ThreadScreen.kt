@@ -800,7 +800,10 @@ fun ThreadScreen(
                     // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
-                    val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
+                    val pullForOlderHistory = {
+                        RelayLog.d { "event=older_history_demand loading=$historyLoading" }
+                        if (!historyLoading) demandOlderHistory()
+                    }
                     if ((authoritative?.rows?.isEmpty() ?: !state.hasMessages) &&
                         state.displayRows.isNullOrEmpty() &&
                         shownQuestion == null &&
