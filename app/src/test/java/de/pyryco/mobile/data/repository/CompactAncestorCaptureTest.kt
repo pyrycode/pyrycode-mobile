@@ -154,7 +154,8 @@ class CompactAncestorCaptureTest {
         assertEquals("thread_read_tool_body", body.type)
         for (final in listOf(false, true)) {
             val content = if (final) "" else ",\"content\":{\"output\":\"current\"}"
-            f.push(obj("""{"conversation_id":"c","epoch":"e","version":110,"item_id":20,"rev":110,"kind":"tool_call","final":$final$content}"""), body, "thread_tool_body")
+            val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":110"
+            f.push(obj("""{$scope,"item_id":20,"rev":110,"kind":"tool_call","final":$final$content}"""), body, "thread_tool_body")
         }
         runCurrent()
         val fetched = store.current("h", "c")
