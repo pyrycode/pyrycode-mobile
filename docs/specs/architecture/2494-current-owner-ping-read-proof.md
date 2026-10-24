@@ -330,3 +330,39 @@ The normal independent verifier remains responsible for configured acceptance an
 counted scripted outcomes. Actual documentation pickup remains pending. Preserve
 all closed prerequisite links, historical errors and failed evidence, #2514 Linux
 ownership and #2469 occurrence reconciliation when transferring custody.
+
+### 2026-10-24: verifier connection-certificate and passive-trace repair
+
+The verifier correctly found that successive repositories share a certified store:
+an idle replacement can relabel the very same immutable snapshot. Snapshot fences
+alone therefore do not establish fresh physical-source certification. Require the
+current repository's connection-local `authoritativeCompletions` witness, published
+only by `publishAuthoritativeCompletions` after a successful query final marker.
+Match its owner, host, conversation, session, turn, epoch/generation validity and
+certified version covering the exact reply revision. Check the witness before
+read sampling and again with the final snapshot/support fences after diagnostics.
+Keep `ThreadEvidenceOwner.matches` strict; no product recovery or wire changes.
+
+`NegotiatedThreadActivationTest.replacementPingProofCannotBorrowSharedCertification`
+will certify the old repository, retain its identical shared snapshot through idle
+replacement, deliver current shown/read metadata, and withhold the replacement
+final marker. Both held facts and a non-final batch must fail proof; the correlated
+successful current final marker must enable it. Existing reset and exact-reply
+probes remain. `OwnedReplyObservationTest.malformedReadTraceCannotDropInboundFrames`
+will deliver object/array IDs through the actual pump decorator and verify delivery
+despite a diagnostic parser failure. Use a safe primitive cast in the native trace
+and contain diagnostic `IllegalArgumentException` at the passive tap, emitting only
+a fixed classification. Do not catch cancellation or arbitrary fatal errors.
+
+Security review addendum: PASS subject to these mandatory repairs. The connection
+witness closes transferred-certification authority; final rechecks close withdrawal
+during diagnostics. Malformed diagnostic input cannot terminate normal admission.
+No new requests, jobs, exported types, credentials, text logging or deadline changes.
+This is the same proof invariant and its regressions, not a new product behavior.
+Forecast: approximately 180 additional written lines across existing helpers/tests
+and this revision. Excluding the separately owned retained #2514 integration, the
+combined proof work remains below 1600 lines; two consumers change together.
+Run affected JVM classes, focused macOS `scripted ping`, lint, debug assembly,
+instrumented compilation and final pre-verification. Historical failures and queued
+recovery receipt remain unresolved; configured acceptance belongs to the verifier.
+Documentation handoff also records this connection-local witness and regression.
