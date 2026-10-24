@@ -500,8 +500,40 @@ The scripted failure remains a failure:
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
 timed out after 90 seconds in the full run. Fresh exact comparisons passed once each on
 candidate and pinned main; they do not prove suite-order independence or an inherited main
-failure. Track the intermittent result in [#2374](https://github.com/pyrycode/pyrycode-mobile/issues/2374).
-The UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
+failure. The [#2374 diagnosis and downstream proof](specs/architecture/2374-refusal-publication-proof.md)
+subsequently verified the owning [Core repair, PR #3726](https://github.com/pyrycode/pyrycode/pull/3726)
+(merge `3d5379ec4b778c569c27b7639a2ae495b32cee0d`). Both old exact comparisons used daemon
+`647a4e7526f581f78d422195cb22b3e9b979e767`; neither validates the later repair.
+
+Controlled Core publication regressions recorded **2 executed, 1 passed, 1 failed, 0 skipped** before
+repair and **2 executed, 2 passed, 0 failed, 0 skipped** after repair. Separate delivery/link publication formerly removed
+an already published identity, retiring the peer and losing the live refusal; repaired separate
+and coalesced schedules each retain one live refusal without retirement or duplicate delivery.
+The historical failed phone/daemon trace contains `baseline_required` and close code 4414,
+followed by restored history without an armed offer. Missing raw history segments leave the
+original batching unknown: this trace fits the controlled defect but does not reconstruct it.
+
+The [accepted #2374 verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2528#issuecomment-6382288285)
+confirmed the separate Linux `python3 scripts/android-test-gate.py scripted refusal` run on
+2026-10-24: **1 executed, 1 passed, 0 failed, 0 skipped**. Raw XML names the exact refusal
+method above on `pixel2Api33Atd` (5.221 seconds). Mobile source was
+`585e5734e234d399250e51a78d6124605e0ba3b8`, repaired Core source/embedded binary revision
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` and relay source/embedded binary revision
+`2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1`. The specification retains binary hashes and
+API 33 Google ATD x86_64 image/emulator identities. The unchanged method keeps the 90000 ms
+reply/control deadline, exactly one clickable control, disappearance after tapping and fresh
+unheld session settings returning `haiku`; no real Claude turn was required. This pass does
+not establish suite-order independence or erase the historical failure.
+
+Raw downstream XML, phone phases and logs were retained under
+`/work/Projects/pyrycode-mobile-agents/logs/evidence/2374/bounded-20261024/`, in
+`gates/scripted-tmij09ce/`; daemon/relay captures are in
+`gates/harness/fault-9729c632652e99621108c502486e58f5/`. `result.json`, build/device metadata
+and verified manifests retain provenance; original diagnosis remains in `../builder-linux-20261021/`.
+These are private raw locations at review time, subject to pruning. Scenario-specific daemon-b,
+answer and bypass logs were unavailable. Other operating systems are outside this Linux proof.
+
+In the historical #2366 gates above, the UI skip is `RenameDialogCaptureTest.renameAtFigmaViewport`; the scripted skip is
 `interactiveTurn_seededChannel_durableGapCatchUp`, already ignored on pinned main and owned
 by #2367/#2167. Neither skip is a pass; `DurableGapProof` and its callers were unchanged.
 
@@ -3743,6 +3775,14 @@ stop it reaching the refusal handler ahead of the fold. The test waits for the t
 is held once fakeclaude has spawned, so tapping any earlier would race it), taps Switch back, waits for the
 button to disappear, then reads a **fresh, non-held** `observeSessionSettings` value from the coordinator's
 live repository and asserts it names `haiku` — the daemon round trip, not just the button's disappearance.
+
+The [#2374 publication diagnosis](specs/architecture/2374-refusal-publication-proof.md) establishes
+the daemon prerequisite: accepted delivery identity must survive separate and coalesced publication
+before fresh refusal effects reach the phone. History restoration can render the row without arming
+Switch back. The [repaired-daemon Linux proof](#authoritative-fixture-migration-evidence-2366)
+executed this exact method once and passed, with zero failures/skips, preserving the original
+90000 ms combined reply/clickable-control deadline and fresh-settings assertion. Passing retries
+against the old daemon remain historical comparisons, not post-repair acceptance.
 
 `offline-retry` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`
@@ -9315,6 +9355,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   alone (each scenario overwrites the prior XML): 1 executed, 0 failed, 0 skipped, and
   `python3 -m unittest scripts/test_android_test_gate.py` (37 pass) covers `refusal`'s entry in
   `SCENARIOS`.
+
+  [#2374](specs/architecture/2374-refusal-publication-proof.md) diagnoses the producer publication
+  defect behind a compatible historical timeout and records the unchanged method's repaired-daemon
+  Linux proof: 1 executed, 1 passed, 0 failed, 0 skipped. See
+  [fixture migration evidence](#authoritative-fixture-migration-evidence-2366) for the retained failure,
+  old-daemon comparison limits, runtime identities and missing-original-batching uncertainty.
 
 - **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
   `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
