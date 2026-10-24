@@ -4,10 +4,13 @@ Decision
 The demonstrated acquisition/replay scheduling defect already has the bounded
 repair merged through #2505 / PR #2506. Its existing causal regressions and the
 fresh current-input focused replay pass. No residual model defect was demonstrated
-and no additional behavior change is justified. This is a reconciliation of the
+and no additional model behavior change is justified. This is a reconciliation of the
 repair and its inputs, not a claim to reconstruct every historical interleaving.
-This candidate still requires its configured dispatcher UI acceptance before
-verifier PASS. #2368 retains ownership of later-sighting reconciliation.
+The initial candidate's configured invocation subsequently passed the exact model
+method, but its complete gate was interrupted. The bounded recovery below changes
+only a reconnect scenario's acquisition fence and test-only diagnostics/controls.
+Complete configured acceptance remains pending. #2368 retains ownership of
+later-sighting reconciliation.
 
 Historical failure and causal distinction
 The original #2340 branch 9fdaf07bf3e4757693ad297744f4caa5afdd4db6 and grouped
@@ -141,11 +144,76 @@ model-reopen.json and checked-result.json. The root SHA256SUMS verifies all copi
 Built APK hashes in checked-result.json identify build outputs; no independent
 installed-byte readback or additional process audit is claimed for this run.
 
-Pending before verifier PASS: this candidate's configured dispatcher UI gate must
-execute/pass the exact named model method with zero failures/skips and retain its
-counted raw evidence. Complete gates belong to the dispatcher. Historical failures
-and uncertainties remain intact. Linux is outside this ticket's verification scope.
+At the original builder handoff, configured execution of the exact model method
+was pending; the later counted result is preserved below. Complete gates still
+belong to the dispatcher. Historical failures and uncertainties remain intact.
+Linux is outside this ticket's verification scope.
 Pending documentation stage: docs/recorded-tests.md, Shared current-query acquisition
 and Accepted shared-fixture evidence (#2505): carry this reconciliation, original
 failures, accepted source/fixture differences and counted focused/configured results
 with durable artifact references. Documentation does not produce missing acceptance.
+
+Configured-gate recovery, 2026-10-24
+Preserved candidate: 07bb54768067089f9cd7433b8472fb3c184c1ba3, PR #2529.
+Authoritative verifier run:
+082dd9a826049c26c74295b91f1709cc19d3f8fc82729c0330f96447bdf030d5
+Bundle digest:
+ff745c42b3963edf72c0a628a51fc2bbfc19a15944f2faf0206a63a6790ef518
+The configured UI invocation recorded 41 cases, only 40 completed: 39 passed,
+one reconnect-footer failure, zero skips. The exact model method executed/passed
+1/1 in 4.834 seconds. Ping's negative-duration case is unfinished, not a pass.
+Scripted-all never ran. All earlier focused/model passes remain valid evidence
+for their stated sources; none supplies missing complete gate acceptance.
+
+The primary retained 30-second timeout stack enters SuiteConnections.control via
+LiveSessionCleanupRule.endWhileActivityAlive. terminal_preparation_started occurs
+after the test body returns. Therefore this failure supplies no independent
+evidence of a context-reading timeout. The body retained its genuine replacement
+repository/readings and footer assertions. Its terminal preparation was blocked
+by unmapped phone/host-0/1 request 8/checkpoint 14 after request 4/checkpoint 0;
+the later close mismatch is secondary. The exact historical scheduling remains
+inferred from that trace and the controlled acquisition mechanism.
+
+Recovery plan commit: 2b55e9d3a, based on cc381adc5397298adfbeda1a5a4a11b5073dd992.
+The relevant committed scenarios, acquisition helpers and IME rule equal the
+preserved candidate before this repair. The unrepaired exact reconnect method
+passed 1/1, zero failures/errors/skips, exit 0, in ui-7mraswl5 (6.383 seconds).
+That baseline does not prove a repair or clear the original failure.
+
+replacementSourceAcquiresDuringAndAfterItsConsumedTerminal failed 1/1, exit 1,
+zero errors/skips, through the original unfenced provider path: acquisition
+completed before the held replacement query's consumed terminal. The retained
+old-path patch and raw XML preserve that red. Its gated path checks both during
+and after completion, distinct downstream completion, exact requests/full tape
+consumption and retirement of the old physical source. The native reconnect
+scenario reuses openChatRowAfterCurrentQuery at its single reopen, preserving
+the original monotonic 30-second acquisition budget, repository identity,
+actual context observation, footer assertions and unchanged recording bytes.
+Passive before/after diagnostics inspect only the existing readiness/tape state.
+
+Private durable recovery root:
+$AGENTS_REPO_PATH/logs/evidence/2356/recovery-macos-20261024/
+retained-ui and retained-review preserve the interrupted gate and model pass;
+verifier-bundle retains the downloaded authoritative failure bundle.
+retained-SHA256SUMS authenticated 86 retained files. reconnect-baseline and
+replacement-old-path-red retain exact commands, raw reports/logcat, source patches,
+fixture/APK hashes and verified per-attempt manifests. Diagnostic source patches
+are distinct from the committed base and are never claimed as clean revisions.
+The combined two-class launcher attempt was refused by focused selection policy:
+exit 1, zero execution. The affected classes must run separately.
+
+Fresh recovery controls: InitialAttentionQueryTest executed/passed 18/18;
+ThreadQueryReadinessTest executed/passed 12/12. Both exited 0 with zero failures,
+errors or skips. Their raw XML and exact source patches are in acquisition-green
+and readiness-green. This includes both replacement acquisition schedules and
+existing cached-checkpoint, distinct-consumption, generation and deadline controls.
+
+Isolated ping replay ui-smz9xrrp exited 0: 1/1 executed/passed in 9.167 seconds,
+zero failures/errors/skips. Its TestIme diagnostics show initial test selection
+false/enabled false, enable at 13:26:12.266 phone time, set at 12.308, idle and
+completion at 12.995. Selection did not block for five seconds, so the cancelled
+delayed stack/IME-state probe produced no blocked-state sample. No IME or lifecycle
+repair is demonstrated or claimed. The retained configured XML places interrupted
+retrieval immediately before the unfinished ping case. The two-method sequence
+question requires shared investigation assessment; an isolated pass does not
+clear it or authorize a wider run. Raw ping XML/logcat/phases are in ping-focused.
