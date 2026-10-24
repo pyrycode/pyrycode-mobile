@@ -57,8 +57,11 @@ internal class ThreadItemDto private constructor(
             val adapted = JsonObject(raw + mapOf("summary" to raw.getValue("headline"), "content" to JsonNull))
             // Same-revision complete placement remains separate from current summary metadata.
             val optionalFields =
-                if (placementOrder == adapted.optionalInteger("order")) adapted
-                else JsonObject(adapted.filterKeys { it != "order" } + placementOrder?.let { mapOf("order" to JsonPrimitive(it)) }.orEmpty())
+                if (placementOrder == adapted.optionalInteger("order")) {
+                    adapted
+                } else {
+                    JsonObject(adapted.filterKeys { it != "order" } + placementOrder?.let { mapOf("order" to JsonPrimitive(it)) }.orEmpty())
+                }
             return ThreadItemDto(adapted, optionalFields = optionalFields, summaryPayload = raw)
         }
 

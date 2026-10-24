@@ -876,7 +876,7 @@ internal class AuthoritativeThreadStore {
                     completeCoverage = current.savedCoverage,
                     completedVersion = maxOf(current.completedVersion, version),
                     openingRows = current.openingRows?.plus(batch.items.flatMap { listOf(it.id to false, it.id to true) }),
-                ).restoreDetailValidity(current.items, preserveStale = true),
+                ),
         )
         RelayLog.i { "event=thread_store code=compact_batch" }
         return AuthoritativeThreadOutcome.Applied

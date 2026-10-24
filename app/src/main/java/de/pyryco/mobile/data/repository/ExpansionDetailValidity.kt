@@ -38,6 +38,7 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
     val known = expansionItems.associateBy { it.id }
     val observations = detailValidity.observations.toMutableMap()
     val changed = mutableSetOf<Long>()
+    val firstKnownAncestors = mutableSetOf<Long>()
     val incompleteChanges = mutableSetOf<Long>()
     val completeBodies = mutableSetOf<Long>()
     for (item in incoming) {
@@ -70,6 +71,7 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
             continue
         }
         observations[item.id] = ExpansionDetailValidity.Observation(item.rev, freshness, version)
+        if (previous == null && item.summaryPayload != null) firstKnownAncestors += item.id
         if (previous != null && (previous.revision != item.rev || freshness == null || previous.freshness != freshness)) {
             changed += item.id
             if (!item.hasToolBody) incompleteChanges += item.id
@@ -112,30 +114,33 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
                 },
         )
     if (affected.isNotEmpty()) RelayLog.i { "event=thread_detail code=invalidated" }
-    return copy(
+    val observed = copy(
         detailValidity = validity,
         bodyLoads = bodyLoads.filterKeys { it.first !in affected },
         childLoads = childLoads.filterKeys { it.first !in affected },
     )
+    return if (firstKnownAncestors.isEmpty()) observed else observed.restoreDetailValidity(items, firstKnownAncestors)
 }
 
 /** Saved facts cannot certify incompatible or newly known ancestry, or revoke current fetched work. */
 internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
     incoming: List<ThreadItemDto>,
-    preserveStale: Boolean = false,
+    firstKnownAncestors: Set<Long> = emptySet(),
 ): AuthoritativeThreadSnapshot {
-    if (!compactSelected || incoming.isEmpty()) return this
+    if (incoming.isEmpty() || !compactSelected && firstKnownAncestors.isEmpty()) return this
     val full = items.associateBy { it.id }
     val descendants = expansionItems.groupBy { it.parent }
     val pending =
         ArrayDeque(
-            expansionItems
-                .filter { summary ->
-                    summary.summaryPayload != null &&
-                        full[summary.id]?.let { fact ->
-                            fact.rev != summary.rev || fact.subtreeFreshness == null || fact.subtreeFreshness != summary.subtreeFreshness
-                        } != false
-                }.map { it.id },
+            firstKnownAncestors.ifEmpty {
+                expansionItems
+                    .filter { summary ->
+                        summary.summaryPayload != null &&
+                            full[summary.id]?.let { fact ->
+                                fact.rev != summary.rev || fact.subtreeFreshness == null || fact.subtreeFreshness != summary.subtreeFreshness
+                            } != false
+                    }.map { it.id }.toSet()
+            },
         )
     val stale = mutableSetOf<Long>()
     while (pending.isNotEmpty()) {
@@ -152,7 +157,7 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
             detailValidity.copy(
                 staleFullBodies =
                     (
-                        if (preserveStale) {
+                        if (firstKnownAncestors.isNotEmpty()) {
                             detailValidity.staleFullBodies
                         } else {
                             detailValidity.staleFullBodies -
