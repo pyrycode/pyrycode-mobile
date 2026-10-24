@@ -116,3 +116,19 @@ Linux is outside this ticket's verification scope.
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-24
+
+## Revisions
+
+### 2026-10-24: required pair blocked before the final-read proof
+
+Pushed implementation `59e233ac81fcf4495e340df6008b0d2e78aaf545` passed all six focused unit classes: 128 executed/passed, zero failures/errors/skips. The missing-fence control failed exactly the two reset cases (7 executed, 5 passed, 2 failed). Separate `spotlessApply` passed; combining it with compilation had failed before test execution on a changing class-file input. The multi-class launcher refusal also executed zero tests; subsequent unit invocations each selected one class.
+
+Fresh macOS `scripted ping`, directory `build/dispatcher-tests/scripted-__jwg8tx`, exited 1: 2 executed, 0 passed, 2 failed, zero errors/skips. Durable-gap timed out in its deliberately offline production arm; the following ping logged `local_send_window state=closed reason=send_failed` and timed out at the initial reply-render wait. No `ping_read_proof` sample executed. This is not the historical configured final-read failure and does not explain it. The primary durable-gap timeout remains unestablished.
+
+The current `interactiveTurn_seededChannel_durableGapCatchUp` calls `restoreLink` only through successful `proof.catchUp`; its outer `finally` closes only the peer after `severLink`. Open #2514 owns bounded restoration on exceptional exits and preservation of the primary failure. This fresh source/log evidence makes #2514 a real dependency for reaching and validating this ticket's proof, beyond the harmless file overlap assessed during planning. Do not import its unmerged repair or weaken either original method. After it lands, integrate main and rerun the unchanged original pair; a persistent primary durable-gap timeout still needs investigation in its owner, rather than attribution from the ping method name.
+
+All failed native XML/protobufs, phone logs, control/daemon/relay traces, finished phases, build metadata and identities are retained at agents `logs/evidence/2494/builder-macos-20261024/native-failed/`: 23 copied entries verified, manifest SHA-256 `ef12edb8feab2276b40191864027a221d3c3527190db408a1ef4b56c387e0e37`; the original harness manifest verified 4/4. Core source was clean `64ef0e0fba71a723b7fdc97141cfc144f6355664`; effective daemon SHA-256 `3df9f8c510735f4e1f8834624c8fb2cbe6d96ca97c4b01afca292f74e699ff83` has no embedded revision. Relay build metadata names `72f40c5de9e851e6c6c1ca3c789761320e05ce51`, binary SHA-256 `17e24131cfd3f5a0bc48f972021db17925347311e3dcdf362f2aa8cfe48fc710`. Built app/test APK hashes are `685ba7a6d63ae5c1f0572fd3a1aaf217a4901a04213e67f6372fac3609e3d5da` / `f5e673169cff810ce5d220a85a2ced8a937006d42e337c1a8c450c1b5009c40d`; these are built-byte identities, not installed-byte readback.
+
+Implementation, plan and historical evidence remain preserved. The required successful native pair, lint and final formatting/compile/pre-verification checks, PR publication and dispatcher-owned configured acceptance remain pending. No wider diagnostic was started; the retained historical recovery receipt still records assessment-queued, zero executed.
+
+The approved `add-blocker 2494 2514` helper failed twice with `Shared GitHub unavailable` HTTP 503. Authoritative relationship readback after each attempt showed only closed #2493; #2514 was not saved. This service failure prevents the required waiting-on-blocker routing, so the run reports `blocked` with #2514 as the intended dependency. This was not an approval rejection. Retry the managed relationship operation when service is restored; do not bypass the bridge.
