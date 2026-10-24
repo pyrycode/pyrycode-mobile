@@ -50,9 +50,16 @@ internal class ThreadItemDto private constructor(
 
         internal fun decode(raw: JsonObject): ThreadItemDto = ThreadItemDto(raw)
 
-        internal fun decodeSummary(raw: JsonObject): ThreadItemDto {
+        internal fun decodeSummary(
+            raw: JsonObject,
+            placementOrder: Long? = raw.optionalInteger("order"),
+        ): ThreadItemDto {
             val adapted = JsonObject(raw + mapOf("summary" to raw.getValue("headline"), "content" to JsonNull))
-            return ThreadItemDto(adapted, summaryPayload = raw)
+            // Same-revision complete placement remains separate from current summary metadata.
+            val optionalFields =
+                if (placementOrder == adapted.optionalInteger("order")) adapted
+                else JsonObject(adapted.filterKeys { it != "order" } + placementOrder?.let { mapOf("order" to JsonPrimitive(it)) }.orEmpty())
+            return ThreadItemDto(adapted, optionalFields = optionalFields, summaryPayload = raw)
         }
 
         /** Patch null clears retain exact raw presence while typed optional facts become unset. */

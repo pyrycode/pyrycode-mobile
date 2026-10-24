@@ -84,7 +84,11 @@ internal data class AuthoritativeThreadSnapshot(
                                     (child.rev > held.rev || child.rev == held.rev && held.summaryPayload == null)
                             )
                         ) {
-                            put(child.id, child)
+                            val selected =
+                                if (held != null && child.rev == held.rev && held.summaryPayload == null && child.summaryPayload != null) {
+                                    ThreadItemDto.decodeSummary(child.summaryPayload, placementOrder = held.order)
+                                } else child
+                            put(child.id, selected)
                         }
                     }
                     iterator.remove()
