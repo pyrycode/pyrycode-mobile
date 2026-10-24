@@ -248,7 +248,9 @@ class CompactChildAuthorityTest {
         f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17))
         val request = f.details.single()
         val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":100,\"item_id\":17,\"rev\":17"
-        val summary = """{"id":20,"rev":30,"order":20,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,"headline":"child","detail_omitted":true,"task_id":"current-child"}"""
+        val summary =
+            """{"id":20,"rev":30,"order":20,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,
+                "headline":"child","detail_omitted":true,"task_id":"current-child"}"""
         f.push(obj("""{$scope,"children":[$summary],"final":false}"""), request, "thread_children")
         f.push(obj("""{$scope,"children":[],"final":true,"more":false}"""), request, "thread_children")
         runCurrent()
