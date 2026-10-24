@@ -308,3 +308,25 @@ actual documentation are mandatory. Documentation retains the Phone read-mark
 proof (#1912), Unavailable-summary recording integration (#2467), and #2514 failure
 isolation provenance. #2514's separate Linux acceptance and #2469's occurrence
 reconciliation remain with their owners; this integration accepts neither.
+
+### 2026-10-24: documentation prerequisite resolved
+
+The original author pre-verify at `66288f5d0249e8a256a67f7e72223718dc98e2fb`
+completed exit 0: all five unchanged checks, including forced Spotless and every
+Kotlin source-set compile, passed through the documented protected-label adapter.
+The separate docs guard remained a real inherited failure: the unchanged overview
+was 50,922 bytes, over its 50,000-byte cap, on both the candidate and main.
+
+Manual documentation repair PR #2540 is merged through current main
+`099d9f36af6be0e02bd64df184c0fa7cb830a85e`. The existing candidate incorporates it
+by ordinary merge. Only its four documentation files changed; production, test,
+fixture, build and launcher inputs are unchanged. The actual unchanged docs guard
+now passes on the integrated candidate. The prior failure and completed source
+review remain retained; this handoff does not repeat the completed documentation
+repair or certify independent Mobile acceptance. Required final author build and
+pre-verify results are recorded in the PR and private handoff receipt.
+
+The normal independent verifier remains responsible for configured acceptance and
+counted scripted outcomes. Actual documentation pickup remains pending. Preserve
+all closed prerequisite links, historical errors and failed evidence, #2514 Linux
+ownership and #2469 occurrence reconciliation when transferring custody.
