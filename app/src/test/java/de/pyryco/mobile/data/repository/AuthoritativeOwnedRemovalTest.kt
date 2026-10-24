@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ThreadItemDto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -36,8 +37,16 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.io.FileDescriptor
+import java.io.FileOutputStream
 import java.io.IOException
+import java.io.PrintStream
+import java.lang.management.ManagementFactory
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -46,11 +55,17 @@ class AuthoritativeOwnedRemovalTest {
     @get:Rule val temporary = TemporaryFolder()
     private val databases = mutableListOf<ConversationCacheDatabase>()
     private var removalProgress: ((String) -> Unit)? = null
+    private var removalSampler: ScheduledExecutorService? = null
 
     @After fun close() {
-        removalProgress?.invoke("close_begin")
-        databases.forEach { it.close() }
-        removalProgress?.invoke("close_done")
+        try {
+            removalProgress?.invoke("close_begin")
+            databases.forEach { it.close() }
+            removalProgress?.invoke("close_done")
+        } finally {
+            removalSampler?.shutdownNow()
+            check(removalSampler?.awaitTermination(5, TimeUnit.SECONDS) != false)
+        }
     }
 
     private fun TestScope.open(beforeCommit: suspend () -> Unit = {}): MigratingConversationCache {
@@ -498,8 +513,20 @@ class AuthoritativeOwnedRemovalTest {
         runTest {
             val started = System.nanoTime()
             var previous = started
+            val lastPhase = AtomicReference("body_begin")
+            val body = requireNotNull(coroutineContext[Job])
+            val observerJob = AtomicReference<Job?>()
+            val sampler = Executors.newSingleThreadScheduledExecutor()
+            removalSampler = sampler
+            sampler.scheduleAtFixedRate({
+                val report = removalSample(started, lastPhase.get(), body, observerJob.get())
+                System.err.println(report)
+                // Preserve the sample even if the generic watchdog eventually halts this worker.
+                PrintStream(FileOutputStream(FileDescriptor.err), true).println(report)
+            }, 45, 10, TimeUnit.SECONDS)
 
             fun phase(code: String) {
+                lastPhase.set(code)
                 val now = System.nanoTime()
                 println("removal_phase=$code phase_ms=${(now - previous) / 1_000_000} elapsed_ms=${(now - started) / 1_000_000}")
                 previous = now
@@ -510,6 +537,7 @@ class AuthoritativeOwnedRemovalTest {
                 phase("${arm}_fixture_begin")
                 val fail = AtomicBoolean(false)
                 val cache = open { if (fail.get()) throw IOException("private removal failure") }
+                phase("${arm}_clear_begin")
                 cache.removeConversation("host", "c").getOrThrow()
                 phase("${arm}_cleared")
                 val original =
@@ -520,14 +548,19 @@ class AuthoritativeOwnedRemovalTest {
                                 if (absentOrder) JsonObject(item - "order") else item
                             },
                     )
+                phase("${arm}_seed_begin")
                 cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
                 phase("${arm}_seeded")
                 val repo = wrapper(cache)
+                phase("${arm}_observe_begin")
                 val observer = observe(repo)
+                observerJob.set(observer)
                 phase("${arm}_observed")
+                phase("${arm}_observer_join_begin")
                 observer.cancelAndJoin()
                 phase("${arm}_observer_joined")
                 for (id in 1L..64L) {
+                    phase("${arm}_remove_${id}_begin")
                     repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", id))).getOrThrow()
                     assertEquals(0, recoveryEntries(repo.authoritativeThreads))
                     assertEquals(
@@ -544,12 +577,15 @@ class AuthoritativeOwnedRemovalTest {
                 assertTrue(repo.removeAuthoritativeFact(target).isFailure)
                 phase("${arm}_failure_returned")
                 assertEquals(192, recoveryEntries(repo.authoritativeThreads))
+                phase("${arm}_failure_reopen_begin")
                 assertEquals(original.items.drop(64), open().readAuthoritativeThread("host", "c")?.items)
                 phase("${arm}_failure_reopened")
                 fail.set(false)
+                phase("${arm}_retry_begin")
                 repo.removeAuthoritativeFact(target).getOrThrow()
                 phase("${arm}_retry_committed")
                 assertEquals(0, recoveryEntries(repo.authoritativeThreads))
+                phase("${arm}_retry_reopen_begin")
                 val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
                 phase("${arm}_retry_reopened")
                 assertEquals(original.items.drop(65), retained.items)
@@ -557,6 +593,37 @@ class AuthoritativeOwnedRemovalTest {
                 phase("${arm}_assertions_done")
             }
             phase("body_done")
+        }
+
+    private fun removalSample(
+        started: Long,
+        phase: String,
+        body: Job,
+        observer: Job?,
+    ): String =
+        buildString {
+            val os = ManagementFactory.getOperatingSystemMXBean() as com.sun.management.OperatingSystemMXBean
+            appendLine("removal_sample elapsed_ms=${(System.nanoTime() - started) / 1_000_000} phase=$phase cpu_ns=${os.processCpuTime}")
+            for (gc in ManagementFactory.getGarbageCollectorMXBeans()) {
+                appendLine("gc=${gc.name} count=${gc.collectionCount} time_ms=${gc.collectionTime}")
+            }
+
+            fun jobs(
+                job: Job,
+                depth: Int,
+            ) {
+                appendLine("job depth=$depth state=$job active=${job.isActive} completed=${job.isCompleted} cancelled=${job.isCancelled}")
+                job.children.forEach { jobs(it, depth + 1) }
+            }
+            jobs(body, 0)
+            observer?.let { jobs(it, 0) }
+            for (info in ManagementFactory.getThreadMXBean().dumpAllThreads(true, true)) {
+                appendLine(
+                    "thread=${info.threadName} id=${info.threadId} state=${info.threadState} lock=${info.lockName} owner=${info.lockOwnerId}",
+                )
+                info.stackTrace.forEach { appendLine("  at $it") }
+                appendLine("monitors=${info.lockedMonitors.toList()} synchronizers=${info.lockedSynchronizers.toList()}")
+            }
         }
 
     private fun recoveryEntries(store: AuthoritativeThreadStore): Int = store.retainedRemovalPeerCount()

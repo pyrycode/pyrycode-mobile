@@ -1,0 +1,5 @@
+2026-10-24 macOS recovery continuation; base e3eb5569a1680add41af2f77b2d884e6da51b795.
+Command: PYRY_TEST_WATCHDOG_TRACE=1 python3 scripts/gradle-gate.py testDebugUnitTest --tests de.pyryco.mobile.data.cache.AuthoritativeWindowRestoreTest --tests de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest --rerun --console=plain
+Exit: 1. Zero tests executed; refused before test admission or Java startup.
+Output:
+Test selection: Test selection policy: run one affected Mobile class per focused invocation. Builder checks require affected tests, one exact Mobile class or scenario, or an affected Go package. Full acceptance belongs to the dispatcher/verifier. For a wider investigation, use fleet-task.py investigate with retained failed test evidence and requested scope; no diagnostic runs merely by requesting it.

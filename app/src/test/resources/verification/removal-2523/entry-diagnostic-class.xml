@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-10-24T11:19:21.522Z" hostname="Juhanas-Air" time="18.717">
+  <properties/>
+  <testcase name="atomicInvariant_failurePreservesCertificateAndRetryCommits" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="7.606"/>
+  <testcase name="ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.095"/>
+  <testcase name="ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.073"/>
+  <testcase name="retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.042"/>
+  <testcase name="retirementInvariant_replayAndRestoreCannotResurrect" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.049"/>
+  <testcase name="retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.145"/>
+  <testcase name="ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.076"/>
+  <testcase name="retirementInvariant_successReleasesRecoveryButFailureRetainsIt" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="3.484"/>
+  <testcase name="retirementInvariant_finalFlushRefreshesRemoval" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.05"/>
+  <testcase name="ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.049"/>
+  <testcase name="retirementInvariant_resetDuringRemovalCreatesNewIncarnation" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.044"/>
+  <testcase name="retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.058"/>
+  <testcase name="retirementInvariant_scopeDeletionKeepsOtherHostExact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.061"/>
+  <testcase name="retirementInvariant_heldUpsertThenRemovalCommitsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.039"/>
+  <testcase name="atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.037"/>
+  <testcase name="ownershipInvariant_staleCapturesCannotRemoveNewerFacts" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.039"/>
+  <testcase name="retirementInvariant_emptyPageStillRetainsItsFence" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="0.045"/>
+  <testcase name="ownershipInvariant_partialRemovalPreservesEveryOtherFact" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="5.437"/>
+  <system-out><![CDATA[removal_phase=tied_fixture_begin phase_ms=0 elapsed_ms=0
+removal_phase=tied_clear_begin phase_ms=1 elapsed_ms=2
+removal_phase=tied_cleared phase_ms=8 elapsed_ms=10
+removal_phase=tied_seed_begin phase_ms=4 elapsed_ms=15
+removal_phase=tied_seeded phase_ms=23 elapsed_ms=38
+removal_phase=tied_observe_begin phase_ms=0 elapsed_ms=39
+removal_phase=tied_observed phase_ms=13 elapsed_ms=52
+removal_phase=tied_observer_join_begin phase_ms=0 elapsed_ms=52
+removal_phase=tied_observer_joined phase_ms=0 elapsed_ms=53
+removal_phase=tied_remove_1_begin phase_ms=0 elapsed_ms=54
+removal_phase=tied_removed_1 phase_ms=73 elapsed_ms=127
+removal_phase=tied_remove_2_begin phase_ms=0 elapsed_ms=127
+removal_phase=tied_removed_2 phase_ms=60 elapsed_ms=187
+removal_phase=tied_remove_3_begin phase_ms=0 elapsed_ms=187
+removal_phase=tied_removed_3 phase_ms=51 elapsed_ms=239
+removal_phase=tied_remove_4_begin phase_ms=0 elapsed_ms=239
+removal_phase=tied_removed_4 phase_ms=45 elapsed_ms=285
+removal_phase=tied_remove_5_begin phase_ms=0 elapsed_ms=285
+removal_phase=tied_removed_5 phase_ms=43 elapsed_ms=328
+removal_phase=tied_remove_6_begin phase_ms=0 elapsed_ms=328
+removal_phase=tied_removed_6 phase_ms=38 elapsed_ms=367
+removal_phase=tied_remove_7_begin phase_ms=0 elapsed_ms=367
+removal_phase=tied_removed_7 phase_ms=42 elapsed_ms=409
+removal_phase=tied_remove_8_begin phase_ms=0 elapsed_ms=409
+removal_phase=tied_removed_8 phase_ms=36 elapsed_ms=446
+removal_phase=tied_remove_9_begin phase_ms=0 elapsed_ms=446
+removal_phase=tied_removed_9 phase_ms=123 elapsed_ms=569
+removal_phase=tied_remove_10_begin phase_ms=0 elapsed_ms=569
+removal_phase=tied_removed_10 phase_ms=35 elapsed_ms=604
+removal_phase=tied_remove_11_begin phase_ms=0 elapsed_ms=604
+removal_phase=tied_removed_11 phase_ms=33 elapsed_ms=638
+removal_phase=tied_remove_12_begin phase_ms=0 elapsed_ms=638
+removal_phase=tied_removed_12 phase_ms=34 elapsed_ms=673
+removal_phase=tied_remove_13_begin phase_ms=0 elapsed_ms=673
+removal_phase=tied_removed_13 phase_ms=33 elapsed_ms=706
+removal_phase=tied_remove_14_begin phase_ms=0 elapsed_ms=706
+removal_phase=tied_removed_14 phase_ms=32 elapsed_ms=739
+removal_phase=tied_remove_15_begin phase_ms=0 elapsed_ms=739
+removal_phase=tied_removed_15 phase_ms=32 elapsed_ms=771
+removal_phase=tied_remove_16_begin phase_ms=0 elapsed_ms=771
+removal_phase=tied_removed_16 phase_ms=30 elapsed_ms=802
+removal_phase=tied_remove_17_begin phase_ms=0 elapsed_ms=802
+removal_phase=tied_removed_17 phase_ms=29 elapsed_ms=831
+removal_phase=tied_remove_18_begin phase_ms=0 elapsed_ms=831
+removal_phase=tied_removed_18 phase_ms=37 elapsed_ms=868
+removal_phase=tied_remove_19_begin phase_ms=0 elapsed_ms=868
+removal_phase=tied_removed_19 phase_ms=32 elapsed_ms=901
+removal_phase=tied_remove_20_begin phase_ms=0 elapsed_ms=901
+removal_phase=tied_removed_20 phase_ms=31 elapsed_ms=933
+removal_phase=tied_remove_21_begin phase_ms=0 elapsed_ms=933
+removal_phase=tied_removed_21 phase_ms=31 elapsed_ms=965
+removal_phase=tied_remove_22_begin phase_ms=0 elapsed_ms=965
+removal_phase=tied_removed_22 phase_ms=27 elapsed_ms=993
+removal_phase=tied_remove_23_begin phase_ms=0 elapsed_ms=993
+removal_phase=tied_removed_23 phase_ms=26 elapsed_ms=1020
+removal_phase=tied_remove_24_begin phase_ms=0 elapsed_ms=1020
+removal_phase=tied_removed_24 phase_ms=29 elapsed_ms=1049
+removal_phase=tied_remove_25_begin phase_ms=0 elapsed_ms=1049
+removal_phase=tied_removed_25 phase_ms=28 elapsed_ms=1078
+removal_phase=tied_remove_26_begin phase_ms=0 elapsed_ms=1078
+removal_phase=tied_removed_26 phase_ms=29 elapsed_ms=1108
+removal_phase=tied_remove_27_begin phase_ms=0 elapsed_ms=1108
+removal_phase=tied_removed_27 phase_ms=30 elapsed_ms=1138
+removal_phase=tied_remove_28_begin phase_ms=0 elapsed_ms=1138
+removal_phase=tied_removed_28 phase_ms=29 elapsed_ms=1168
+removal_phase=tied_remove_29_begin phase_ms=0 elapsed_ms=1168
+removal_phase=tied_removed_29 phase_ms=33 elapsed_ms=1201
+removal_phase=tied_remove_30_begin phase_ms=0 elapsed_ms=1201
+removal_phase=tied_removed_30 phase_ms=29 elapsed_ms=1230
+removal_phase=tied_remove_31_begin phase_ms=0 elapsed_ms=1230
+removal_phase=tied_removed_31 phase_ms=28 elapsed_ms=1259
+removal_phase=tied_remove_32_begin phase_ms=0 elapsed_ms=1259
+removal_phase=tied_removed_32 phase_ms=28 elapsed_ms=1287
+removal_phase=tied_remove_33_begin phase_ms=0 elapsed_ms=1287
+removal_phase=tied_removed_33 phase_ms=26 elapsed_ms=1314
+removal_phase=tied_remove_34_begin phase_ms=0 elapsed_ms=1314
+removal_phase=tied_removed_34 phase_ms=26 elapsed_ms=1341
+removal_phase=tied_remove_35_begin phase_ms=0 elapsed_ms=1341
+removal_phase=tied_removed_35 phase_ms=29 elapsed_ms=1371
+removal_phase=tied_remove_36_begin phase_ms=0 elapsed_ms=1371
+removal_phase=tied_removed_36 phase_ms=33 elapsed_ms=1405
+removal_phase=tied_remove_37_begin phase_ms=0 elapsed_ms=1405
+removal_phase=tied_removed_37 phase_ms=27 elapsed_ms=1433
+removal_phase=tied_remove_38_begin phase_ms=0 elapsed_ms=1433
+removal_phase=tied_removed_38 phase_ms=26 elapsed_ms=1459
+removal_phase=tied_remove_39_begin phase_ms=0 elapsed_ms=1459
+removal_phase=tied_removed_39 phase_ms=24 elapsed_ms=1484
+removal_phase=tied_remove_40_begin phase_ms=0 elapsed_ms=1484
+removal_phase=tied_removed_40 phase_ms=24 elapsed_ms=1508
+removal_phase=tied_remove_41_begin phase_ms=0 elapsed_ms=1508
+removal_phase=tied_removed_41 phase_ms=24 elapsed_ms=1533
+removal_phase=tied_remove_42_begin phase_ms=0 elapsed_ms=1533
+removal_phase=tied_removed_42 phase_ms=24 elapsed_ms=1557
+removal_phase=tied_remove_43_begin phase_ms=0 elapsed_ms=1558
+removal_phase=tied_removed_43 phase_ms=27 elapsed_ms=1585
+removal_phase=tied_remove_44_begin phase_ms=0 elapsed_ms=1585
+removal_phase=tied_removed_44 phase_ms=69 elapsed_ms=1655
+removal_phase=tied_remove_45_begin phase_ms=0 elapsed_ms=1655
+removal_phase=tied_removed_45 phase_ms=44 elapsed_ms=1699
+removal_phase=tied_remove_46_begin phase_ms=0 elapsed_ms=1699
+removal_phase=tied_removed_46 phase_ms=24 elapsed_ms=1724
+removal_phase=tied_remove_47_begin phase_ms=0 elapsed_ms=1724
+removal_phase=tied_removed_47 phase_ms=23 elapsed_ms=1747
+removal_phase=tied_remove_48_begin phase_ms=0 elapsed_ms=1747
+removal_phase=tied_removed_48 phase_ms=23 elapsed_ms=1771
+removal_phase=tied_remove_49_begin phase_ms=0 elapsed_ms=1771
+removal_phase=tied_removed_49 phase_ms=21 elapsed_ms=1793
+removal_phase=tied_remove_50_begin phase_ms=0 elapsed_ms=1793
+removal_phase=tied_removed_50 phase_ms=22 elapsed_ms=1816
+removal_phase=tied_remove_51_begin phase_ms=0 elapsed_ms=1816
+removal_phase=tied_removed_51 phase_ms=21 elapsed_ms=1837
+removal_phase=tied_remove_52_begin phase_ms=0 elapsed_ms=1838
+removal_phase=tied_removed_52 phase_ms=24 elapsed_ms=1862
+removal_phase=tied_remove_53_begin phase_ms=0 elapsed_ms=1862
+removal_phase=tied_removed_53 phase_ms=20 elapsed_ms=1882
+removal_phase=tied_remove_54_begin phase_ms=0 elapsed_ms=1883
+removal_phase=tied_removed_54 phase_ms=18 elapsed_ms=1901
+removal_phase=tied_remove_55_begin phase_ms=0 elapsed_ms=1901
+removal_phase=tied_removed_55 phase_ms=18 elapsed_ms=1919
+removal_phase=tied_remove_56_begin phase_ms=0 elapsed_ms=1919
+removal_phase=tied_removed_56 phase_ms=18 elapsed_ms=1938
+removal_phase=tied_remove_57_begin phase_ms=0 elapsed_ms=1938
+removal_phase=tied_removed_57 phase_ms=17 elapsed_ms=1955
+removal_phase=tied_remove_58_begin phase_ms=0 elapsed_ms=1955
+removal_phase=tied_removed_58 phase_ms=17 elapsed_ms=1973
+removal_phase=tied_remove_59_begin phase_ms=0 elapsed_ms=1973
+removal_phase=tied_removed_59 phase_ms=17 elapsed_ms=1990
+removal_phase=tied_remove_60_begin phase_ms=0 elapsed_ms=1990
+removal_phase=tied_removed_60 phase_ms=17 elapsed_ms=2008
+removal_phase=tied_remove_61_begin phase_ms=0 elapsed_ms=2008
+removal_phase=tied_removed_61 phase_ms=22 elapsed_ms=2031
+removal_phase=tied_remove_62_begin phase_ms=0 elapsed_ms=2031
+removal_phase=tied_removed_62 phase_ms=39 elapsed_ms=2071
+removal_phase=tied_remove_63_begin phase_ms=0 elapsed_ms=2071
+removal_phase=tied_removed_63 phase_ms=28 elapsed_ms=2099
+removal_phase=tied_remove_64_begin phase_ms=0 elapsed_ms=2099
+removal_phase=tied_removed_64 phase_ms=21 elapsed_ms=2121
+removal_phase=tied_failure_begin phase_ms=0 elapsed_ms=2121
+removal_phase=tied_failure_returned phase_ms=18 elapsed_ms=2139
+removal_phase=tied_failure_reopen_begin phase_ms=0 elapsed_ms=2139
+removal_phase=tied_failure_reopened phase_ms=10 elapsed_ms=2149
+removal_phase=tied_retry_begin phase_ms=0 elapsed_ms=2149
+removal_phase=tied_retry_committed phase_ms=23 elapsed_ms=2173
+removal_phase=tied_retry_reopen_begin phase_ms=0 elapsed_ms=2173
+removal_phase=tied_retry_reopened phase_ms=10 elapsed_ms=2183
+removal_phase=tied_assertions_done phase_ms=2 elapsed_ms=2185
+removal_phase=absent_fixture_begin phase_ms=0 elapsed_ms=2186
+removal_phase=absent_clear_begin phase_ms=0 elapsed_ms=2186
+removal_phase=absent_cleared phase_ms=6 elapsed_ms=2192
+removal_phase=absent_seed_begin phase_ms=1 elapsed_ms=2194
+removal_phase=absent_seeded phase_ms=15 elapsed_ms=2209
+removal_phase=absent_observe_begin phase_ms=0 elapsed_ms=2209
+removal_phase=absent_observed phase_ms=9 elapsed_ms=2219
+removal_phase=absent_observer_join_begin phase_ms=0 elapsed_ms=2219
+removal_phase=absent_observer_joined phase_ms=0 elapsed_ms=2220
+removal_phase=absent_remove_1_begin phase_ms=0 elapsed_ms=2220
+removal_phase=absent_removed_1 phase_ms=25 elapsed_ms=2245
+removal_phase=absent_remove_2_begin phase_ms=0 elapsed_ms=2246
+removal_phase=absent_removed_2 phase_ms=23 elapsed_ms=2269
+removal_phase=absent_remove_3_begin phase_ms=0 elapsed_ms=2269
+removal_phase=absent_removed_3 phase_ms=22 elapsed_ms=2292
+removal_phase=absent_remove_4_begin phase_ms=0 elapsed_ms=2292
+removal_phase=absent_removed_4 phase_ms=22 elapsed_ms=2314
+removal_phase=absent_remove_5_begin phase_ms=0 elapsed_ms=2314
+removal_phase=absent_removed_5 phase_ms=22 elapsed_ms=2337
+removal_phase=absent_remove_6_begin phase_ms=0 elapsed_ms=2337
+removal_phase=absent_removed_6 phase_ms=21 elapsed_ms=2359
+removal_phase=absent_remove_7_begin phase_ms=0 elapsed_ms=2359
+removal_phase=absent_removed_7 phase_ms=21 elapsed_ms=2380
+removal_phase=absent_remove_8_begin phase_ms=0 elapsed_ms=2380
+removal_phase=absent_removed_8 phase_ms=22 elapsed_ms=2403
+removal_phase=absent_remove_9_begin phase_ms=0 elapsed_ms=2403
+removal_phase=absent_removed_9 phase_ms=21 elapsed_ms=2424
+removal_phase=absent_remove_10_begin phase_ms=0 elapsed_ms=2424
+removal_phase=absent_removed_10 phase_ms=20 elapsed_ms=2445
+removal_phase=absent_remove_11_begin phase_ms=0 elapsed_ms=2445
+removal_phase=absent_removed_11 phase_ms=21 elapsed_ms=2467
+removal_phase=absent_remove_12_begin phase_ms=0 elapsed_ms=2467
+removal_phase=absent_removed_12 phase_ms=20 elapsed_ms=2487
+removal_phase=absent_remove_13_begin phase_ms=0 elapsed_ms=2488
+removal_phase=absent_removed_13 phase_ms=18 elapsed_ms=2506
+removal_phase=absent_remove_14_begin phase_ms=0 elapsed_ms=2506
+removal_phase=absent_removed_14 phase_ms=19 elapsed_ms=2526
+removal_phase=absent_remove_15_begin phase_ms=0 elapsed_ms=2526
+removal_phase=absent_removed_15 phase_ms=27 elapsed_ms=2554
+removal_phase=absent_remove_16_begin phase_ms=0 elapsed_ms=2554
+removal_phase=absent_removed_16 phase_ms=18 elapsed_ms=2573
+removal_phase=absent_remove_17_begin phase_ms=0 elapsed_ms=2573
+removal_phase=absent_removed_17 phase_ms=19 elapsed_ms=2592
+removal_phase=absent_remove_18_begin phase_ms=0 elapsed_ms=2592
+removal_phase=absent_removed_18 phase_ms=17 elapsed_ms=2610
+removal_phase=absent_remove_19_begin phase_ms=0 elapsed_ms=2610
+removal_phase=absent_removed_19 phase_ms=17 elapsed_ms=2628
+removal_phase=absent_remove_20_begin phase_ms=0 elapsed_ms=2628
+removal_phase=absent_removed_20 phase_ms=19 elapsed_ms=2648
+removal_phase=absent_remove_21_begin phase_ms=0 elapsed_ms=2648
+removal_phase=absent_removed_21 phase_ms=17 elapsed_ms=2665
+removal_phase=absent_remove_22_begin phase_ms=0 elapsed_ms=2665
+removal_phase=absent_removed_22 phase_ms=17 elapsed_ms=2683
+removal_phase=absent_remove_23_begin phase_ms=0 elapsed_ms=2683
+removal_phase=absent_removed_23 phase_ms=18 elapsed_ms=2702
+removal_phase=absent_remove_24_begin phase_ms=0 elapsed_ms=2702
+removal_phase=absent_removed_24 phase_ms=17 elapsed_ms=2719
+removal_phase=absent_remove_25_begin phase_ms=0 elapsed_ms=2719
+removal_phase=absent_removed_25 phase_ms=16 elapsed_ms=2736
+removal_phase=absent_remove_26_begin phase_ms=0 elapsed_ms=2736
+removal_phase=absent_removed_26 phase_ms=17 elapsed_ms=2754
+removal_phase=absent_remove_27_begin phase_ms=0 elapsed_ms=2754
+removal_phase=absent_removed_27 phase_ms=18 elapsed_ms=2772
+removal_phase=absent_remove_28_begin phase_ms=0 elapsed_ms=2773
+removal_phase=absent_removed_28 phase_ms=18 elapsed_ms=2791
+removal_phase=absent_remove_29_begin phase_ms=0 elapsed_ms=2791
+removal_phase=absent_removed_29 phase_ms=17 elapsed_ms=2809
+removal_phase=absent_remove_30_begin phase_ms=0 elapsed_ms=2809
+removal_phase=absent_removed_30 phase_ms=17 elapsed_ms=2827
+removal_phase=absent_remove_31_begin phase_ms=0 elapsed_ms=2827
+removal_phase=absent_removed_31 phase_ms=19 elapsed_ms=2846
+removal_phase=absent_remove_32_begin phase_ms=0 elapsed_ms=2846
+removal_phase=absent_removed_32 phase_ms=17 elapsed_ms=2864
+removal_phase=absent_remove_33_begin phase_ms=0 elapsed_ms=2864
+removal_phase=absent_removed_33 phase_ms=16 elapsed_ms=2881
+removal_phase=absent_remove_34_begin phase_ms=0 elapsed_ms=2881
+removal_phase=absent_removed_34 phase_ms=17 elapsed_ms=2899
+removal_phase=absent_remove_35_begin phase_ms=0 elapsed_ms=2899
+removal_phase=absent_removed_35 phase_ms=16 elapsed_ms=2915
+removal_phase=absent_remove_36_begin phase_ms=0 elapsed_ms=2916
+removal_phase=absent_removed_36 phase_ms=18 elapsed_ms=2934
+removal_phase=absent_remove_37_begin phase_ms=0 elapsed_ms=2934
+removal_phase=absent_removed_37 phase_ms=17 elapsed_ms=2951
+removal_phase=absent_remove_38_begin phase_ms=0 elapsed_ms=2952
+removal_phase=absent_removed_38 phase_ms=26 elapsed_ms=2978
+removal_phase=absent_remove_39_begin phase_ms=0 elapsed_ms=2978
+removal_phase=absent_removed_39 phase_ms=18 elapsed_ms=2996
+removal_phase=absent_remove_40_begin phase_ms=0 elapsed_ms=2996
+removal_phase=absent_removed_40 phase_ms=19 elapsed_ms=3016
+removal_phase=absent_remove_41_begin phase_ms=0 elapsed_ms=3016
+removal_phase=absent_removed_41 phase_ms=16 elapsed_ms=3033
+removal_phase=absent_remove_42_begin phase_ms=0 elapsed_ms=3033
+removal_phase=absent_removed_42 phase_ms=19 elapsed_ms=3052
+removal_phase=absent_remove_43_begin phase_ms=0 elapsed_ms=3052
+removal_phase=absent_removed_43 phase_ms=18 elapsed_ms=3071
+removal_phase=absent_remove_44_begin phase_ms=0 elapsed_ms=3071
+removal_phase=absent_removed_44 phase_ms=18 elapsed_ms=3090
+removal_phase=absent_remove_45_begin phase_ms=0 elapsed_ms=3090
+removal_phase=absent_removed_45 phase_ms=16 elapsed_ms=3106
+removal_phase=absent_remove_46_begin phase_ms=0 elapsed_ms=3106
+removal_phase=absent_removed_46 phase_ms=16 elapsed_ms=3123
+removal_phase=absent_remove_47_begin phase_ms=0 elapsed_ms=3123
+removal_phase=absent_removed_47 phase_ms=16 elapsed_ms=3139
+removal_phase=absent_remove_48_begin phase_ms=0 elapsed_ms=3139
+removal_phase=absent_removed_48 phase_ms=16 elapsed_ms=3156
+removal_phase=absent_remove_49_begin phase_ms=0 elapsed_ms=3156
+removal_phase=absent_removed_49 phase_ms=18 elapsed_ms=3174
+removal_phase=absent_remove_50_begin phase_ms=0 elapsed_ms=3174
+removal_phase=absent_removed_50 phase_ms=17 elapsed_ms=3191
+removal_phase=absent_remove_51_begin phase_ms=0 elapsed_ms=3191
+removal_phase=absent_removed_51 phase_ms=16 elapsed_ms=3208
+removal_phase=absent_remove_52_begin phase_ms=0 elapsed_ms=3208
+removal_phase=absent_removed_52 phase_ms=18 elapsed_ms=3226
+removal_phase=absent_remove_53_begin phase_ms=0 elapsed_ms=3226
+removal_phase=absent_removed_53 phase_ms=17 elapsed_ms=3244
+removal_phase=absent_remove_54_begin phase_ms=0 elapsed_ms=3244
+removal_phase=absent_removed_54 phase_ms=16 elapsed_ms=3261
+removal_phase=absent_remove_55_begin phase_ms=0 elapsed_ms=3261
+removal_phase=absent_removed_55 phase_ms=15 elapsed_ms=3276
+removal_phase=absent_remove_56_begin phase_ms=0 elapsed_ms=3276
+removal_phase=absent_removed_56 phase_ms=15 elapsed_ms=3292
+removal_phase=absent_remove_57_begin phase_ms=0 elapsed_ms=3292
+removal_phase=absent_removed_57 phase_ms=15 elapsed_ms=3307
+removal_phase=absent_remove_58_begin phase_ms=0 elapsed_ms=3307
+removal_phase=absent_removed_58 phase_ms=14 elapsed_ms=3322
+removal_phase=absent_remove_59_begin phase_ms=0 elapsed_ms=3322
+removal_phase=absent_removed_59 phase_ms=14 elapsed_ms=3336
+removal_phase=absent_remove_60_begin phase_ms=0 elapsed_ms=3336
+removal_phase=absent_removed_60 phase_ms=14 elapsed_ms=3351
+removal_phase=absent_remove_61_begin phase_ms=0 elapsed_ms=3351
+removal_phase=absent_removed_61 phase_ms=15 elapsed_ms=3367
+removal_phase=absent_remove_62_begin phase_ms=0 elapsed_ms=3367
+removal_phase=absent_removed_62 phase_ms=14 elapsed_ms=3382
+removal_phase=absent_remove_63_begin phase_ms=0 elapsed_ms=3382
+removal_phase=absent_removed_63 phase_ms=19 elapsed_ms=3402
+removal_phase=absent_remove_64_begin phase_ms=0 elapsed_ms=3402
+removal_phase=absent_removed_64 phase_ms=14 elapsed_ms=3417
+removal_phase=absent_failure_begin phase_ms=0 elapsed_ms=3417
+removal_phase=absent_failure_returned phase_ms=14 elapsed_ms=3432
+removal_phase=absent_failure_reopen_begin phase_ms=0 elapsed_ms=3432
+removal_phase=absent_failure_reopened phase_ms=7 elapsed_ms=3439
+removal_phase=absent_retry_begin phase_ms=0 elapsed_ms=3439
+removal_phase=absent_retry_committed phase_ms=13 elapsed_ms=3453
+removal_phase=absent_retry_reopen_begin phase_ms=0 elapsed_ms=3453
+removal_phase=absent_retry_reopened phase_ms=7 elapsed_ms=3461
+removal_phase=absent_assertions_done phase_ms=0 elapsed_ms=3461
+removal_phase=body_done phase_ms=0 elapsed_ms=3462
+removal_phase=close_begin phase_ms=0 elapsed_ms=3462
+removal_phase=close_done phase_ms=1 elapsed_ms=3464
+owned_removal_work=WriteCounts(itemReads=1, itemDecodes=1, inputDecodes=0, itemSerializations=0, itemWrites=0, itemDeletes=1, headerWrites=1, ordinalReads=0, ordinalWrites=0, retirementWrites=1)
+]]></system-out>
+  <system-err><![CDATA[WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_failurePreservesCertificateAndRetryCommits(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_roomReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_fileReplacementRejectsStaleRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_fileCompatibilityRetainsFenceAndResetLifetime(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_replayAndRestoreCannotResurrect(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_roomReplacementResetAdmitsOnlyNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_pendingRejectionsRestoreOriginalTieOrder(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_successReleasesRecoveryButFailureRetainsIt(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_finalFlushRefreshesRemoval(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_durableNewerRevisionRejectsRemovalAtomically(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_resetDuringRemovalCreatesNewIncarnation(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_storageFencesReplayAndOldIncarnationAcrossReopen(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_scopeDeletionKeepsOtherHostExact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_heldUpsertThenRemovalCommitsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:atomicInvariant_cancelledRemovalFinishesCommitBeforeReturning(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_staleCapturesCannotRemoveNewerFacts(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:retirementInvariant_emptyPageStillRetainsItsFence(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+WATCHDOG event=start id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] 
+WATCHDOG event=armed id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] owner=33 limit=180
+WATCHDOG event=finish id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)]] status=SUCCESSFUL exception=null
+WATCHDOG event=retired id=[engine:junit-vintage]/[runner:de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest]/[test:ownershipInvariant_partialRemovalPreservesEveryOtherFact(de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest)] thread=SDK 33 Main Thread threadId=33 running=[] owner=33
+]]></system-err>
+</testsuite>
