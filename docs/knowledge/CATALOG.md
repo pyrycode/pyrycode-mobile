@@ -219,8 +219,12 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
     - [Development verification — change surface, Gradle gates and where a test goes](features/development-verification-gates.md) — `Establish the change surface`, `Gradle and source checks`, `Where a screen test goes`, `Device gate`, moved verbatim from the parent on 2026-10-02.
     - [Development verification — Compose evidence](features/development-verification-compose-evidence.md) — `Compose evidence`, `Probe the evidence itself`, moved verbatim from the parent on 2026-10-02. `Compose evidence` also holds the shared `ViewportRule`/`@Viewport` and the `design-1220/` capture harness (`DesignCapture`, `DesignInputs`) from #1430.
     - [Development verification — test scheduling and harnesses](features/development-verification-test-scheduling.md) — `Test scheduling and harnesses`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — focused API35 capture selection](features/development-verification-api35-selection.md) — Exact selectors, duplicate-property rejection, merged consumer/policy identity and pending #2418 capture evidence (#2435).
     - [Development verification — scenario report ownership](features/development-verification-report-ownership.md) — Stream and background-Agent execution boundaries, exact-byte retention and controlled causal/count evidence (#2455, #2481).
     - [Development verification — JVM logging, emulator and real evidence](features/development-verification-emulator-evidence.md) — `JVM logging and formatting`, `Emulator and real evidence`, `Documentation evidence`, `Archive refresh regression`, moved verbatim from the parent on 2026-10-02.
+    - [Development verification — durable-gap receipt evidence](features/development-verification-recovery-receipt-evidence.md) — #2515 diagnostic ordering, controlled regressions, composed source/artifact identities and separate configured outcomes.
+    - [Development verification — device-gate artifact retention](features/development-verification-artifact-retention.md) — private captures, manifest completion, cleanup and safe publication; split from emulator evidence for #2515.
+    - [Development verification — peer-turn reopen evidence](features/development-verification-peer-reopen-evidence.md) — passive reopen ordering and retained #2318 focused/sweep results; split from emulator evidence for #2515.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
 - [MessageBubble — testing](features/message-bubble-testing.md) — selection-menu fixtures, metadata gestures, palette and geometry guards, and attachment coverage; split from `message-bubble.md` on 2026-10-03.
@@ -266,3 +270,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Final integrated reader paging acceptance (#2334)](features/authoritative-reader-paging-final-acceptance.md) — consolidated scoped review, exact-source full acceptance and reviewed integration.
 
 - [Thread screen — wiring](features/thread-screen-wiring.md): Koin and destination binding, host ownership and composer topic pointer; split from the thread overview for #2388.
+
+- [Thread screen — expanded details](features/thread-screen-expanded-details.md): body/child demand, source and subtree invalidation, stale Loading/Retry/offline display, valid reopen and lifecycle retirement; split from thread-screen.md for #2391.
+
+- [Development verification — Gradle and source checks](features/development-verification-gradle.md): build admission, exact comparisons, watchdogs, heap evidence and snackbar routing; split from the gates overview for #2505.

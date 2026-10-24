@@ -342,4 +342,20 @@ privacy, viewport and control assertions.
 
 ## Required daemon thread identity
 
+Accepted delivery identity must be established before the daemon publishes the delivery item.
+Core [PR #3726](https://github.com/pyrycode/pyrycode/pull/3726) supplies the committed acceptance
+reference in `operatorMessageHistory`; `Fold.deliverSend` preserves that permanent identity and
+removes the intermediate written outcome in both inline and source-backed folds. Otherwise a
+later delivery link can remove an already published row, require a baseline and retire the peer
+before its live refusal reaches Mobile. Genuine-gap retirement remains required. Controlled
+separate/coalesced publication regressions prove the repaired boundary; a passing phone retry
+against the old daemon cannot validate it. See the
+[#2374 diagnosis](../../specs/architecture/2374-refusal-publication-proof.md) and
+[counted Linux phone proof](../../e2e-interactive-stream.md#authoritative-fixture-migration-evidence-2366).
+The historical reset fits this defect, but missing raw segments leave its exact batching unknown.
+
+Restoring the refusal row after a continuity reset proves content recovery only. A new Switch back
+offer still requires fresh live refusal delivery on the current owner; history restoration must
+never compensate for a lost live effect by authorizing a model write.
+
 The production daemon thread route arms Switch back only from a fresh accepted refusal notice. Its occurrence key contains the host, conversation, epoch and item identity. Rendering and acknowledgement use that same key. Equal display timestamps cannot merge two notices, and an older acknowledgement cannot clear a newer offer. Restored history and repeated additions never rearm an action. An already armed offer survives a reconnect within the same session. Session replacement clears that offer. Reconnecting clears transient turn recovery. The older timestamp mechanism above remains for the legacy route. See [the activation plan](../../specs/architecture/2245-production-daemon-thread.md).

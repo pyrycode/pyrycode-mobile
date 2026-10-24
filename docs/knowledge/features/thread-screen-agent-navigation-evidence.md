@@ -240,3 +240,61 @@ Counted XML was retained in agents `logs/verifier-gate_#2373_4.log`,
 time; the bundle retains the JVM log tail and a pointer to its complete host log.
 No fresh live-Claude observation is claimed. Historical geometry/timeline limits
 remain unresolved by these passes; macOS is outside this Linux verification scope.
+
+### Current-family navigation after readiness (#2493)
+
+The finished-marker helper above already resolves the current rendered identity.
+`verifyAgentRunNavigation` also needs the complete current Agent/run/children
+family after readiness: a later admitted generation can replace all rendered keys
+before navigation or during geometry measurement. Resolving only the marker, or
+retaining the first ready family, leaves the owned expansion action unreachable.
+The affected native caller now resolves the same raw Agent, settled reply and exact
+late tool children together from one admitted snapshot. Navigation and reveal
+boundaries resample that family; exact-key validation and scroll dispatch happen
+together on the UI thread. Fixed-key callers keep strict missing-key failure.
+
+One monotonic navigation budget and each existing open/close budget cover the
+resampling; a replacement cannot restart a deadline. The proof still requires
+exact closed/open child membership, positive attributed prose visibility,
+chrome-clear geometry and one physical pointer tap per transition. Readiness alone
+proves none of those later assertions. No production authority, recording bytes,
+request matching, assertion or deadline changed.
+
+The macOS review of `6c487ab17d4aa79b03c3b6b1ee35cf54998ea9d6` retained two native
+failures: the full UI run could not find the owned “Using tools:” action; the exact
+rerun reported `tap target left the projected list`. Main passed its exact
+comparison. Two controlled real-screen probes over that source replaced the family
+after readiness and during geometry: two executed/failed, zero errors/skips, with
+those respective signatures. They demonstrate the mechanisms, not the exact old
+phone interleaving.
+
+The first repair attempt failed compilation before execution. The next two-case
+run passed the stale-identity boundaries but both cases failed positive owned-prose
+visibility. The compact fixture needed its existing exact `prose-$agent` reveal key,
+including the initial family. With that fixture input, the next fresh pair passed
+2/2, zero failures/errors/skips; viewport, replacement stimuli, physical taps and
+assertions remained. The affected `BackgroundAgentBlocksScreenTest` then passed
+30/30 and instrumented compilation passed. On committed
+`d18cfe8b3d2f094e07b1602a3430d5e5423bfc34`, the exact previously twice-failed
+`RecordedMobileSuiteTest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+passed 1/1, zero failures/errors/skips, exit 0, with finished pointer-proof phases.
+These author results retain their own source identity.
+
+Independent review accepted integrated macOS
+`07b3eaadbc8b20ca6a3fbe64987454a5fcbc9cee`: the screen class passed 30/30 within
+5,522 executed/passed JVM tests, zero failures/errors/skips. The named background-Agent
+replay passed in the original full UI invocation: 250 executed, 248 passed, two
+unrelated failures, zero errors/skips; both failures passed the exact 2/2 rerun.
+The configured scripted run's five inherited failures remain failures, tracked
+separately from this replay pass. See the
+[accepted counts, runtime identities and evidence limits](../../recorded-tests.md#accepted-macos-integration-2493).
+
+At documentation time, causal patches, failed attempts, XML and phone pointer proof
+were retained under agents `logs/evidence/2493/manual-ui-rework-20261023/`, including
+`evidence/red/`, `green-v2/`, `green-v3/`, `affected/` and `native/ui-otn5y02f/`.
+The published manual bundle authenticated 201/201 entries; manifest SHA-256 is
+`57c246ed50b710b0f29c8c8ba3f6377d5617f306052f09815d99b075499fac1b`.
+Built APK hashes do not establish installed-byte identity, and no extra independent
+per-process cleanup audit or historical-interleaving reconstruction is claimed.
+Earlier finished-marker evidence and failures above retain their original results;
+Linux is outside this macOS ticket's scope.

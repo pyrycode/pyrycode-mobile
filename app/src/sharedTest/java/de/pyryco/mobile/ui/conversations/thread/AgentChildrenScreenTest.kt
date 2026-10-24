@@ -66,14 +66,23 @@ class AgentChildrenScreenTest {
 
     @Test fun capacityRetryStaysInsideExpandedAgentAndRecoversAfterOtherDemandCloses() = mounted(capacity = true)
 
+    @Test fun invalidatedRowsRemainVisibleThroughFailureRetryAndCursorRestart() = mounted(refresh = true)
+
+    @Test fun lifecycleConnectionReplacementRetiresOldPresentationWithCollidingIds() = mounted(replacement = true)
+
     private fun mounted(
         stop: Boolean = false,
         collapse: Boolean = false,
         capacity: Boolean = false,
+        refresh: Boolean = false,
+        replacement: Boolean = false,
     ) {
         val frames = Channel<Long>(Channel.UNLIMITED).apply { trySend(1) }
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val replies = Channel<Envelope>(Channel.UNLIMITED)
+        var currentReplies = replies
+        var capture = 41
+        var replacementScope: CoroutineScope? = null
         val sent = CopyOnWriteArrayList<Envelope>()
         val pump =
             object : SessionPump {
@@ -84,7 +93,7 @@ class AgentChildrenScreenTest {
                     if (envelope.type == "thread_read_tool_body") {
                         val r = envelope.payload as JsonObject
                         val identity = """
-                        "conversation_id":"c","epoch":"e","version":41,
+                        "conversation_id":"c","epoch":"e","version":$capture,
                         "item_id":${r["item_id"]},"rev":${r["expected_rev"]},"kind":"agent"
                     """
                         listOf(""", "content":{},"final":false""", """, "final":true""").forEach {
@@ -107,6 +116,7 @@ class AgentChildrenScreenTest {
                 setOf("thread", "interactive", "thread_expansion")
             }, authoritativeHostId = "host")
         val supported = MutableStateFlow<ThreadSupport>(ThreadSupport.Supported(repo))
+        var currentRepo = repo
         val route =
             object : NegotiatedThread() {
                 override val host = "host"
@@ -134,7 +144,13 @@ class AgentChildrenScreenTest {
                     ids: Set<Long>,
                     retry: Long?,
                     more: Long?,
-                ) = repo.demandAgentChildren(conversationId, consumer, snapshot, ids, retry, more)
+                ) = if (connection ===
+                    currentRepo
+                ) {
+                    currentRepo.demandAgentChildren(conversationId, consumer, snapshot, ids, retry, more)
+                } else {
+                    null
+                }
 
                 override fun bodies(
                     conversationId: String,
@@ -143,7 +159,7 @@ class AgentChildrenScreenTest {
                     snapshot: AuthoritativeThreadSnapshot,
                     ids: Set<Long>,
                     retry: Long?,
-                ) = repo.demandToolBodies(conversationId, consumer, snapshot, ids, retry)
+                ) = if (connection === currentRepo) currentRepo.demandToolBodies(conversationId, consumer, snapshot, ids, retry) else null
             }
         val source =
             object : ConversationRepository by FakeConversationRepository() {
@@ -178,15 +194,18 @@ class AgentChildrenScreenTest {
                 override val lifecycle = LifecycleRegistry.createUnsafe(this).apply { currentState = Lifecycle.State.RESUMED }
             }
         var seen = emptyMap<String, Long>()
+        var lastDemand: ThreadEvent.AgentChildrenDemand? = null
 
         fun json(text: String) = MobileJson.parseToJsonElement(text) as JsonObject
 
-        fun agent(id: Long) =
-            ThreadItemDto.decode(
-                json(
-                    """{"id":$id,"rev":23,"order":$id,"parent":0,"kind":"agent","status":"done","shown":true,"active":false,"summary":"Agent $id","detail_omitted":true,"content":{"name":"Agent","input":{"description":"Agent $id"}}}""",
-                ),
-            )
+        fun agent(
+            id: Long,
+            freshness: Long = 0,
+        ) = ThreadItemDto.decode(
+            json(
+                """{"id":$id,"rev":23,"order":$id,"parent":0,"kind":"agent","status":"done","shown":true,"active":false,"summary":"Agent $id","subtree_version":$freshness,"detail_omitted":true,"content":{"name":"Agent","input":{"description":"Agent $id"}}}""",
+            ),
+        )
 
         fun reads() = sent.filter { it.type == "thread_read_children" }
 
@@ -208,32 +227,32 @@ class AgentChildrenScreenTest {
             val extra =
                 if (more) {
                     """
-                , "cursor":{"conversation_id":"c","epoch":"e","version":41,
+                , "cursor":{"conversation_id":"c","epoch":"e","version":$capture,
                 "item_id":$parent,"rev":23,"order":0,"id":$last}
             """
                 } else {
                     ""
                 }
             if (children.isNotEmpty()) {
-                replies.trySend(
+                currentReplies.trySend(
                     Envelope(
                         90,
                         "thread_children",
                         "now",
                         json(
-                            """{"conversation_id":"c","epoch":"e","version":41,"item_id":$parent,"rev":23,"children":[$children],"final":false}""",
+                            """{"conversation_id":"c","epoch":"e","version":$capture,"item_id":$parent,"rev":23,"children":[$children],"final":false}""",
                         ),
                         inReplyTo = request.id,
                     ),
                 )
             }
-            replies.trySend(
+            currentReplies.trySend(
                 Envelope(
                     91,
                     "thread_children",
                     "now",
                     json(
-                        """{"conversation_id":"c","epoch":"e","version":41,"item_id":$parent,"rev":23,"children":[],"final":true,"more":$more$extra}""",
+                        """{"conversation_id":"c","epoch":"e","version":$capture,"item_id":$parent,"rev":23,"children":[],"final":true,"more":$more$extra}""",
                     ),
                     inReplyTo = request.id,
                 ),
@@ -257,7 +276,10 @@ class AgentChildrenScreenTest {
                             {},
                             vm.connectionState.collectAsState().value,
                             {},
-                            onOverflowEvent = vm::onOverflowEvent,
+                            onOverflowEvent = { event ->
+                                if (event is ThreadEvent.AgentChildrenDemand) lastDemand = event
+                                vm.onOverflowEvent(event)
+                            },
                             collapseToolUses = true,
                         )
                     }
@@ -295,6 +317,129 @@ class AgentChildrenScreenTest {
                 return
             }
             compose.onNodeWithText("Loading agent children…").assertExists()
+            if (refresh || replacement) {
+                reply(17, child(50), more = true)
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 50").fetchSemanticsNodes().isNotEmpty() }
+                val oldPage = repo.authoritativeThreads.current("host", "c").childPages[17L to 23L]
+                capture = 45
+                compose.runOnIdle {
+                    repo.authoritativeThreads.applyBatch("host", "c", "e", 44, listOf(agent(17, 44)), 0)
+                }
+                compose.waitUntil(5000) { reads().size == 2 }
+                compose.onNodeWithText("Nested 50").assertExists()
+                compose.onNodeWithText("Loading agent children…").assertExists()
+                compose.onNodeWithText("Load more").assertDoesNotExist()
+                assertSame(oldPage, repo.authoritativeThreads.current("host", "c").childPages[17L to 23L])
+                if (replacement) {
+                    val retired = requireNotNull(lastDemand)
+                    val heldRequest = reads().last()
+                    compose.runOnIdle { (owner.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.CREATED }
+                    scope.cancel()
+                    val freshReplies = Channel<Envelope>(Channel.UNLIMITED)
+                    currentReplies = freshReplies
+                    val freshScope = CoroutineScope(Dispatchers.IO + SupervisorJob()).also { replacementScope = it }
+                    val freshPump =
+                        object : SessionPump {
+                            override val inbound = freshReplies.receiveAsFlow()
+
+                            override fun send(envelope: Envelope): Boolean {
+                                sent += envelope
+                                return true
+                            }
+                        }
+                    val fresh =
+                        RemoteConversationRepository(
+                            freshPump,
+                            freshScope,
+                            negotiatedCapabilities = { setOf("thread", "interactive", "thread_expansion") },
+                            authoritativeHostId = "host",
+                            authoritativeThreads = repo.authoritativeThreads,
+                        )
+                    compose.runOnIdle {
+                        currentRepo = fresh
+                        supported.value = ThreadSupport.Supported(fresh)
+                        (owner.lifecycle as LifecycleRegistry).currentState = Lifecycle.State.RESUMED
+                        // This fixture's acquire is inert; supply the new connection's source observation.
+                        repo.authoritativeThreads.applyBatch("host", "c", "e", 46, listOf(agent(17, 44)), 0)
+                    }
+                    try {
+                        compose.waitUntil(5000) {
+                            compose.waitForIdle()
+                            vm.state.value.authoritativeThread
+                                ?.sourceConnection === fresh
+                        }
+                    } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+                        val p = vm.state.value.authoritativeThread
+                        throw AssertionError(
+                            "replacement=${p?.sourceConnection === fresh} old=${p?.sourceConnection === repo} support=${(supported.value as? ThreadSupport.Supported)?.connection === fresh} reads=${reads().size} demand=${lastDemand?.keys?.size}\n${compose.onRoot().printToString()}",
+                            failure,
+                        )
+                    }
+                    compose.waitForIdle()
+                    // The verdict switch clears destination-local expansion; the new owner can open again.
+                    if (reads().size == 2) toggle("Agent 17")
+                    compose.waitUntil(5000) { reads().size == 3 }
+                    compose.runOnIdle {
+                        vm.onOverflowEvent(
+                            retired.copy(retry = retired.keys.firstOrNull(), more = retired.keys.firstOrNull()),
+                        )
+                    }
+                    replies.trySend(
+                        Envelope(
+                            95,
+                            "thread_children",
+                            "now",
+                            json(
+                                """{"conversation_id":"c","epoch":"e","version":45,"item_id":17,"rev":23,"children":[],"final":true,"more":false}""",
+                            ),
+                            inReplyTo = heldRequest.id,
+                        ),
+                    )
+                    compose.waitForIdle()
+                    assertEquals(3, reads().size)
+                    assertSame(oldPage, repo.authoritativeThreads.current("host", "c").childPages[17L to 23L])
+                    reply(17, child(51))
+                    compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 51").fetchSemanticsNodes().isNotEmpty() }
+                    compose.onNodeWithText("Nested 50").assertDoesNotExist()
+                    assertTrue(sent.none { it.type == "mark_conversation_read" })
+                    return
+                }
+
+                fun refuse() {
+                    currentReplies.trySend(
+                        Envelope(
+                            92,
+                            "error",
+                            "now",
+                            json("""{"code":"thread.query_failed","message":"private","retryable":true}"""),
+                            inReplyTo = reads().last().id,
+                        ),
+                    )
+                    compose.waitUntil(
+                        5000,
+                    ) { compose.onAllNodesWithText("Couldn’t load agent children").fetchSemanticsNodes().isNotEmpty() }
+                }
+                refuse()
+                compose.onNodeWithText("Nested 50").assertExists()
+                compose.mainClock.advanceTimeBy(500)
+                assertEquals(2, reads().size)
+                compose.onNodeWithText("Retry").performClick()
+                compose.waitUntil(5000) { reads().size == 3 }
+                assertTrue("cursor" !in (reads().last().payload as JsonObject))
+                reply(17, child(51), more = true, last = 51)
+                compose.waitUntil(5000) { compose.onAllNodesWithText("Nested 51").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Nested 50").assertDoesNotExist()
+                compose.onNodeWithText("Load more").performClick()
+                compose.waitUntil(5000) { reads().size == 4 }
+                refuse()
+                compose.onNodeWithText("Retry").performClick()
+                compose.waitUntil(5000) { reads().size == 5 }
+                assertTrue("cursor" !in (reads().last().payload as JsonObject))
+                reply(17)
+                compose.waitUntil(5000) { compose.onAllNodesWithText("No agent children").fetchSemanticsNodes().isNotEmpty() }
+                assertTrue(sent.none { it.type == "mark_conversation_read" })
+                return
+            }
             if (capacity) {
                 reply(17, child(50))
                 compose.waitUntil(5000) { compose.onAllNodesWithText("Couldn’t load agent children").fetchSemanticsNodes().isNotEmpty() }
@@ -376,6 +521,7 @@ class AgentChildrenScreenTest {
             pressure?.close()
             compose.runOnIdle { vmStore.clear() }
             scope.cancel()
+            replacementScope?.cancel()
         }
     }
 }

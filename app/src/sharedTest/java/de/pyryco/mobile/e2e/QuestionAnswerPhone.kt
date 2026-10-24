@@ -36,6 +36,17 @@ internal fun ComposeTestRule.questionAnswerTargetWithCurrentKey(
     evidence: (String) -> Unit = {},
 ): SemanticsNodeInteraction = questionAnswerLocation(matcher, null, allowPartial = false, evidence, currentKey, revealCurrentKey).first
 
+/** Generation-aware opt-in; retain one physical tap and the existing chrome geometry. */
+internal fun ComposeTestRule.questionAnswerTapWithCurrentKey(
+    matcher: SemanticsMatcher,
+    currentKey: () -> String,
+    revealCurrentKey: () -> Int,
+    evidence: (String) -> Unit = {},
+) {
+    val (target, localPoint) = questionAnswerLocation(matcher, null, allowPartial = true, evidence, currentKey, revealCurrentKey)
+    target.performTouchInput { click(localPoint) }
+}
+
 /** Tap once inside the actual exposed control when a short thread cannot scroll past a notice. */
 internal fun ComposeTestRule.questionAnswerTap(
     matcher: SemanticsMatcher,

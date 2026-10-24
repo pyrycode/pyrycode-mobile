@@ -20,6 +20,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -55,6 +56,7 @@ import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
@@ -390,7 +392,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
     }
 
-    /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
+    /** #2436: recover the held turn before publishing the native offer that explicit submission clears. */
     @Test
     fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
         arriveInSeededThread()
@@ -407,6 +409,54 @@ class DeterministicInteractiveStreamE2ETest {
                         .id
                 }
             }
+
+        fun awaitHeldReply(): ThreadEvidence =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=await_held_reply")
+                    val (evidence, phase) =
+                        repositories.firstOnLive(
+                            { repository ->
+                                combine(
+                                    harnessThreadEvidence(repository).observe(conversation),
+                                    repository.observeTurnPhase(conversation),
+                                ) { evidence, phase ->
+                                    evidence to phase
+                                }
+                            },
+                        ) { (evidence, phase) ->
+                            phase != LiveSessionEvent.TurnState.Phase.Idle && evidence.assistantRecords().singleOrNull()?.fullText == PING
+                        }
+                    android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=held_observed phase=$phase")
+                    evidence
+                }
+            }
+        val arrived = awaitHeldReply()
+        android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=held_reply")
+        // A reconciled revision cannot re-arm an offer revoked by cold-start connection churn.
+        // Recover this actual reply first; the original result/suggestion fragment is still withheld.
+        severLink()
+        composeTestRule.waitForIdle()
+        restoreLink()
+        val recovered = awaitHeldReply()
+        assertTrue("reply recovery must use a replacement connection", arrived.owner.connection !== recovered.owner.connection)
+        assertEquals(
+            arrived
+                .assistantRecords()
+                .single()
+                .message.id,
+            recovered
+                .assistantRecords()
+                .single()
+                .message.id,
+        )
+        composeTestRule
+            .onAllNodesWithTag(
+                de.pyryco.mobile.ui.conversations.thread.REPLY_SUGGESTION_PLACEHOLDER_TAG,
+                useUnmergedTree = true,
+            ).assertCountEquals(0)
+        android.util.Log.i("ReplySuggestionProof", "event=reply_suggestion_checkpoint stage=recovered_before_offer")
+        DaemonFaultControl().releaseStream()
         composeTestRule.assertReplySuggestionLongPress(repositories, conversation, REPLY_TIMEOUT_MS)
     }
 
@@ -443,52 +493,24 @@ class DeterministicInteractiveStreamE2ETest {
                     requireNotNull(args.getString("relayUrl")),
                     requireNotNull(args.getString("serverStaticPublicKey")),
                 ),
+                threadEnabled = true,
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            // This scripted fixture has no settings subscriber. Read the physical session through
-            // the existing correlated probe; create-conversation summaries intentionally omit it.
-            val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-            val session =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        SettingsReadProbe
-                            .read(
-                                repo as RemoteConversationRepository,
-                                conversation.id,
-                                { coordinator.currentRepository.value === repo },
-                                { coordinator.hostReadings.liveSessionBindings[conversation.id] },
-                            ).sessionId
-                            .also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
-                    }
-                }
-            val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
-            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
-            peer.replyObservation = observation
+            val observation = runBlocking { peer.observeProduction(conversation.id, THREAD_TIMEOUT_MS) }
             var produced: ProducedReplyEvidence? = null
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
                 runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
-                            }
-                        ) {
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
-                            }
-                        ) {
-                            delay(50)
-                        }
-                    }
-                    produced = checkNotNull(observation.produced()) { observation.producerState() }
-                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
+                    produced =
+                        observation
+                            .awaitReplyAfterPost(
+                                proof.lastOlderPost,
+                                REPLY_TIMEOUT_MS,
+                                catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
+                                send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
+                            ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
                 }
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))

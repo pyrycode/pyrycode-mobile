@@ -66,6 +66,9 @@ the suggestion or retry the gesture. UI lifecycle and production state are uncha
 | Connection retires while awaiting delivered echo or clear | `ReplySuggestionReadsTest.echoAndClearFollowReplacement` |
 | No valid offer or newer clear arrives | Existing timeout stays active; negative assertions in controlled tests. |
 | Native placeholder and gesture through actual daemon delivery | Focused `reply-suggestion` scenario plus existing `ScriptedReplySuggestionTest`. |
+| Cold reply arrives before the controlled connection replacement; conversation/session IDs are reused | `interactiveTurn_seededChannel_replySuggestionLongPressSends`: same reply identity on a fresh evidence owner before release. |
+| Restored thread content precedes transient busy-phase reconciliation | Same native method: accept exact content and non-idle phase together inside `firstOnLive`. |
+| Original result/native suggestion released after recovery, then consumed once | Same native method and unchanged `assertReplySuggestionLongPress` echo/clear/placeholder checks. |
 
 Process recreation and rotations introduce no retained state here; observation is
 owned by one test invocation and its existing deadline.
@@ -133,3 +136,182 @@ Daemon source is `2c68b595440dd7e8e843af9cff0d9a708bcc81a7`; its binary SHA-256 
 The four focused JVM classes executed/passed 19 tests, with zero failures or skips;
 their raw reports are in the adjacent `builder-green-jvm-20261021/` directory.
 Lint passed. Complete configured scripted acceptance remains dispatcher/verifier-owned.
+
+### 2026-10-22 — Reopened scenario investigation and repair plan
+
+The post-repair failure on Mobile `d37187df190fbb8a810aa2f52deb9b31923d9cc7`
+is retained in #2388 bundle
+`dfc1022f0c76e9b08b2f0af80a35bcd43d4c61619cda8b581d8ab812abc5fdd5`.
+It records 24 executed, 23 passed and one failed, followed by a named 1/1 pass.
+Its phone checkpoint trace is missing. The producer gap and replacement handshake
+are correlations; the original failure stage remains unknown.
+
+Additional files read: `ThreadViewModel`'s suggestion collectors and
+`ThreadViewModelReplySuggestionTest`, `ThreadInputBar`'s pointer handler,
+`scripts/e2e-emulator.sh`'s fragment-release fence and
+`scripts/e2e-fixtures/reply-suggestion.jsonl`. The owning lesson in
+`thread-screen-composer-drafts-and-attachments.md` is that disconnect invalidates
+an observed revision: same-revision reconciliation must not re-arm the composer.
+Core's `replySuggestions.current` and `reconcileReplySuggestions` retain and
+re-deliver that same revision. The earlier live-source repair cannot change this
+product contract. No decision record or product change is proposed.
+
+First reproduce this boundary with the actual daemon offer: observe it, retire
+the phone connection with `severLink`, restore it, then run the unchanged long-press
+proof. Retain the failing native XML and checkpoint trace. A fresh unmodified
+Linux baseline at Mobile `e6397e0159d7d5e011146882107fe29ddef990ac` passed 1/1
+without a producer gap; it does not establish causality.
+
+If the controlled run confirms the mismatch, fence scripted suggestion publication
+after reply settlement and a controlled connection replacement. Split the existing
+native fixture at its `prompt_suggestion`, using the existing phone-controlled
+second-fragment release. Prove that the initial reply and its delivered user echo
+survive replacement, that no offer precedes release, then release the actual
+native suggestion and retain all existing placeholder, gesture, echo and clear
+assertions. No Send is retried. Both fragments remain from the existing scenario;
+the live twin and the product's revocation rules remain unchanged.
+
+State/concurrency: reuse bounded test reads, `firstOnLive` and the existing
+`DaemonFaultControl.releaseStream`; no new jobs or production state. The native
+scenario covers cold setup, reused conversation/session IDs, reply recovery and
+offer delivery after replacement. Existing `ReplySuggestionReadsTest` and
+`LiveConnectionReadsTest` retain the retired-source and clear-isolation checks.
+`ThreadViewModelReplySuggestionTest` retains the same-revision revocation contract.
+`ScriptedReplySuggestionTest` retains repository-to-composer delivery coverage.
+Native transport and pointer input require the existing device test. Deadlines
+remain unchanged. Failures retain static checkpoints and their original causes.
+
+Sizing: one useful behavior, the existing scripted submission proof; about 300
+written lines including this plan, no exported types, no production signatures or
+reject branches, one native consumer, three acceptance criteria. In-flight #2462
+and other deterministic-class branches change different methods; edits stay local.
+Run the affected JVM classes, the focused scripted scenario, lint, assembly,
+instrumented compilation, formatting and final pre-verification on Linux.
+
+### 2026-10-22 — Native causal reproduction and release boundary
+
+Controlled native run `scripted-rf1u00z5` executed one test and failed at the
+unchanged 90-second placeholder wait. Phone logs show the actual offer accepted
+and shown, then hidden with `reason=session` during retirement, then accepted on
+the replacement without being shown again. `firstOnLive` reaches the placeholder
+checkpoint: publication, delivery and current-source observation have succeeded;
+the missing UI placeholder precedes the gesture. The run also retained a natural
+`baseline_required` teardown. This proves the post-repair revocation mechanism,
+without asserting an unretained checkpoint for the historical #2388 occurrence.
+Raw reports, phone trace, diagnostic source/patch and APK hashes are retained at
+`logs/evidence/2436/reopened-controlled-red-20261022/` in the agents checkout.
+
+Refine the planned split to hold **both result and suggestion**, leaving the
+assistant reply arrived but its turn busy across the controlled reconnect.
+Core's two-second native-suggestion window begins at result; withholding only the
+suggestion could let fallback win first. No new text is authored: move the two
+original lines together to the existing phone-controlled second fragment.
+The native regression asserts the initial delivered user echo and exact reply,
+busy state before and after replacement, recovered reply identity and absent
+placeholder, then releases once and runs the original long-press proof unchanged.
+It must fail against the original single terminal fixture before wiring the split.
+No production code or live-twin change is required. Existing deadlines remain.
+
+The first fenced-fixture attempt exposed an overconstrained new preparation
+checkpoint: the original fixture does not replay the initial user's message, so
+its delivered echo cannot gate the still-held result. Keep the actual initial
+assistant arrival and busy-state proof as the release prerequisite instead.
+The required exactly-one delivered **suggestion** echo after the real gesture is
+unchanged in `assertReplySuggestionLongPress`. Preserve the failed 1/1 native
+attempt under `reopened-held-precondition-red-20261022/`; do not count it as a pass.
+
+The next native probe reached held content on the replacement before its transient
+phase reconciliation: the checkpoint sampled Idle at 23:25:30.028, then the phone
+accepted Responding at 23:25:30.060. Make busy phase part of the same `firstOnLive`
+acceptance predicate as the exact arrived reply, using the original deadline,
+instead of asserting on the first content snapshot. The failed run is retained at
+`reopened-phase-observation-red-20261022/` (one executed, one failed).
+
+### 2026-10-22 — Focused development verification
+
+The corrected fenced scenario `scripted-6xipuf9p` executed/passed the exact native
+method once, with zero failures/errors/skips. Both held-content/busy checkpoints
+used distinct connection owners with the same reply identity, followed by every
+original offer/placeholder/gesture/echo/clear checkpoint. Raw reports, phone logs,
+source patch and APK hashes are retained at `reopened-development-green-20261022/`.
+Core source was `647a4e7526f581f78d422195cb22b3e9b979e767`, binary SHA-256
+`871b3cf96e8c8993f09cedc97b8269bb2f4c80b7f829743afaae7f5a4d32a49a`.
+The two fragments concatenate byte-for-byte to the original fixture (SHA-256
+`c42b502052c3ec258a0af6d9a260fa1a1964076df792bc24833c9bd7949ec648`).
+
+The four focused JVM classes passed all 19 tests: `ReplySuggestionReadsTest` (4),
+`LiveConnectionReadsTest` (4), `ThreadViewModelReplySuggestionTest` (9) and
+`ScriptedReplySuggestionTest` (2), with zero failures/errors/skips. Each ran as a
+separate focused invocation. Raw XML and a hash manifest are retained at
+`reopened-jvm-20261022/`. These evidence paths are beneath
+`$AGENTS_REPO_PATH/logs/evidence/2436/`. Final pushed-candidate native checks and
+pre-verification are recorded in the PR; complete configured scripted acceptance
+remains dispatcher/verifier-owned. macOS is outside this Linux ticket's scope.
+
+### 2026-10-24 — Bounded continuation and retained-artifact review
+
+The preserved source at `b821a18a4245a01793251d69efb90fabf1d11da7`, its five
+changed/untracked files and all saved native attempts were archived before edits.
+The complete retained evidence inventory verified 607 manifest entries with no
+mismatch. The unpublished commit changes only this plan. The proposed two
+scripted fragments concatenate byte-for-byte to the original fixture, SHA-256
+`c42b502052c3ec258a0af6d9a260fa1a1964076df792bc24833c9bd7949ec648`.
+They contain the existing scripted reply/result/suggestion, not a newly captured
+Claude exchange. No recorded-client fixture or strict recorded contract changes.
+Raw phone and daemon artifacts remain private in the retained evidence area.
+
+Requirements remain relevant: native offer, exact empty-composer placeholder,
+pointer long-press/release, single verbatim delivered suggestion echo, newer clear
+for the offered session, placeholder removal, replacement-source regressions,
+product revocation and original deadlines. The prototype's initial-user-echo
+precondition is not part of the final design: the original fixture does not supply
+that echo before its held result. Delivered assistant identity plus non-idle phase
+is the recovery prerequisite; the required post-gesture suggestion echo remains.
+The failed precondition attempt stays retained. No acceptance criterion is waived.
+
+The approved published Core repair is merged PR #3726 at
+`3d5379ec4b778c569c27b7639a2ae495b32cee0d`. Ancestry confirms the prototype's
+`647a4e7526f581f78d422195cb22b3e9b979e767` lacks it, while the effective daemon
+`64ef0e0fba71a723b7fdc97141cfc144f6355664` includes it. Only approved source and
+published evidence were used; the historical refused Core stage-record request
+was not repeated or reclassified as an approval.
+
+The original unfenced scenario at the preserved Mobile commit passed on that
+effective daemon: `scripted-mdbiqij7`, 1 executed/passed, zero failures/errors/skips,
+with all seven original checkpoints. Daemon SHA-256 is
+`9d1b74bbfa1163c2043ecdbb53b321c3574cfaf60af4bdced90a62c447476d66`.
+This is a current baseline, not proof that arbitrary offer retirement is safe or
+that the historical #2388 failure had the same checkpoint. The existing product
+regressions deliberately reject same-revision reconciliation after disconnect.
+The saved seven-line controlled-retirement diagnostic then failed on the same
+daemon: `scripted-nv9cce0n`, 1 executed, 0 passed, 1 failed, zero errors/skips.
+Its phone trace shows the offer displayed, the explicit retirement checkpoint,
+offer acceptance on the replacement, then the placeholder checkpoint and the
+original 90000-ms timeout. The retained daemon log has no `baseline_required`
+event. Current-source observation succeeds; the composer still cannot display
+that revoked revision. This isolates the scheduling mismatch from the repaired
+accepted-delivery gap without attributing the missing #2388 phone checkpoint.
+
+Retain the fixture fence: recover the already delivered assistant reply while its
+turn is held, assert the replacement owner and identical reply identity, then
+release the original result/native suggestion. Core's repair removes one cause of
+retirement; it does not change the deliberate product suppression of an offer
+already observed before a disconnect. The final native proof consequently submits
+a fresh eligible offer after recovery, preserving all original gesture/echo/clear
+assertions. No text, expected event, product revocation rule or deadline is changed.
+
+Current baseline and controlled-failure evidence are retained under
+`$AGENTS_REPO_PATH/logs/evidence/2436/bounded-20261024/`, in
+`unfenced-current-core/`, `controlled-current-core/` and `harness/`.
+The controlled source patch SHA-256 is
+`037edb1e9c0e0419943905e27dd23dbd6337e58cd7c8d05ed3c7264a0a31da0d`.
+Final candidate checks, counted results and source/binary provenance are recorded
+on the PR. Independent configured scripted acceptance and the normal documentation
+stage remain required; author checks do not replace either.
+
+## Documentation handoff
+
+Pending documentation stage: update `docs/e2e-interactive-stream.md`,
+“Reply suggestion live-connection observation (#2436)”, with the reopened failure,
+demonstrated remaining cause and counted Linux evidence. Preserve the previous
+controlled proof and historical evidence limitations.

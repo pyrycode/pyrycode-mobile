@@ -77,6 +77,198 @@ and replays both the committed and fresh recordings. It never replaces the commi
 recording. Changed requests, choices or recovery steps require a reviewed replacement.
 Missing login, setup failure and a run with no executed tests fail these explicit commands.
 
+### Unavailable-summary recording integration (#2467)
+
+The [bounded metadata recovery](knowledge/features/remote-conversation-repository-reads-and-thread-store.md#recovering-unavailable-shown-metadata-2493)
+retains five genuine replacement assets from
+`8534e6ca2babec13ba8ac0981565590fb946dd19`. Their producer was Mobile
+`0b93815f1088c28c513aad4f4d83899c3520fea2`, Core
+`2c68b595440dd7e8e843af9cff0d9a708bcc81a7`, daemon SHA-256
+`d93c56662d0072e8aec9d1466bee3f6845f7cdc55247273f177b48b209bdb6ac`.
+All five assets retain their genuine capture bytes, full request payloads,
+connection ownership, original scenario assertions and deadlines.
+
+| `RecordedMobileSuiteTest` method | Historical comparison | Reviewed contract |
+| --- | --- | --- |
+| `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` | IDENTICAL | Terminal summary supplies shown/read 11/0; no follow-up needed. |
+| `interactiveTurn_markdownReply_rendersFormattedBody` | CHANGED | Additional empty-payload summary and checkpoint-16 catch-up; push registration before phone-send; correlated follow-up supplies shown/read 13/0. |
+| `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies` | CHANGED | Additional checkpoint-14 catch-up and opposite epoch-alias allocation; exact commands and ownership remain. |
+| `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` | CHANGED | Additional checkpoint-15/24 catch-ups; list counts and host-2/other-conversation ownership remain exact. |
+| `negativeControl_wordClaudeNeverSays_isNeverDisplayed` | CHANGED | Additional checkpoint-14 catch-up; original absence wait remains. |
+
+These are one IDENTICAL and four reviewed CHANGED comparisons, not five passing
+compatibility verifications. The five `contractReview.report` references in
+`suite.json` pin the retained `8534e6ca2babec13ba8ac0981565590fb946dd19`
+report, SHA-256 `6e5aba904081b6035dd074b567d7a80aa78f9352bdf4006860ed7dc0f9c9d343`;
+the capture bytes and comparison dispositions are unchanged. Historical genuine capture and fresh strict replay
+executed/passed five methods each; the separate negative-control verification still
+exited 1 because old replay failed and comparison was CHANGED. Earlier permission
+compatibility and five-method integration failures remain failed. Final historical
+Linux replay on `cfcb4083fb1425576ed18265309fd88f0fb7d2a1` passed all five;
+that result does not certify a later macOS integration or the separate #2494 proof.
+The recovered #2467 builder bundle preserves its 199-entry manifest and pointers
+to original-machine files omitted by publication limits. Historical #2462 captures
+with shortened logs/protobuf differences do not establish original byte completeness,
+post-summary numeric facts or a newly proven timeout cause.
+
+**Manual #2493 continuation, macOS.** Candidate
+`f5a29a43d9ef3b75f2b443a030a9def052aa711c` passed 40/40 final activation
+cases. Eight earlier focused selections at `fed72db87072dfd254fd83c2bebc309dfb824a24`
+passed 141/141, zero failures/errors/skips. Its six-method native selection finished
+after the builder timeout: 6 executed, 4 passed, 2 failed, zero errors/skips. The
+restart method failed at an absent scroll node; model-change failed at terminal
+close before test-end. The negative-control, permission, markdown and offline-retry
+methods passed. Preserve these failed results, the causal/fixture diagnostics and
+source identities. Current-main integration includes the later terminal lifecycle
+repair; fresh configured acceptance was still pending at that stage. Complete gates
+are dispatcher-owned, including actual execution of all six
+required replay methods. Paired final-read native acceptance belongs to #2494.
+
+The retained XML is in agents `logs/evidence/2493/builder-macos-20261023/`,
+including `native-final-f5a29a43d/ui-y1h41xli/` and `jvm-final-f5a29a43d/`.
+The post-timeout native directory contains XML only: effective APK identities,
+phone/replay logs, exit status and cleanup receipts are not established by those
+reports. Fresh configured acceptance must retain those receipts.
+
+The later configured macOS run at `52e60852785d8fdb3c7003843bb532a10fc2011f`
+reported 5439/5439 JVM passes and 24/24 scripted passes. Its original full UI run
+executed 333: 332 passed and one inherited-effort test failed, with the unrelated
+RenameDialog capture additionally skipped. That failure passed the exact 1/1
+rerun under dispatcher policy; all six #2493 replay methods passed in the original
+full run. Independent review authenticated those counts and retained phone logs,
+but did not independently authenticate installed APK hashes and complete cleanup
+receipts. Source review still returned FAIL for queued recovery authority surviving
+withdrawal; passing replay is not proof of that asynchronous ordering. The subsequent
+focused
+repair and its buffered-order probe required new independent review. Preserve both
+the accepted gate disposition and the source finding, rather than treating the
+old gates as acceptance of later source changes.
+
+The queued-authority repair at `51738b973b036c29ae9c9f302feb56f2c7286013`
+has focused macOS evidence: activation class 41/41, recorded model-change 1/1 and
+scripted ping 2/2, all with zero failures/errors/skips and command exit 0. The new
+buffered-order regression failed once before repair, then passed within the 41-case
+class, including fresh-observation recovery. Native and scripted phases finished;
+raw XML, phone logs, source binding, built APK hashes and isolated harness records
+are retained under agents `logs/evidence/2493/manual-rework-20261023/`.
+The effective test BuildConfig identifies `51738b973`. The focused replay records
+`terminal_preparation_finished early_checkpoint=true`. Scripted ping retained its
+test daemon/relay logs and source/binary metadata; no real provider turn ran.
+These are scoped author checks, not a new independent PASS or the full #2494 proof.
+Main subsequently merged cleanly as `a456e5b8e36670a3b17e9e405f11b999f785d3ee`;
+its affected activation class passed 41/41 and lint passed. The preceding native
+and scripted results retain source `51738b973`, rather than certifying the later
+integration. Fresh complete configured acceptance and independent re-review were
+still required at that stage; the accepted integrated result follows below. Earlier
+causal
+bundles and failed attempts remain separately identified; no new provider capture,
+Linux execution or IDENTICAL comparison is claimed here.
+
+### Accepted macOS integration (#2493)
+
+The stored independent verifier PASS for [PR #2499](https://github.com/pyrycode/pyrycode-mobile/pull/2499)
+reviews `07b3eaadbc8b20ca6a3fbe64987454a5fcbc9cee`, with main
+`4a5459864db9b413f854a9120507d7e95b02b990` integrated. This is later evidence
+than the earlier failed reviews and scoped author checks above. The accepted run
+is `001ffb009e86ea433901162030f582a3cee9af92dfda60ecd6be84001ddf5c69`,
+verifier bundle SHA-256 `4cfd1edbf960f569d6863814d26c3b8f55fed74bcd003e70ffe53f639dcc9bce`.
+Linux is outside this ticket's verification scope.
+
+| Configured run on macOS | Executed | Passed | Failed | Errors / skipped | Disposition |
+| --- | ---: | ---: | ---: | --- | --- |
+| JVM with build checks | 5522 | 5522 | 0 | 0 / 0 | Exit 0; activation 41/41, read receipts 20/20, host attention 11/11, tape 49/49, Agent screen 30/30. |
+| Original UI | 250 | 248 | 2 | 0 / 0 | Exit 1; both unrelated failures passed exact same-tree rerun. |
+| Exact UI rerun | 2 | 2 | 0 | 0 / 0 | Exit 0; accepted under dispatcher policy. |
+| Original scripted-all | 24 | 19 | 5 | 0 / 0 | Exit 1; all five failures reproduced on main and accepted as inherited. |
+| Exact scripted rerun | 5 | 0 | 5 | 0 / 0 | Exit 1; failures remain failures. |
+
+All six required `RecordedMobileSuiteTest` methods executed/passed in the
+**original full UI run**, with no separate focused verifier invocation implied:
+
+- `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+- `negativeControl_wordClaudeNeverSays_isNeverDisplayed`
+- `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`
+- `interactiveTurn_markdownReply_rendersFormattedBody`
+- `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+- `interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished` also passed there;
+its [current-family navigation repair](knowledge/features/thread-screen-agent-navigation-evidence.md#current-family-navigation-after-readiness-2493)
+retains the original proof assertions and budgets. The two UI rerun passes were
+`interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk` (tracked on
+\#2360) and `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+(first sighting recorded by the dispatcher).
+
+The exact main comparisons at `4a5459864db9` reproduced the five scripted failures:
+`interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` (#2353),
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`,
+`interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`,
+`interactiveTurn_seededChannel_durableGapCatchUp` (all #2521), and
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` (#2469).
+The verifier accepted these inherited dispositions; none is a product pass or a
+new diagnosis of the historical #2462 failures.
+
+Test BuildConfig identifies `07b3eaadb`; app BuildConfig reports `dev`. Built
+app/test APK SHA-256 values are
+`e4567ee310eb6542e0767a65cbb51c409b65463d28a39a570fdbfd36c1283acb` /
+`73f920ade7434f4e25211965bb63a93571a2e59c452534dd4fc2fc6353e19bb1`.
+All 23 original scripted harness bundles authenticated 92/92 manifest entries.
+Their inputs bind Mobile `07b3eaad…` and clean supporting Core
+`cb556b7697fa6f10685a630fb6a73139ed82cf9c`, containing Core #3711. The outer
+daemon SHA-256 is `8c4ef6d6096e6be45009adcf7a16ed6c62f80bbf9f9f04a882a5d622770490ca`;
+the separate session-error daemon context records
+`a005e3273cb7f172110806e4b46e4f807acd4c9c6bb208bafa9d0d8896d1a5b6`.
+Both embedded revisions are unavailable; source-input provenance is separate.
+The session-error harness builds its dedicated recovery daemon from `PYRYCODE_SRC`;
+pinning only the outer `PYRY_BIN` cannot establish that nested runtime. Authenticate
+both binary contexts and their actual source inputs. The earlier scoped author
+pass using Core #3711 does not explain older verifier failures or turn these
+current inherited failures into passes.
+The current relay file SHA-256 is
+`17e24131cfd3f5a0bc48f972021db17925347311e3dcdf362f2aa8cfe48fc710`.
+
+At documentation time, counted XML, phone logs and command logs were retained in
+`/tmp/verifier-2499/review-07b3eaad/`, including `jvm-z3aiz6a0/`, `ui-4s1b5uwq/`,
+`ui-zvo8_p7o/`, `scripted-all-vbauwve9/` and `scripted-all-6ysg9280/`.
+Persistent agents `logs/evidence/2493/harness/` holds the original harness traces;
+the verifier bundle retains gate logs, teardown/retention records and pointers to
+host-only files. These are historical retention locations, not surviving gate
+worktree build paths. The counted facts above survive raw-file pruning.
+
+Built hashes are not installed-byte readback. The relay hash identifies a file,
+not an independently authenticated executed source revision. Gate completion and
+harness teardown were checked; no additional independent per-process cleanup audit
+was performed. Genuine captures and one IDENTICAL/four reviewed CHANGED comparisons
+remain unchanged. No new provider capture or current-provider acceptance is claimed;
+the paired final-read native proof remains assigned to #2494.
+
+### Captured read snapshot prerequisites (#2467)
+
+`SuiteReadReceipts` retains intermediate captured `conversation_updated` snapshots
+when qualified phone reads coalesce. Select the earliest covering captured mark
+from the current or a preceding action on the same connection/conversation, using
+the phone's requested mark rather than a peer's later confirmed progress. Only
+`read_up_to` is normalized; shown metadata comes from that captured snapshot.
+Otherwise a future snapshot can precede its causal query, or the intermediate
+acknowledgement that originally caused a query can disappear.
+
+`RecordedSuiteTape` holds each acknowledgement until its accepted same-owner list
+requests and same-conversation thread requests have strictly matched. Deliver ready
+acknowledgements before the same prerequisite releases owner termination. Another
+connection/conversation cannot supply a prerequisite. Genuine peer notifications
+retain their own guards and cannot be discarded merely because their payload
+matches a receipt. Mandatory reads, complete consumption, payload/correlation
+checks and duplicate rejection remain strict. The retained `SuiteReadReceiptsTest`
+probes cover query prerequisites, intermediate snapshots, foreign ownership,
+peer-progress isolation, guarded notifications and acknowledgement-before-close.
+On accepted macOS `07b3eaadb`, the full JVM run passed all 20 receipt and 49 tape
+cases, including `coalescedReadCannotExposeItsSnapshotBeforeTheCapturedQuery`,
+`anIntermediateCapturedReadMustNotWaitForTheQueryItCauses`,
+`readyReadAcknowledgementsPrecedeTheirOwnersInboundEnd`,
+`peerReadProgressCannotChooseAFutureSnapshotForAnEarlierPhoneRead` and
+`peerProgressReleasesTheCapturedPhoneNotificationWithoutALocalRead`. See the
+[counted integration evidence](#accepted-macos-integration-2493).
+
 ## What replay proves
 
 Every outgoing request must match its complete recorded type and payload. Generated
@@ -261,7 +453,7 @@ when the independent peer has already observed dismissal. Peer progress alone do
 not establish a product completion or expiry defect.
 
 `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`,
-also called by `RecordedMobileSuiteTest`, arms the test-only `InitialAttentionQueryGate`
+also called by `RecordedMobileSuiteTest`, arms the test-only `ThreadAcquisitionGate`
 for freshly created B. The original Waiting-pill tap lets destination list/metadata
 setup proceed; only `NegotiatedThread.acquire` waits. Readiness observes
 `NegotiatedThread.store.observe(host, conversation)` directly: the cached provider's
@@ -502,6 +694,121 @@ messages, not tape time, and the negative window stays its fixed one second.
 Real push delivery, encryption, transport recovery and timing obligations retain their
 external checks.
 
+### Inherited-effort settings observation (#2507)
+
+Successful settings polling and current product state are separate boundaries. A complete
+correlated reply can pass `SettingsReadProbe`'s synchronous admission check, then a later
+captured minimal `session_settings` notification can replace the repository's applied
+effort with `Unavailable`. The following complete snapshot updates the replay polling
+cache without emitting to the app. If the sheet's poll ran before that minimal notification,
+its selection and note can remain unavailable even though the independent read succeeded.
+See [native test reads](knowledge/features/remote-conversation-repository-session-settings-read.md#native-test-reads-2305).
+
+Only `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` uses
+`RecordedSuiteNative.beforeSettingsObservation` before its final `freshSettings` in replay.
+`SuiteConnections.beforeSettingsObservation` waits for three boundaries: the current
+action's captured settings have been released by their actual causal requests, scheduled
+delivery has drained, and the exact current phone pump has consumed the delivered prefix
+downstream. `RecordedSuiteTape.settingsObservationReady` checks the frontier before the
+next command without releasing it. An empty queue can still have settings held behind a
+query; a routed frame can still await downstream consumption. Progress notifications
+resume the frontier check, and closure or replacement fails rather than borrowing another
+owner's progress. The fence is bounded by 30 seconds, reads no expected settings contents
+and issues no request or reply. Genuine captures and ordinary live execution are unchanged.
+
+The subsequent read retains current-owner correlation. The scenario still clears remembered
+effort, uses no saved override, completes an owned phone turn and checks the exact applied
+effort label/note and reported permission mode. Missing applied effort remains a failure.
+Strict request payload matching, complete tape consumption and the original 30-second
+sheet deadline remain required; extra polls or expected-value filtering cannot replace
+the observation boundary.
+
+`InheritedEffortReplayTest` drives the real replay hub, authoritative repository and read
+probe. It demonstrates the independent applied reading being replaced, holds downstream
+consumption, holds settings behind their causal query, repeats observation, rejects a closed
+owner and keeps a final omitted applied field unavailable. The original four-control JVM
+run executed four and failed four, with zero skips. The later causal-query control executed
+once and failed once against the initial fence, with zero skips: delivery alone was insufficient.
+
+The [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2525#issuecomment-6380015470)
+accepted `3a625ea826f00a6b773d54f7a6b824939866f8bc` on macOS, with these counted results:
+
+| Check | Source | Executed | Passed | Failed | Skipped |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Final five JVM controls | `e30328514` plus plan-only update | 5 | 5 | 0 | 0 |
+| Focused native five controls and exact recorded method | `8de1d65fe` | 6 | 6 | 0 | 0 |
+| Affected `SuiteConnectionsTest` | `8de1d65fe` | 29 | 29 | 0 | 0 |
+| Configured JVM gate | reviewed candidate | 5547 | 5547 | 0 | 0 |
+| Configured UI gate | reviewed candidate | 250 | 247 | 3 | 0 |
+| Configured scripted-all gate | reviewed candidate | 24 | 21 | 3 | 0 |
+
+The exact inherited-effort recorded method executed once and passed in both the focused
+native run and the configured UI gate. All five controls passed in the configured JVM gate.
+The UI gate's three unrelated failures passed a three-test rerun; the three scripted failures
+also failed on main and were accepted under #2353 and #2521. Those original failures remain
+failures; the verifier accepted their triage. Later test-source changes from the focused
+native revision to the reviewed candidate were whitespace only. Linux is outside this
+ticket's verification scope. These offline checks establish no fresh provider compatibility.
+
+Raw failed/repaired evidence was retained under
+`$AGENTS_REPO_PATH/logs/evidence/2507/builder-macos-20261023/` and
+`manual-continuation-20261024/`; the latter's `evidence/native/ui-lfkh7xqn/` holds focused
+XML and phone logs. These are retention locations at review time. The unchanged genuine
+fixture hashes to `d0e4202a296a688f5e94cddb0f0b39f430ff06c956d44272aa8239f0622cc69c`.
+The original #2493 macOS failure at `52e6085278` retained stderr showing Effort present,
+selection/note mismatched, no pending marker and a 30000 ms timeout. It had 333 executed,
+332 passed and one failed, plus one skipped test. Its retained bundle lacked the original
+phone log. The listed preceding scenarios were model change, reconnect footer, interrupted
+upload and send queued now; the controlled reproduction requires neither that sequence
+nor machine load. The exact historical interleaving and any load contribution remain inferred.
+
+### Shared current-query acquisition
+
+The same test-only acquisition gate also protects reopening X in the model-isolation
+scenario. A positive saved checkpoint alone is insufficient: X can still have a newer
+catch-up query in flight. Acquiring at that point can coalesce the destination's request
+into the active query and leave its separately captured request unmatched.
+
+`ThreadQueryReadiness` observes the existing phone pump. It records actual accepted
+history requests and decodes their actual replies with the production query decoder.
+A partial batch is not completion. A terminal qualifies only after its downstream
+repository collector returns successfully. A queued frame, refused send, malformed
+reply, cancelled collector or another conversation cannot qualify. The observer issues
+no request and supplies no reply.
+
+The gate requires that receipt on the current host connection as well as the existing
+same-generation store certificate. Connection retirement or scope closure cancels the
+acquisition. Destination metadata may still run before the query completes. Only the
+armed host and conversation wait; all other acquisition keeps its existing behaviour.
+The model scenario uses `openChatRowAfterCurrentQuery` before its original fresh X
+settings and final Y model assertions. Their payloads, wording and deadlines remain.
+
+The controlled regression seeds an older valid checkpoint, holds a newer query, then
+attempts acquisition. The original snapshot-only wait acquires early and fails. The
+shared wait requires the newer terminal to be consumed before acquisition can issue
+its own real query. Retired-owner and incomplete-consumption checks remain separate.
+
+Acquisition also returns the completion receipt captured before the destination
+opens. Capture that receipt synchronously after the temporary observers have joined.
+If their cleanup starts another query, wait again within the original timeout.
+Recheck the current source, owner, generation and certified snapshot before capture.
+The model scenario waits for a different successfully consumed request for
+that same conversation on the same current physical source. Its old receipt cannot
+satisfy the wait while the new request is queued behind another conversation. Merely
+dispatching the new request is insufficient. A replacement connection cannot finish
+the retired destination's wait. One monotonic budget starts when the gate is armed,
+before row lookup and navigation. Those stages, acquisition and the distinct downstream
+completion all consume the same remaining 30 seconds. Navigation cannot restart the
+budget; an expired acquisition closes its lease without publishing a receipt. Delayed
+navigation and acquisition controls reject a completion at 40 seconds and accept one
+at 29 seconds. A fixture must explicitly close its readiness registration on success
+and assertion failure; closing its gate or lease alone does not retire the source.
+
+Closing the phone wrapper or completing or cancelling its inbound collector clears
+the current registered source. The holder remains available to waiting readers.
+Registration and retirement share an identity check so a late old close cannot clear
+its replacement or retain the closed connection graph.
+
 ### Recorded terminal preparation (#2491)
 
 A successful scenario return does not imply that its Activity can close. Under
@@ -631,7 +938,138 @@ changed-payload/epoch/owner and complete-consumption negatives. No recording or
 production request contract changed for this repair. See the
 [diagnosis and counted macOS evidence](knowledge/features/development-verification-test-scheduling.md#background-permission-replay-consumption-2348).
 
+### Foreground terminal cleanup
+
+Recorded native tests retain the Activity through required phone work on both sides
+of `test-end`. Foreground preparation waits for the required phone prefix bounded by
+the next observation or test-end. It sends no end control and consumes no physical
+close. Request matching, delivery enqueue, tail preparation and the readiness read
+share the hub monitor. Otherwise a request can release tape work while its reply is
+still waiting to enter the delivery queue, allowing a delivery barrier to pass early.
+The serialized hub barrier follows enqueue; explicit close also retains its downstream
+consumption fence.
+
+Prepare duplicate tails only when the next command is test-end and no earlier
+observation bounds the prefix. Eligibility requires a prior fully decoded and actually
+delivered response on the same connection lifecycle, conversation, nonzero checkpoint
+and epoch, covering every identical candidate fact. Incomplete or foreign coverage,
+changed facts and intervening source changes or commands cannot qualify. Required
+repeated queries and duplicate-ID rejection remain strict. Later work cannot cross an
+observation to make teardown succeed.
+
+The session cleanup rule sends its original end action exactly once while the Activity
+is alive. Terminal preparation follows the recording's actual placement of
+`scenario-complete` and phone close. The same rule owns replacement Activities through
+this sequence. Restart preparation selects existing phones; terminal teardown can await
+recorded replacements. Original requests, observations and complete-tape checks remain.
+A scenario failure bypasses successful-scenario preparation and remains primary if
+Activity destruction also fails. Required work still fails under the original bounds.
+See [scenario cleanup and counted evidence](knowledge/features/development-verification-gates.md#scenario-cleanup-before-activity-teardown).
+
+### Accepted shared-fixture evidence (#2505)
+
+The authoritative verifier stage accepted integrated Mobile
+`2a5d3096ef22a1908f878ebb734ad4b050cae78d` on macOS in run
+`6651736b89ef2fbca94b73564bba9eeca206d579933e97f60ea8d0855754801b`.
+Its exact-candidate verdict is PASS under the retained flaky/inherited dispositions
+below; the original configured failures remain recorded.
+Linux was outside this ticket's verification scope.
+
+| Configured command or comparison | Executed | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `python3 scripts/jvm-test-gate.py --with-build-checks` | 5491 | 5489 | 2 | 0 | 1 |
+| Exact two-method candidate JVM comparison | 2 | 2 | 0 | 0 | 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` | 249 | 249 | 0 | 0 | 0 |
+| `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` | 24 | 19 | 5 | 0 | 1 |
+| Exact five-method candidate scripted comparison | 5 | 0 | 5 | 0 | 1 |
+
+All reports have zero errors. Each required `RecordedMobileSuiteTest` method executed
+and passed once in the configured UI run, without skips:
+
+- `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`.
+- `interactiveTurn_otherConversationAttentionPills_waitingAndFinished`.
+- `interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`.
+- `interactiveTurn_backgroundAgent_replyStaysUnderAgent`.
+
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_replySurvivesMidTurnReconnect`
+executed and passed once in configured scripted-all, without skipping. These were
+complete configured runs, not separately focused executions. The JVM XML also contains
+17 acquisition, 12 readiness, five decorator, nine phone-teardown and 29 suite-connection
+methods, all passed.
+
+The JVM failures were `AuthoritativeWindowRestoreTest#validationInvariant_coldUnavailableOpeningWithholdsReplayUntilRecovery`
+(first sighting retained) and
+`AuthoritativeOwnedRemovalTest#retirementInvariant_successReleasesRecoveryButFailureRetainsIt`
+(tracked by #2523). Both passed the exact candidate comparison. All five scripted
+failures persisted in the candidate comparison and failed on merged main
+`3c35ff3b4cdf7c52444b0235696b6ab59f0792c1`: session-error recovery (#2353),
+earlier-session Agent restart, background Agent settlement and durable-gap catch-up
+(#2521), and scripted ping (#2469). The accepted disposition preserves those original
+reds; it does not turn the complete suites into all-pass executions.
+
+Retained raw files at review time were under
+`$AGENTS_REPO_PATH/logs/evidence/2505/deadline-rework-20261023/configured-2a5d3096/`:
+`jvm-fmupk1oe-dispatcher.xml`, `jvm-az6ebf6c-dispatcher.xml`,
+`ui-y19i2xwh-dispatcher.xml`, `scripted-all-zji01te7-dispatcher.xml` and
+`scripted-all-lizuw0_c-dispatcher.xml`. The accepted run's downloadable evidence bundle
+retains these XMLs, manifests, verdict and observation receipts.
+`configured-2a5d3096-raw-reports.tar.gz` retains unmodified reports, invocations,
+Gradle logs and phone logs, with its digest in `raw-reports-manifest.json`.
+
+Actual installed app/test readback during UI and scripted execution matched retained
+APKs. Scripted observations recorded actual running daemon and relay executables:
+
+| Identity | Source | SHA-256 |
+| --- | --- | --- |
+| Installed app | Reviewed Mobile candidate above | `5510d02f00493e09865526ca88815e7d56793238a3a20ae28a0760c437aa73a5` |
+| Installed test | Reviewed Mobile candidate above | `61d2f33cf27bac650a5e57ef157b5a332f4e24e20481549af2b5019a76b6e919` |
+| Effective daemon | `cb556b7697fa6f10685a630fb6a73139ed82cf9c` | `64b9456d7f21e41b4d4a89e5db72aee4a9d655e10ca433fd6bf730cf618dbcd6` |
+| Effective relay | `72f40c5de9e851e6c6c1ca3c789761320e05ce51` | `17e24131cfd3f5a0bc48f972021db17925347311e3dcdf362f2aa8cfe48fc710` |
+
+The three `v3-complete-*.json` receipts finish with no remaining observed process
+identities or owned group members after gate exit. The UI receipt retains a sampling
+handover gap: v2 missed service-named emulator ports; frozen v3 continued the retained
+identities using numeric ports. It does not prove uninterrupted sampling. Recorded UI
+launches no daemon/relay. Reconnect harness evidence was retained under
+`$AGENTS_REPO_PATH/logs/evidence/2505/harness/fault-443b8f987cc3314da109a9b5677a7e99/`;
+`inputs.json` records source, matching daemon hash, exit 0 and complete retention, with
+daemon/fault/relay logs and their verified manifest. Debug APKs embed `dev`; the custom
+daemon has no embedded revision. Source provenance and effective hashes establish
+these identities. Earlier built-only hashes remain subject to their original limits.
+
+Historical controls and failures remain separate: the snapshot-only acquisition control
+failed 1/1; queued-reopening/source-retirement controls ran 10, passed seven and failed
+three; observer-cleanup control failed 1/1. Deadline/fixture controls failed 2/2 at the
+intended assertions, zero errors/skips; repaired focused checks passed 34/34. Earlier
+native cancellations and failed verdicts at `12aeedf5a` and `7e856c463` remain failures.
+Raw history was retained under `manual-shared-fixture-20261023-85e7b2085`,
+`2505/manual-rework-20261023` and `2505/deadline-rework-20261023` in the agents evidence
+root. The [plan revision record](specs/architecture/manual-shared-test-fixture.md#revision-record-and-deadline-repair-plan-2026-10-23)
+separates the adopted prototype's historical exception from later combined plan/code
+commits `9e94999ac` and `a4ab9eb84`. The plan-only `8faef212a` precedes executable
+repair `c504eac18`; no history was rewritten.
+
+Production source and recording bytes are unchanged. No new provider capture or
+real-Claude turn was required. Acceptance proves neither unrelated live delivery nor
+one cause for all historical flakes. Related tickets retain their own holds, ownership,
+approval records and acceptance requirements; this result grants no bulk closure or
+resumption.
+
 ### Explicit graph-restart readiness (#2347)
+
+The #2493 retained restart corrections also wait for `ProcessLifecycleOwner` to
+leave STARTED after Activity destruction and again before replacement launch, under
+the existing thread deadline. Rebuilding the graph while a delayed process-stop
+callback is pending can otherwise close the replacement connection. Placement
+polling treats a temporarily absent or nonunique scroll semantics list as not yet
+ready; it does not establish placement or weaken the required assertion. The
+separate historical absent-session-boundary scroll failure remains failed evidence.
+On accepted macOS `07b3eaadb`,
+`RecordedMobileSuiteTest.interactiveTurn_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+executed/passed in the original full UI run (250 executed, 248 passed, two unrelated
+failures, zero errors/skips); both failures passed the exact 2/2 rerun. This is
+configured replay evidence, not a separate focused run or #2494 final-read proof.
+See the [integration identities and cleanup limits](#accepted-macos-integration-2493).
 
 An explicit `restartApp` destroys the Activity and rebuilds the graph inside the
 scenario, before final Activity teardown. Call
