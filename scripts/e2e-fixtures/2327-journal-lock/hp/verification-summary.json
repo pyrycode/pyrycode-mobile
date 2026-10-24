@@ -1,0 +1,54 @@
+{
+  "revision": "3c57ef21efaefb487de2c16e7543325f0a53ec38",
+  "startedAt": "2026-10-20T11:57:54.818219+00:00",
+  "admissionLock": "/work/Projects/.pyry-test-admission.lock",
+  "gates": [
+    {
+      "index": 0,
+      "command": "python3 scripts/pre-verify.py",
+      "state": "complete",
+      "exitCode": 0,
+      "elapsedSeconds": 1.1001916429959238
+    },
+    {
+      "index": 1,
+      "command": "scripts/docs-guard.sh",
+      "state": "complete",
+      "exitCode": 0,
+      "elapsedSeconds": 1.507626134029124
+    },
+    {
+      "index": 2,
+      "command": "python3 -m unittest discover -s scripts",
+      "state": "complete",
+      "stdout": "gate-2-environment-corrected.stdout",
+      "stderr": "gate-2-environment-corrected.stderr",
+      "exitCode": 0,
+      "elapsedSeconds": 17.448445177986287
+    },
+    {
+      "index": 3,
+      "command": "python3 scripts/gradle-gate.py :app:assembleDebug --console=plain",
+      "state": "complete",
+      "kind": "focused-apk-startup-comparison",
+      "deviceTestsExecuted": 0,
+      "stdout": "gate-3.stdout",
+      "stderr": "gate-3.stderr",
+      "exitCode": 0,
+      "elapsedSeconds": 86.70546982099768
+    }
+  ],
+  "complete": false,
+  "retainedAttempts": [
+    {
+      "index": 2,
+      "command": "python3 -m unittest discover -s scripts",
+      "state": "failed",
+      "exitCode": 1,
+      "elapsedSeconds": 18.090713369019795
+    }
+  ],
+  "runnerCorrection": "Do not inject PYRY_GATE_EVIDENCE_DIR into script unit fixtures; it is an Android/JVM gate output setting.",
+  "finishedAt": "2026-10-20T12:11:31.211339+00:00",
+  "startupRecovered": true
+}

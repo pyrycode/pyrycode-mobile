@@ -224,6 +224,7 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -7681,8 +7682,34 @@ class InteractiveStreamE2ETest {
     ) {
         stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
         val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
-        composeTestRule.onNode(readyAttachmentRow(name)).performClick()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        val phases = CopyOnWriteArrayList<String>()
+        val priorSink = RelayLog.sink
+        RelayLog.sink = { priority, tag, message ->
+            priorSink(priority, tag, message)
+            if (message.startsWith("event=thread_attachment_")) {
+                phases += message.split(' ').filterNot { it.startsWith("id=") }.joinToString(" ")
+            }
+        }
+        try {
+            composeTestRule
+                .attachmentActionTarget(readyAttachmentRow(name)) { Log.i("AttachmentOpenProbe", it) }
+                .performClick()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        } catch (failure: ComposeTimeoutException) {
+            var resumed = 0
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).size
+            }
+            val observedViews = stub.answered.count { it.action == Intent.ACTION_VIEW } - views
+            val diagnostic =
+                "stage=viewer-timeout resumed=$resumed viewerIntents=$observedViews " +
+                    "answered=${stub.answered.size} phases=$phases"
+            Log.i("AttachmentOpenProbe", diagnostic)
+            failure.addSuppressed(AssertionError(diagnostic))
+            throw failure
+        } finally {
+            RelayLog.sink = priorSink
+        }
         val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
         val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
         assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
@@ -7691,7 +7718,7 @@ class InteractiveStreamE2ETest {
 
         val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
         stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
-        composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
+        composeTestRule.attachmentActionTarget(readyAttachmentRow(name)).performTouchInput { longClick() }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
         }

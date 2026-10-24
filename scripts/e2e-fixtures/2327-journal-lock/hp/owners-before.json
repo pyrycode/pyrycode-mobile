@@ -1,0 +1,49 @@
+{
+  "capturedAt": "2026-10-20T12:08:08.168958+00:00",
+  "host": "build-hp-1",
+  "bootId": "f8694279-2f0d-4fb7-a4a3-d9b1a94dc629",
+  "locks": [
+    {
+      "pid": 8226,
+      "command": "java",
+      "type": "POSIX",
+      "path": "/home/agent/.gradle/caches/journal-1/journal-1.lock",
+      "identity": {
+        "startTicks": "49937064",
+        "ppid": 8225,
+        "processGroup": 8225,
+        "pidNamespace": "pid:[4026532668]",
+        "mountNamespace": "mnt:[4026532651]",
+        "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/pyrycode.slice/pyrycode-agents.slice/pyry-fleet-native-android.service/libpod-payload-9f7838999ba8ebc8bb3e5ee056abcba1c5de39b473fcf8f0364615f294d6ccaf"
+      },
+      "matchingDescriptors": [
+        {
+          "fd": "313",
+          "device": 66306,
+          "inode": 1082682
+        }
+      ]
+    },
+    {
+      "pid": 6583,
+      "command": "python3",
+      "type": "FLOCK",
+      "path": "/home/agent/.local/share/pyry-fleet/test-admission.lock",
+      "identity": {
+        "startTicks": "49927100",
+        "ppid": 6582,
+        "processGroup": 6582,
+        "pidNamespace": "pid:[4026532668]",
+        "mountNamespace": "mnt:[4026532651]",
+        "cgroup": "0::/user.slice/user-1000.slice/user@1000.service/pyrycode.slice/pyrycode-agents.slice/pyry-fleet-native-android.service/libpod-payload-9f7838999ba8ebc8bb3e5ee056abcba1c5de39b473fcf8f0364615f294d6ccaf"
+      },
+      "matchingDescriptors": [
+        {
+          "fd": "3",
+          "device": 66306,
+          "inode": 3566050
+        }
+      ]
+    }
+  ]
+}

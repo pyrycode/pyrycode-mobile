@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Count-only projection; unchanged raw XML is retained at the path in 2534-delete-evidence.txt. -->
+<testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" timestamp="2026-10-24T11:09:09">
+  <testcase classname="de.pyryco.mobile.design.ListDesignCaptureTest" name="listFramesAt320By700LargeText" time="122.863" />
+  <testcase classname="de.pyryco.mobile.design.ListDesignCaptureTest" name="listFramesAt412By892" time="90.707" />
+</testsuite>
