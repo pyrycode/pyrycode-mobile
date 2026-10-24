@@ -45,8 +45,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 class AuthoritativeOwnedRemovalTest {
     @get:Rule val temporary = TemporaryFolder()
     private val databases = mutableListOf<ConversationCacheDatabase>()
+    private var removalProgress: ((String) -> Unit)? = null
 
-    @After fun close() = databases.forEach { it.close() }
+    @After fun close() {
+        removalProgress?.invoke("close_begin")
+        databases.forEach { it.close() }
+        removalProgress?.invoke("close_done")
+    }
 
     private fun TestScope.open(beforeCommit: suspend () -> Unit = {}): MigratingConversationCache {
         val db =
@@ -491,10 +496,21 @@ class AuthoritativeOwnedRemovalTest {
 
     @Test fun retirementInvariant_successReleasesRecoveryButFailureRetainsIt() =
         runTest {
+            val started = System.nanoTime()
+            var previous = started
+            fun phase(code: String) {
+                val now = System.nanoTime()
+                println("removal_phase=$code phase_ms=${(now - previous) / 1_000_000} elapsed_ms=${(now - started) / 1_000_000}")
+                previous = now
+            }
+            removalProgress = ::phase
             for (absentOrder in listOf(false, true)) {
+                val arm = if (absentOrder) "absent" else "tied"
+                phase("${arm}_fixture_begin")
                 val fail = AtomicBoolean(false)
                 val cache = open { if (fail.get()) throw IOException("private removal failure") }
                 cache.removeConversation("host", "c").getOrThrow()
+                phase("${arm}_cleared")
                 val original =
                     saved(256).copy(
                         items =
@@ -504,8 +520,12 @@ class AuthoritativeOwnedRemovalTest {
                             },
                     )
                 cache.writeAuthoritativeThread("host", "c", original).getOrThrow()
+                phase("${arm}_seeded")
                 val repo = wrapper(cache)
-                observe(repo).cancelAndJoin()
+                val observer = observe(repo)
+                phase("${arm}_observed")
+                observer.cancelAndJoin()
+                phase("${arm}_observer_joined")
                 for (id in 1L..64L) {
                     repo.removeAuthoritativeFact(requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", id))).getOrThrow()
                     assertEquals(0, recoveryEntries(repo.authoritativeThreads))
@@ -515,19 +535,27 @@ class AuthoritativeOwnedRemovalTest {
                             .current("host", "c")
                             .retirements.size,
                     )
+                    phase("${arm}_removed_$id")
                 }
                 val target = requireNotNull(repo.authoritativeThreads.captureRemoval("host", "c", 65))
                 fail.set(true)
+                phase("${arm}_failure_begin")
                 assertTrue(repo.removeAuthoritativeFact(target).isFailure)
+                phase("${arm}_failure_returned")
                 assertEquals(192, recoveryEntries(repo.authoritativeThreads))
                 assertEquals(original.items.drop(64), open().readAuthoritativeThread("host", "c")?.items)
+                phase("${arm}_failure_reopened")
                 fail.set(false)
                 repo.removeAuthoritativeFact(target).getOrThrow()
+                phase("${arm}_retry_committed")
                 assertEquals(0, recoveryEntries(repo.authoritativeThreads))
                 val retained = requireNotNull(open().readAuthoritativeThread("host", "c"))
+                phase("${arm}_retry_reopened")
                 assertEquals(original.items.drop(65), retained.items)
                 assertEquals((1L..65L).associateWith { it }, retained.retirements)
+                phase("${arm}_assertions_done")
             }
+            phase("body_done")
         }
 
     private fun recoveryEntries(store: AuthoritativeThreadStore): Int = store.retainedRemovalPeerCount()

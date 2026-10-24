@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-24T09:34:16.812Z" hostname="Juhanas-Air" time="13.345">
+  <properties/>
+  <testcase name="retirementInvariant_successReleasesRecoveryButFailureRetainsIt" classname="de.pyryco.mobile.data.repository.AuthoritativeOwnedRemovalTest" time="12.437"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
