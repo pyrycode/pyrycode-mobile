@@ -739,10 +739,17 @@ class AgentChildrenQueriesTest {
             f.store.applyBatch("h", "c", "e", 70, listOf(saved), 0)
             f.demand()
             val frame = f.reply(version = 80)
-            f.lane.accept(frame.copy(payload = json(
-                frame.payload.toString().replace("\"rev\":7", "\"rev\":70")
-                    .replace("\"kind\":\"agent\"", "\"kind\":\"agent\",\"task_id\":\"current-unplaced\""),
-            )))
+            f.lane.accept(
+                frame.copy(
+                    payload =
+                        json(
+                            frame.payload
+                                .toString()
+                                .replace("\"rev\":7", "\"rev\":70")
+                                .replace("\"kind\":\"agent\"", "\"kind\":\"agent\",\"task_id\":\"current-unplaced\""),
+                        ),
+                ),
+            )
             f.lane.accept(f.reply(true, version = 80))
             assertNotNull(f.page())
             assertSame(saved, f.snapshot().items.first { it.id == 50L })

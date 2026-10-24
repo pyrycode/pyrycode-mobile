@@ -702,7 +702,15 @@ class CompactRootPagesTest {
             f.push(f.marker(1, 10, false))
             runCurrent()
             val older = store.current("h", "c").copy(bodyContents = emptyMap())
-            assertTrue("unrelated older roots cannot revoke a current full source", older.hasToolBody(older.expansionItems.single { it.id == 20L }))
+            assertTrue(
+                "unrelated older roots cannot revoke a current full source",
+                older.hasToolBody(
+                    older.expansionItems.single {
+                        it.id ==
+                            20L
+                    },
+                ),
+            )
         }
 
     @Test fun restoreInvariantCompleteHostKeepsSavedFullBodiesWithoutCompactFreshness() {
