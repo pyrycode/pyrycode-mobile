@@ -72,3 +72,40 @@ Pending for the documentation stage: `docs/e2e-interactive-stream.md`, “Sessio
 ## Open questions
 
 What caused the surviving canonical dropped-arm timeouts? The retained evidence localizes phases but does not establish a cause. Use the shared investigation route for any wider comparison; report its actual state and retain configured acceptance as pending. Do not claim the flake is eliminated merely because #2338's exact method later passed.
+
+## Evidence checked, 2026-10-24
+
+All downloaded manifest entries verified without mismatches:
+
+| Ticket/run | Bundle digest | Files verified |
+| --- | --- | ---: |
+| #2331 `fa76fd281cf788d24bb5b6db7b77e851a92b98c7c9e709af3bf36a78102f3434` | `6c08a2426e90b0b63e0428abdf7ff534d95c72d4cd1eb2cd193e1a442a9439aa` | 132 |
+| #2338 builder `64e6c00252f1e7e7926b9f0ed23b2fe0a15e5775b45147b53e97ccc60f5a01a7` | `29132137becc446b2ea2b0bd203608a78b295846e9bf3bc24f5c01f2985c67cf` | 65 |
+| #2338 verifier `b8fb0d854eb72efdd146a2fd8826aa58be8b232d0b11f2bdb1d9b1247c501452` | `4d02a591274dd02f7a0fcb657f3f2944d23b475232279f47b331ecab304b99ea` | 154 |
+| #2353 recovery `1645b2edbce493c749eeca19882e3783504b749885b70046dd7e36737641c63e` | `bcee537f05fa25317f462d92d3a56f238f7f3478ac542171c7062e7de4a8dc87` | 3 |
+
+#2331's `logs/verifier-gate__2331_6.log` retains 22 reported cases: 21 executed, 20 passed, one failed, one skipped. Its recovery failure has no assertion text. `logs/2026-10-20T23-11-25-753Z_verifier-gate-rerun__2331.log` records exactly one successful recovery execution, no failures/errors/skips. Neither result establishes the original causal schedule.
+
+In the #2338 builder bundle, paths below are relative to `evidence/integration-linux-20261024/`:
+
+| Exact Linux method capture | Mobile revision | Executed/passed/failed/errors/skipped |
+| --- | --- | --- |
+| `fresh/scripted-1dw9hs_7/0-TEST-pixel2Api33Atd-_app-.xml` | `a622b6d21ea8cd8767f764212e0a71f818b37520` | 1/1/0/0/0 |
+| `reused/scripted-hiumew3f/0-TEST-pixel2Api33Atd-_app-.xml` | `e51627c81871ad29708c8a0a572673bdda97db18` | 1/0/1/0/0 |
+| `final-reused/scripted-y2mnw2hu/0-TEST-pixel2Api33Atd-_app-.xml` | `e51627c81871ad29708c8a0a572673bdda97db18` | 1/1/0/0/0 |
+
+The middle failure is dropped `held_send`, with saved/selected connection and both relay/session Connected. Its four allowlisted peer observations include a new authoritative item, blocked error and item change; no completed post-send canonical query is recorded. Fixture control reaches start/ready, not exit/release. This rules out treating it as the later status-clear assertion but does not establish why the query failed. The same failed instrumentation APK subsequently passes; keep both outcomes.
+
+Successful `counted-recovery-receipt.json` files and per-arm control/child records retain held/fresh input counts **1/0 retained, 0/1 dropped**, stable daemon/Runner/session identities, owned-daemon absence after cleanup, both completed arms and final pairing/preceding-connection restoration. Phone logs retain error → responding → clear → idle. The 20-second status-clear assertion in `runCase` is unchanged. The recorded fresh and final-reused executable/build inputs match each other and current main; only documentation and generated revision metadata differ.
+
+All three captures use Core `64ef0e0fba71a723b7fdc97141cfc144f6355664` and relay `9939bc1ff8afec5021c09862e6f14dadba33ad42`. Provenance records these effective SHA-256 identities:
+
+- App APK: `b6a210153033237867df1392f1201c7af130511919be24a26307ebb08ad02918`.
+- Fresh instrumentation APK: `19cb48ab5a29c35b344c2421e0a98f1144317fedb7baa9d8d29f537e5a1c13d1`.
+- Failed/final reused instrumentation APK: `8275f8f9b36eee9f3bba1d5b70e4684dc872ea26ccbe540d9554765d81a56341`.
+- Dedicated tagged recovery daemon: `2310e8087b383651ff2f660cd3a3d76c7be5bf0041ef6f377e839c7f1e2a69de`; attribution uses the clean source/tree and separate tagged build command, since this binary has no embedded revision.
+- Main harness daemon: `b6ef9a2ce97d2d0a9e3436ce94ff2f39cc89867511559499bcbb0ca726bfa658`; relay: `27ec11505393dd62fad8c9a2cb672775b230e031b7240ac9c11fddc847324d10`.
+
+The accepted #2338 verifier's `handoff/verifier-2338.md` and `logs/verifier-gate__2338_6.log` retain **24 executed, 20 passed, four failed, no errors/skips**, including exact recovery **1/1 passed**. Three agent failures remain accepted inherited #2521 failures; ping remains #2469. This proves configured recovery execution on the repaired dependency, not universal suite success or elimination of every residual occurrence. Its 5,556 JVM and 250 UI executions passed without failures/errors/skips. This ticket's own configured gates remain pending dispatcher execution on its candidate.
+
+Existing shared investigation `e8eb73b8adb1eb31878b5943ed35240ab7a764fac68bd4d1e71decdb996eab55` last retains assessment-queued/zero executions. A new bounded assessment request will cite this ticket's retained recovery log and the newer dependency captures; neither an acknowledgement nor a passing focused rerun is a reliability repair. Keep the residual question open for that assessment and current configured acceptance.
