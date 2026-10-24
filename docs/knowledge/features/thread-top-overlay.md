@@ -66,8 +66,16 @@ notices. `ThreadAttentionNotice` renders at most one pill without an X: gold Wai
 Finished. One other unmuted waiting conversation shows "<name> needs your answer"; two or more
 show "<n> conversations need you". Waiting aggregates every host, excludes only the current
 host/conversation pair, and follows current attention, mute state and names. An equal conversation
-id on another host still counts. A new `TurnCompleted` alert from another unmuted pair shows "<name> finished" for five seconds.
+id on another host still counts. A new terminal completion identity from another
+unmuted pair shows "<name> finished" for five seconds. Within the visible destination's
+collection, host/conversation/completion-key deduplication prevents recertification
+of the same terminal fact from renewing or resurrecting Finished (#2490). Only a
+new terminal identity renews the lifetime; equal keys on different targets remain independent.
 Waiting clears Finished and discards completions received while it shows, without replay afterward.
+Discarded identities are remembered before Waiting suppression. The expiry delay is
+registered before Finished is published, so immediate clock advancement cannot
+overtake timer setup. The RESUMED destination owns the collector and timer;
+leaving cancels both and reopening starts without an old Finished.
 See [attention navigation](navigation.md#what-it-does) for single and count targets.
 
 Names use `notificationTitle`: remove controls, retain at most 80 Unicode code points without
@@ -335,7 +343,7 @@ the expiry job and clears presentation. Resuming reads current Waiting with no o
 `TurnCompleted`, independently of the system notifier's ledger. `Unread` and prompt alerts cannot
 create Finished.
 
-A newer eligible finish replaces the target and restarts its five-second delay. Snapshot renames
+A new eligible terminal identity replaces the target and restarts its five-second delay. Snapshot renames
 update the label without extending expiry; muting that target clears it. Callbacks read current
 attention and snapshot values, with no suspension between eligibility, mutation and publication.
 Waiting cancels the finish timer. Parent cancellation cancels every child collector and delay.
@@ -413,6 +421,17 @@ the neighboring Offline Retry regression remains runnable.
   while the five virtual seconds have not elapsed. The rung-3 scenario advances by 5,100ms and
   checks disappearance and no replay on reopening; its named full-suite pass is recorded in the
   [live ladder](../../e2e-interactive-stream.md#verification-status).
+  Publication and expiry registration need separate assertions (#2490): a repeated
+  certificate can leave the rendered value unchanged while restarting an unsafe timer.
+  `finishedPublicationAlreadyOwnsItsScheduledExpiry` checks registration at publication,
+  presence at 4,999 ms and actual removal at 5,000 ms, rejecting never-expiring pills.
+  `recertifyingSameCompletionCannotRenewOrResurrectFinished` and
+  `recertifyingCompletionSuppressedByWaitingCannotReplayIt` cover duplicate renewal,
+  resurrection and Waiting suppression; new-identity renewal and target collisions
+  remain independent controls. The [counted macOS expiry evidence](../../recorded-tests.md#counted-macos-expiry-evidence-2490-2026-10-24)
+  records the 18-case controlled red/green, three consecutive exact recorded-method
+  passes (1/1 each), the configured 250/250 UI pass including that method, and
+  links to source identities, manifests and retained raw artifacts.
   An isolated answer daemon does not isolate the phone's overlay (#1905): an inherited prompt on
   another paired host correctly changes a single-target Waiting pill to an aggregate count. A peer
   modal alone cannot prove the expected phone label. Diagnose the first Waiting stage using bounded

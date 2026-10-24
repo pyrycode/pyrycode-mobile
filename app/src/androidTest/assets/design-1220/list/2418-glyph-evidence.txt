@@ -1,0 +1,96 @@
+Historical host glyph attempt — #2418 / PR #2434 — Linux, 2026-10-24 morning
+
+Capture source: 04fa786126a5e6bb37315b15ad4f3a189969c27a
+Implementation retained from: ee36410b103e02a19ff63b8cb2bf015b3085df4a
+No glyph, list, focused-test or capture-input change in this continuation.
+Retained focused XML independently recounted: 37 executed/passed, 0 failed/skipped.
+Original substitute regression: 1 executed/failed, 0 passed/skipped; retained.
+
+Native selection: ListDesignCaptureTest#listFramesAt412By892,
+ListDesignCaptureTest#listFramesAt320By700LargeText (fully qualified under de.pyryco.mobile.design).
+Managed ui gate with DEVICE=pixel8Api35, requireRealSystemBars=true.
+2 executed: 1 passed, 1 failed, 0 errors/skips; process exit 1.
+Compact 320x700 / 150% method passed; 412x892 method failed before hostStates.
+Failure: assertDeleteGeometry expected 312.0 dp, observed 299.0 dp.
+No assertion was ignored, weakened or changed. Separate blocker: #2534.
+
+Runtime image: full API35 google_apis_playstore x86_64, image revision 9.
+Image fingerprint: google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.036/12592187:user/dev-keys
+Device sidecars: api=35, device=sdk_gphone64_x86_64, hardwareAccelerated=true, syntheticBars=false.
+Compact: 320x700 px, density=1, fontScale=1.5, real bars top=39/bottom=24 px.
+412px Delete capture: 412x892 px, density=1, fontScale=1, real bars top=49/bottom=24 px.
+Both recorded IME insets are zero at these captures.
+
+Compact visible primary-ink measurements (dp equals px at density 1):
+Disconnected Pair: 9x10; slot-center offset (+0.5, 0).
+Re-pair Pair: 9x10; slot-center offset (+0.5, 0).
+Update: 12x11; slot-center offset (0, +0.5).
+All dimensions differ by <=1 dp from the approved 9x10.8 / 12x12 artwork.
+All centers differ by <=0.5 dp from the existing slot center.
+All three 1:1 Figma/native ink masks have symmetric Chebyshev distance 1 px.
+Exact theme-primary pixels (#9DCBFC) are present in every native glyph.
+Both vector path strings and clipped viewports match the retained approved SVGs exactly.
+Comparison isolates glyphs within existing 24x28 slots; #2419 still owns cluster placement.
+
+App APK SHA256: abd70f29d3b45d1871c0b77c835111faa68544c94b1b4bd7189b3e0e054ff3ae
+Test APK SHA256: 8be8e89f44d1f3b24ab2557bc04f49fc01cb092cbfb005487541a19ce81a90dc
+Agents: 3105b6f49d4bb72859fdea020bea3ebc98810aeb
+Dispatcher: 91310c59a1c0834526ee0f2f356a80a763611566
+Loaded selection policy SHA256: 98e62d3a0a76caefa4ef4bf72b5688dfefcc96a3ffd6d8faca95f183f68402d4
+
+Private durable evidence: /work/Projects/pyrycode-mobile-agents/logs/evidence/2418/builder-20261024-api35/
+91 raw evidence files verified against SHA256SUMS; files owner-only, directories owner-only.
+Manifest SHA256: 473e29951790e35be40e570c744cb2e8872c36de3838921cb03d1fb0529b714e
+Contains raw XML, logcats, both viewports' partial captures/sidecars, source/APK/launcher
+identities, image metadata, original design inputs, comparison scripts and unscaled glyph crops.
+Original 37-test red/green evidence: ../builder-20261021-1808/ under the same ticket directory.
+
+Pending: passing 412x892 method, its host-row capture and glyph comparisons, both-method
+acceptance after #2534, and final post-merge checks. Historical zero-execution launcher refusal
+remains retained separately; #2435 resolved that selection defect. This run makes no full-suite
+or second-OS pass claim. Complete configured gates remain dispatcher-owned.
+
+Successful continuation after #2534 — Linux, 2026-10-24 afternoon
+
+Capture source: 383abc92943bb8688d24590778df70f8a7aa366c
+Glyph implementation and focused regression inputs unchanged; retained 37 focused passes.
+Both selected methods under de.pyryco.mobile.design.ListDesignCaptureTest executed:
+listFramesAt412By892: 1 executed/passed, 0 failed/errors/skipped.
+listFramesAt320By700LargeText: 1 executed/passed, 0 failed/errors/skipped.
+Total: 2 executed/passed, 0 failed/errors/skipped; process exit 0.
+Command: env DEVICE=pixel8Api35 ANDROID_GATE_WAIT_SECONDS=2700
+'ORG_GRADLE_PROJECT_android.testInstrumentationRunnerArguments.requireRealSystemBars=true'
+python3 scripts/android-test-gate.py ui --tests
+'de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText'
+
+Full API35 google_apis_playstore x86_64 revision 9; same image fingerprint as above.
+412x892: density=1, fontScale=1, real bars top=49/bottom=24 px.
+320x700: density=1, fontScale=1.5, real bars top=39/bottom=24 px.
+Both host-row sidecars: api=35, hardwareAccelerated=true, syntheticBars=false, zero IME.
+All 68 capture files are fresh for this invocation; no stale capture was reused.
+Both viewports' three-state visible primary ink:
+Disconnected Pair: 9x10 px; slot-center offset (+0.5, 0) px.
+Re-pair Pair: 9x10 px; slot-center offset (+0.5, 0) px.
+Update: 12x11 px; slot-center offset (0, +0.5) px.
+Dimension errors <=1 dp, center errors <=0.5 dp; density 1 means px equals dp.
+All six 1:1 Figma/native masks have symmetric Chebyshev distance 1 px.
+Exact existing theme-primary pixels remain present; approved SVG paths/viewports match exactly.
+Only glyphs compared: cluster placement and connected styling stay with #2419.
+
+App APK SHA256: abd70f29d3b45d1871c0b77c835111faa68544c94b1b4bd7189b3e0e054ff3ae
+Test APK SHA256: c497a65ef86860ac68f8db8c04fc912736c56496aa26bc1079899531ae8f2276
+Agents: 8643e11cebee3353bac182611957707679247cd2
+Dispatcher: a51c757f1ffbdedccfc13c4a7ecb6c786b6dfd27
+Loaded selection policy SHA256: 98e62d3a0a76caefa4ef4bf72b5688dfefcc96a3ffd6d8faca95f183f68402d4
+
+Private durable evidence: /work/Projects/pyrycode-mobile-agents/logs/evidence/2418/builder-20261024-api35-final/
+110 files verified against SHA256SUMS; all gate/capture copies match fresh originals.
+Manifest SHA256: f334b311cb24e66bc14137ccb38857d5113e11fe624890dfe77eef206f9772ec
+Raw report: gate/0-TEST-pixel8Api35_0-_app-.xml; both phone logs retained beside it.
+Captures: captures/host-rows.png and host-rows-compact.png, with matching .txt sidecars.
+Unscaled comparisons: comparison/host-rows-comparisons-1to1.png and
+comparison/host-rows-compact-comparisons-1to1.png; all six measurements in comparison.json.
+Source, APK, image and launcher identities: capture-identities.json, source.properties, build.prop.
+Subsequent receipt/plan edits only record evidence; they do not change captured behavior.
+Historical failed and zero-execution results remain failed/unverified. Full configured gates,
+independent verifier acceptance and #1650 integration remain pending with their owners.
