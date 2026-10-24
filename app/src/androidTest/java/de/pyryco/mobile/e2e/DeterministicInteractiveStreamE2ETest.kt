@@ -598,21 +598,109 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         }
+        val traceLock = Any()
+        var traceCount = 0
+        OwnedReplyProbe.readTrace = trace@{ connection, frame, sending ->
+            val kind =
+                when (frame.type) {
+                    "list_conversations" -> "list_request"
+                    "conversations" -> "list_reply"
+                    "thread_catch_up" -> "catch_up_request"
+                    "thread_items" -> "catch_up_reply"
+                    "conversation_read" -> "read_reply"
+                    else -> return@trace
+                }
+            val payload = frame.payload as? JsonObject
+            val rows = payload?.get("conversations") as? kotlinx.serialization.json.JsonArray
+            val row =
+                rows?.filterIsInstance<JsonObject>()?.singleOrNull {
+                    (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { id -> id.isString }?.content == conversationId
+                }
+
+            fun number(value: kotlinx.serialization.json.JsonElement?): Long? =
+                (value as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+            synchronized(traceLock) {
+                if (traceCount++ < 48) {
+                    android.util.Log.i(
+                        "PingReadProof",
+                        "event=ping_metadata_trace connection=${System.identityHashCode(connection)} sending=$sending kind=$kind " +
+                            "request=${frame.id} reply_to=${frame.inReplyTo} row=${row != null} " +
+                            "shown=${number(row?.get("last_shown_version"))} read=${number(row?.get("read_up_to"))} " +
+                            "version=${number(payload?.get("version"))}",
+                    )
+                }
+            }
+        }
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+        var readSamples = 0
+        var previousReadSample = ""
+
+        fun readSample(terminal: Boolean = false): Boolean =
             runBlocking {
                 val marks = repository.observeReadMarks(conversationId).first()
                 val shown = marks?.lastShownVersion
-                ownsConnection() &&
-                    evidence
-                        .observe(conversationId)
-                        .first()
-                        .owner
-                        .matches(reply.owner) &&
-                    marks?.threadSupported == true &&
-                    shown != null &&
-                    shown >= replyFact.id.toULong() &&
-                    (marks.readUpTo ?: 0uL) >= shown
+                val current = coordinator.currentRepository.value as? RemoteConversationRepository
+                val currentEvidence = current?.let { harnessThreadEvidence(it).observe(conversationId).first() }
+                val currentMarks = current?.observeReadMarks(conversationId)?.first()
+                val held = evidence.observe(conversationId).first()
+
+                fun hash(value: String?) =
+                    value?.let {
+                        java.security.MessageDigest
+                            .getInstance("SHA-256")
+                            .digest(it.toByteArray())
+                            .joinToString("") { byte -> "%02x".format(byte) }
+                    } ?: "none"
+
+                fun owner(value: ThreadEvidenceOwner?) =
+                    "host=${hash(value?.host)} conversation=${hash(value?.conversation)} " +
+                        "connection=${value?.connection?.let(
+                            System::identityHashCode,
+                        )} epoch=${hash(value?.epoch)} generation=${value?.generation}"
+                val supportedConnection = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
+                val proved =
+                    current != null &&
+                        currentEvidence != null &&
+                        current === coordinator.currentRepository.value &&
+                        pingReadMarkConfirmed(
+                            reply.owner,
+                            replyFact,
+                            currentEvidence,
+                            currentMarks,
+                            supportedConnection,
+                            certified = { pingReplyCertifiedBy(currentEvidence, replyFact, current) },
+                        ) {
+                            route.store.current(serverId, conversationId)
+                        }
+                val sample =
+                    "captured_owned=${ownsConnection()} owner_match=${held.owner.matches(reply.owner)} " +
+                        "supported=${marks?.threadSupported} shown=$shown confirmed=${marks?.readUpTo} " +
+                        "reply_id=${replyFact.id} reply_rev=${replyFact.rev} " +
+                        "captured=[${owner(reply.owner)}] held=[${owner(held.owner)}] current=[${owner(currentEvidence?.owner)}] " +
+                        "current_checkpoint=${currentEvidence?.sourceSnapshot?.checkpoint} current_admitted=${currentEvidence?.admitted} " +
+                        "current_supported=${currentMarks?.threadSupported} current_shown=${currentMarks?.lastShownVersion} " +
+                        "current_confirmed=${currentMarks?.readUpTo} current_owned=${current != null && supportedConnection === current} " +
+                        "current_reply_match=${currentEvidence?.records?.any { it.fact?.raw == replyFact.raw }} proved=$proved"
+                if (terminal || sample != previousReadSample && readSamples < 12) {
+                    android.util.Log.i("PingReadProof", "event=ping_read_proof terminal=$terminal $sample")
+                    readSamples++
+                    previousReadSample = sample
+                }
+                proved &&
+                    current === coordinator.currentRepository.value &&
+                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
+                    pingReplyCertifiedBy(currentEvidence, replyFact, current) &&
+                    currentEvidence?.sourceSnapshot === route.store.current(serverId, conversationId)
+            }
+        try {
+            // Control the observed race: retire the captured connection after certification, before proof.
+            severAndRestoreLink()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { readSample() }
+        } finally {
+            try {
+                readSample(terminal = true)
+            } finally {
+                OwnedReplyProbe.readTrace = null
             }
         }
 
@@ -641,8 +729,48 @@ class DeterministicInteractiveStreamE2ETest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
         val unread = context.getString(R.string.cd_conversation_attention_unread)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
+        val hostSource = GlobalContext.get().get<HostConversationSource>()
+        var unreadSamples = 0
+        var previousUnreadSample = ""
+
+        fun unreadSample(terminal: Boolean = false): Boolean {
+            val current = coordinator.currentRepository.value
+            val marks = (current as? RemoteConversationRepository)?.currentReadMarks(conversationId)
+            val rowCount = composeTestRule.onAllNodes(row).fetchSemanticsNodes().size
+            val unreadCount = composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().size
+
+            fun count(description: Int) =
+                composeTestRule.onAllNodes(row and hasContentDescription(context.getString(description))).fetchSemanticsNodes().size
+
+            fun hash(value: String) =
+                java.security.MessageDigest
+                    .getInstance("SHA-256")
+                    .digest(value.toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            val sample =
+                "host=${hash(serverId)} conversation=${hash(conversationId)} connection=${current?.let(System::identityHashCode)} " +
+                    "owned=${current != null &&
+                        current === coordinator.currentRepository.value &&
+                        (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current} " +
+                    "supported=${marks?.threadSupported} shown=${marks?.lastShownVersion} read=${marks?.readUpTo} " +
+                    "${hostSource.attentionDiagnostic(serverId, conversationId, current)} " +
+                    "rows=$rowCount unread=$unreadCount idle=${count(R.string.cd_conversation_attention_idle)} " +
+                    "running_rows=${count(
+                        R.string.cd_conversation_attention_running,
+                    )} waiting_rows=${count(R.string.cd_conversation_attention_waiting)}"
+            if (terminal || sample != previousUnreadSample && unreadSamples < 12) {
+                android.util.Log.i("PingUnreadProof", "event=ping_unread_proof terminal=$terminal $sample")
+                unreadSamples++
+                previousUnreadSample = sample
+            }
+            return unreadCount > 0
+        }
+        try {
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { unreadSample() }
+        } finally {
+            runCatching { unreadSample(terminal = true) }.onFailure {
+                android.util.Log.i("PingUnreadProof", "event=ping_unread_proof terminal=true code=sample_unavailable")
+            }
         }
         SecondClientPeer(
             PairedServer(
