@@ -132,3 +132,43 @@ All failed native XML/protobufs, phone logs, control/daemon/relay traces, finish
 Implementation, plan and historical evidence remain preserved. The required successful native pair, lint and final formatting/compile/pre-verification checks, PR publication and dispatcher-owned configured acceptance remain pending. No wider diagnostic was started; the retained historical recovery receipt still records assessment-queued, zero executed.
 
 The approved `add-blocker 2494 2514` helper failed twice with `Shared GitHub unavailable` HTTP 503. Authoritative relationship readback after each attempt showed only closed #2493; #2514 was not saved. This service failure prevents the required waiting-on-blocker routing, so the run reports `blocked` with #2514 as the intended dependency. This was not an approval rejection. Retry the managed relationship operation when service is restored; do not bypass the bridge.
+
+
+### 2026-10-24: bounded manual continuation plan
+
+The earlier instruction to retry adding #2514 as a blocker is superseded. Fresh
+operator readback shows #2494 -> closed #2493, #2469 -> open #2494, and #2514 ->
+open #2469. Adding #2494 -> #2514 would create a cycle. Do not perform that write.
+The manual hold stays until a supported independent review/documentation handoff.
+
+Reuse the retained #2514 candidate `87135e971da5af043567eb7f9f30a53185697b2b`
+as explicit integration input, preserving its commits, native isolation evidence,
+and separate Linux 2/2/configured acceptance requirements. This does not accept,
+close, transfer ownership of, or remove a dependency from #2514. Its full original
+controlled scenario remains separate from the unchanged normal ping pair.
+
+The #2494 native XML was independently recounted: 2 executed, 0 passed, 2 failed,
+0 errors/skips. The first offline batch was posted, but no subsequent send or daemon
+restart appears before the producer wait times out. The exact rejection boundary
+is not present in the retained logs. Add a passive structural snapshot to that
+producer observer and emit it in the native producer wait's finally, including
+fixed phase, counts, pending/accepted/completed/rejected/current flags, checkpoint,
+coverage and exact-post-present boolean. Never emit payloads, text, credentials,
+raw exceptions, conversation identifiers or arbitrary frame/error strings. Preserve
+the original exception and all waits/assertions. Test the snapshot for pending,
+certified, rejected and retired states before implementing it.
+
+Inspect one affected native pair on this materially changed integration to diagnose
+the original missing boundary and avoid known secondary contamination. Preserve
+failed evidence independently. If the result identifies a distinct repair, provide
+an owning proposal rather than weakening proof, retrying for green, or silently
+absorbing the repair. Core's accepted #3710/#3721 changes already occur in current
+published `64ef0e0fba71a723b7fdc97141cfc144f6355664`: unavailable retirement evidence
+remains a truthful refusal. Neither that source fact nor a focused pass diagnoses
+the historical configured final-read failures.
+
+Author security review of this continuation: PASS. The new observer read is
+synchronized, passive and test-only, with fixed labels and scalar values. It grants
+no authority and changes no requests, identities, deadlines or certification. The
+reused cleanup preserves the primary throwable and independently closes resources;
+its integration remains subject to independent review. Raw evidence stays private.
