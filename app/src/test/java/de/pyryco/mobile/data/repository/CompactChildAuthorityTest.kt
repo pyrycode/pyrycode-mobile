@@ -43,8 +43,9 @@ class CompactChildAuthorityTest {
 
     private fun assertRead(snapshot: AuthoritativeThreadSnapshot, usable: Boolean) {
         val p = projectDeferredAuthoritativeThread("h", "c", snapshot)
-        val row = p.rows.filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
-        assertEquals(usable, p.suppliesReadSight(row, setOf(row.listKey(0))))
+        val expanded = setOf("${p.scope}:17", "${p.scope}:20")
+        val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
+        assertEquals(usable, p.suppliesReadSight(row, expanded))
         assertEquals(usable, p.matchesReadContents(row.listKey(0), row.item, 20))
     }
 
