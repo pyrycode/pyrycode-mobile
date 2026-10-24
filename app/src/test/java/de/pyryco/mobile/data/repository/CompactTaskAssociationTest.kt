@@ -131,7 +131,7 @@ class CompactTaskAssociationTest {
         for (restoreFirst in listOf(false, true)) {
             val f = CompactRootFixture(backgroundScope)
             val store = f.repo.authoritativeThreads
-            val parent = ThreadItemDto.decode(JsonObject(authoritativeAgent(17).raw + ("subtree_version" to JsonPrimitive(90))))
+            val parent = ThreadItemDto.decode(JsonObject(authoritativeAgent(17, parent = 0).raw + ("subtree_version" to JsonPrimitive(90))))
             val fullChild = ThreadItemDto.decode(
                 JsonObject(authoritativeAgent(18, task = "old-child", active = false, parent = 17).raw +
                     ("subtree_version" to JsonPrimitive(50))),
@@ -159,15 +159,7 @@ class CompactTaskAssociationTest {
             }
             runCurrent()
             if (!restoreFirst) {
-                val beforeRestore = store.current("h", "c")
-                assertEquals(
-                    "same-owner restore: generation=${beforeRestore.generation}, reset=${beforeRestore.resetNeeded}, " +
-                        "epoch=${beforeRestore.epoch}, incarnationMatches=${beforeRestore.incarnation == saved.incarnation}, " +
-                        "version=${saved.toSnapshot().completedVersion}, saved=${saved.toSnapshot().items.map { listOf(it.id, it.rev, it.kind, it.parent, it.order, it.endedOrder) }}, " +
-                        "roots=${beforeRestore.compactRoots.values.map { listOf(it.id, it.kind, it.parent) }}, " +
-                        "children=${beforeRestore.childPages.values.flatMap { it.items }.map { listOf(it.id, it.kind, it.parent) }}",
-                    AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0),
-                )
+                assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved.toSnapshot(), 0))
             }
             val snapshot = store.current("h", "c")
             val current = snapshot.expansionItems.single { it.id == 18L }
