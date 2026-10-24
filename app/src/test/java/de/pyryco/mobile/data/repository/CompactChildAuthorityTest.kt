@@ -85,6 +85,20 @@ class CompactChildAuthorityTest {
         val redelivered = store.current("h", "c")
         assertRead(redelivered, true)
         assertEquals("prose never demands a tool body", 1, f.details.size)
+        // Complete prose still loses qualification when its omitted ancestor changes.
+        val changedParent = ThreadItemDto.decode(JsonObject(expandableParent.raw - "subtree_version"))
+        store.applyBatch("h", "c", "e", 102, listOf(changedParent), 0)
+        val invalidated = store.current("h", "c")
+        assertFalse(invalidated.hasToolBody(invalidated.expansionItems.single { it.id == 20L }))
+        assertRead(invalidated, false)
+        store.applyBatch("h", "c", "e", 103, listOf(full), 0)
+        val current = store.current("h", "c")
+        assertRead(current, true)
+        assertEquals(before.coverage, current.coverage)
+        assertEquals(before.checkpoint, current.checkpoint)
+        assertEquals(before.completeCoverage, current.completeCoverage)
+        assertEquals(before.completeCheckpoint, current.completeCheckpoint)
+        assertEquals(1, f.details.size)
     }
 
     @Test fun refreshedChildFreshnessCannotReviveSavedBodyAfterEviction() = runTest { refresh(105) }
