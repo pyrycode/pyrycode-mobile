@@ -1,0 +1,5 @@
+{
+  "expected": "/work/Projects/.pyry-test-admission.lock",
+  "nativeEffective": "/home/agent/.local/share/pyry-fleet/test-admission.lock",
+  "matches": false
+}
