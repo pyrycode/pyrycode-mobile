@@ -478,7 +478,7 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         testIme.select()
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
-        awaitChannelList()
+        testIme.observeFirstComposeWait { awaitChannelList() }
 
         // 2. Wait for the relay connection to open before creating a conversation — createDiscussion
         //    round-trips to the daemon, so tapping before the session is Open would fail the send.
