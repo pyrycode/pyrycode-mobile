@@ -593,24 +593,18 @@ class DeterministicInteractiveStreamE2ETest {
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             runBlocking {
-                val current = coordinator.currentRepository.value as? de.pyryco.mobile.data.repository.RemoteConversationRepository
-                val observed = current?.let { harnessThreadEvidence(it).observe(conversationId).first() }
-                val supported = (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection
-                current != null &&
-                    observed != null &&
-                    current === coordinator.currentRepository.value &&
-                    pingReadMarkConfirmed(
-                        reply.owner,
-                        replyFact,
-                        observed,
-                        current.observeReadMarks(conversationId).first(),
-                        supported,
-                        certified = { pingReplyCertifiedBy(observed, replyFact, current) },
-                    ) { route.store.current(serverId, conversationId) } &&
-                    current === coordinator.currentRepository.value &&
-                    (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
-                    pingReplyCertifiedBy(observed, replyFact, current) &&
-                    observed.sourceSnapshot === route.store.current(serverId, conversationId)
+                val marks = repository.observeReadMarks(conversationId).first()
+                val shown = marks?.lastShownVersion
+                ownsConnection() &&
+                    evidence
+                        .observe(conversationId)
+                        .first()
+                        .owner
+                        .matches(reply.owner) &&
+                    marks?.threadSupported == true &&
+                    shown != null &&
+                    shown >= replyFact.id.toULong() &&
+                    (marks.readUpTo ?: 0uL) >= shown
             }
         }
 

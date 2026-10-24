@@ -1,7 +1,6 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.network.Envelope
-import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ThreadDecodeOutcome
 import de.pyryco.mobile.data.network.ThreadQueryDecoder
 import de.pyryco.mobile.data.network.ThreadQueryReply
@@ -62,10 +61,6 @@ internal class ProducerThreadObservation(
     private var sendReceipt: Pair<Any, Envelope>? = null
     private var sendAccepted: Boolean? = null
     private var rejected = false
-    private var rejection = "none"
-    private var lastQueryId: Long? = null
-    private var refusedId: Long? = null
-    private var refusals = 0
 
     private fun owns(source: Any) = source === connection && !retired && current()
 
@@ -101,7 +96,6 @@ internal class ProducerThreadObservation(
         retired = false
         pending = null
         completedId = null
-        lastQueryId = null
         store = AuthoritativeThreadStore().also { fresh -> committed?.let { fresh.restore(host, conversation, it, 0) } }
         if (beforeReply != null) rebuildReply()
     }
@@ -137,7 +131,6 @@ internal class ProducerThreadObservation(
         if (envelope.type !in setOf("thread_catch_up", "thread_page")) return
         val expected = queryRequest()
         check(expected.type == envelope.type && expected.payload() == envelope.payload) { "producer query changed" }
-        lastQueryId = envelope.id
         pending = Query(envelope, ThreadQueryDecoder(host, "owned-producer", envelope.id, expected))
         reply?.phoneSending(source, envelope)
     }
@@ -200,7 +193,7 @@ internal class ProducerThreadObservation(
         for (outcome in query.decoder.decode(envelope)) {
             when (outcome) {
                 is ThreadDecodeOutcome.Pending -> Unit
-                is ThreadDecodeOutcome.Repair -> reject("decoder_repair")
+                is ThreadDecodeOutcome.Repair -> reject()
                 is ThreadDecodeOutcome.Complete ->
                     when (val value = outcome.value) {
                         is ThreadQueryReply.Batch -> {
@@ -213,46 +206,21 @@ internal class ProducerThreadObservation(
                                     value.items,
                                     0,
                                 )
-                            if (applied !in setOf(AuthoritativeThreadOutcome.Applied, AuthoritativeThreadOutcome.Ignored)) reject("batch")
+                            if (applied !in setOf(AuthoritativeThreadOutcome.Applied, AuthoritativeThreadOutcome.Ignored)) reject()
                         }
                         is ThreadQueryReply.Success -> {
                             if (store.certifyQuery(host, query.decoder.request, value, 0) != AuthoritativeThreadOutcome.Applied) {
-                                reject("certification")
+                                reject()
                             } else {
                                 committed = store.current(host, conversation)
                                 completedId = query.envelope.id
                                 pending = null
                             }
                         }
-                        is ThreadQueryReply.Failure ->
-                            if (value.error.code == "thread.query_failed" && value.error.retryable) {
-                                retryableRefusal(query)
-                            } else {
-                                reject(
-                                    when (value.error.code) {
-                                        "thread.query_failed" -> "query_failed"
-                                        "history_unavailable", "history.unavailable" -> "history_unavailable"
-                                        else -> "query_failure"
-                                    },
-                                )
-                            }
-                        is ThreadQueryReply.Reset -> reject("reset")
-                        else -> reject("terminal")
+                        else -> reject()
                     }
             }
         }
-    }
-
-    private fun retryableRefusal(query: Query) {
-        refusedId = query.envelope.id
-        refusals++
-        rejection = "query_failed"
-        query.decoder.abandon()
-        pending = null
-        completedId = null
-        store = AuthoritativeThreadStore().also { fresh -> committed?.let { fresh.restore(host, conversation, it, 0) } }
-        if (beforeReply != null) rebuildReply()
-        RelayLog.i { "event=producer_query outcome=refused query_id=${query.envelope.id} retryable=true" }
     }
 
     private fun retire() {
@@ -263,8 +231,7 @@ internal class ProducerThreadObservation(
         reply?.ended(sendReceipt?.first ?: connection)
     }
 
-    private fun reject(reason: String) {
-        rejection = reason
+    private fun reject() {
         rejected = true
         retire()
     }
@@ -273,21 +240,7 @@ internal class ProducerThreadObservation(
         if (source === connection) retire()
     }
 
-    /** Passive scalar state for the bounded native failure report. */
-    @Synchronized fun diagnostic(): String {
-        val snapshot = store.current(host, conversation)
-        return "owned=${owns(connection)} rejected=$rejected rejection=$rejection retired=$retired " +
-            "pending=${pending != null} accepted=${pending?.accepted} last_query=$lastQueryId completed_query=$completedId " +
-            "items=${snapshot.items.size} checkpoint=${snapshot.checkpoint} completed_version=${snapshot.completedVersion} " +
-            "older=${snapshot.coverage?.olderExists} repair=${snapshot.repairNeeded} reset=${snapshot.resetNeeded} " +
-            "refusals=$refusals refused_query=$refusedId"
-    }
-
     @Synchronized fun completed(requestId: Long): Boolean = owns(connection) && pending == null && completedId == requestId
-
-    /** A refused read releases its request wait without granting a completion certificate. */
-    @Synchronized fun answered(requestId: Long): Boolean =
-        owns(connection) && pending == null && lastQueryId == requestId && (completedId == requestId || refusedId == requestId)
 
     @Synchronized fun evidence(): ThreadEvidence? {
         if (!owns(connection) || pending != null || completedId == null) return null
