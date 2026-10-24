@@ -63,3 +63,13 @@ comparisons, source/APK/launcher identities and cleanup evidence. Historical
 Preserve that causal dependency until ordinary #2435 resolution and all existing
 holds; this review does not accept captures or request a complete Mobile profile.
 Other operating systems are outside this Linux ticket's verification scope.
+
+## Evidence review — 2026-10-24
+
+- Local consumer HEAD is `3105b6f49d4bb72859fdea020bea3ebc98810aeb` and dispatcher HEAD is `91310c59a1c0834526ee0f2f356a80a763611566`. Both merge identities match their merged PRs and the rollout receipt.
+- Local `scripts/test-selection.py` SHA-256 is `98e62d3a0a76caefa4ef4bf72b5688dfefcc96a3ffd6d8faca95f183f68402d4`, matching the loaded-consumer receipt. Both repaired files have no diff between independently reviewed head `cc66e454f75fafba0eb360f0a2a63347f0fc7a02` and the merged dispatcher revision.
+- Fresh Linux command, from the owning dispatcher checkout: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_test_selection.py -v`: 13 executed, 13 passed, zero failures/errors/skips. This includes all four API35/property-spelling regression methods, compatibility and frozen-context checks. Bytecode writes were disabled; the live source was unchanged.
+- The first invocation from the managed Mobile worktree executed 13 tests: 12 passed and the legacy-worker fixture errored because its synthetic root differed from the bound caller worktree. The existing caller-context guard correctly rejected that call. Running the owner's documented command from its checkout supplies the fixture's unmarked caller assumption; this is a test working-directory difference, not a policy or capture repair. Retain both results in the builder run evidence.
+- Reviewed source adds no setup allowance and changes neither host/device admission nor cleanup. The pin diff changes only the dispatcher gitlink. The receipt's four managers and HP/Fractal/Mac loaded-process proofs are retained rollout evidence, not newly sampled process state.
+- Reading task `5493cf495c768cca7f425d3f9ddcbe284cc5b6a1664ad1cd4dd466805d4a2a23` returned the operator-withdrawal result and zero artifact files. The authoritative #2435 stage-evidence lookup returned no earlier acceptance records. Neither result establishes device execution.
+- The owner's 4 context-bridge passes and stubbed actual-launcher probe remain attributed to its historical source validation. No device run, fresh capture, complete Mobile profile or other-OS verification was performed by this review.
