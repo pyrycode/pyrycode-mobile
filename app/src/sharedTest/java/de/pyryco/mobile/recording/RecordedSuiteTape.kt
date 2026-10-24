@@ -323,7 +323,9 @@ internal class RecordedSuiteTape(
         failure?.let { fail(it) }
         return (0 until commandBoundary()).all { index ->
             val step = steps[index]
-            index in released || step.owner != owner || step.message?.type != "session_settings" ||
+            index in released ||
+                step.owner != owner ||
+                step.message?.type != "session_settings" ||
                 step.direction !in setOf("daemon", "settings_snapshot")
         }
     }

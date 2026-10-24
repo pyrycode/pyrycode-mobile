@@ -91,3 +91,38 @@ expected setting value and fabricates no wire message or receipt. Closure cannot
 borrow another owner's progress; omitted applied effort remains unavailable.
 No credentials, production API/schema, persistence or genuine recording bytes
 change. Independent review and configured acceptance remain required.
+
+
+## Integrated focused results — 2026-10-24
+
+On `e30328514` plus the documentation-only continuation plan, the final five
+`InheritedEffortReplayTest` controls freshly executed/passed 5/5, zero failures,
+errors or skips, exit 0. Invocation metadata records five actual executions and
+no reused Gradle result. This includes the later causal-query frontier control,
+downstream consumption, repeated observation, missing-field and closed-owner
+requirements; the earlier causal-query red remains one executed/failed.
+
+On clean committed `8de1d65febb46b72a981b18d54823294fcfed10e`, the focused Android
+gate executed/passed all six selected methods: the five controls and
+`RecordedMobileSuiteTest#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
+zero failures/errors/skips, exit 0. Raw XML, phone logs, finished gate phases,
+app/test BuildConfig and built APK hashes are retained privately under
+`2507-manual-evidence/native/`; test BuildConfig reports `8de1d65fe`, app reports
+`dev`. Built hashes are not installed-byte readback. No extra independent
+per-process cleanup audit or reconstruction of the historical interleaving is
+claimed. The wrapper's first launch failed before execution because its local
+script path was wrong; zero tests executed, and that failure is retained.
+
+The integrated replay-hub class then freshly passed 29/29, zero failures/errors/
+skips, exit 0. Android lint passed. Initial final pre-verification stopped at one
+Spotless line-wrapping violation in `settingsObservationReady`; no test failure
+is inferred. Its log is retained. The formatter changed only whitespace in that Kotlin file; normalized source
+bytes are identical. Rerun the required pre-verification. Previous runtime checks retain the source identities
+above; they are not independent acceptance of subsequent formatting/docs commits.
+Complete configured acceptance, source/security review and normal documentation
+remain pending for the independent workflow.
+
+The original builder bundle verified 589/589 manifest entries. Its later
+causal-query red and refined exact-method native artifacts were additionally
+retained before cleanup of temporary storage. No original failure is erased or
+turned into acceptance by a later green run.
