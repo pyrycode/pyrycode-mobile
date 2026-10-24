@@ -114,11 +114,12 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
                 },
         )
     if (affected.isNotEmpty()) RelayLog.i { "event=thread_detail code=invalidated" }
-    val observed = copy(
-        detailValidity = validity,
-        bodyLoads = bodyLoads.filterKeys { it.first !in affected },
-        childLoads = childLoads.filterKeys { it.first !in affected },
-    )
+    val observed =
+        copy(
+            detailValidity = validity,
+            bodyLoads = bodyLoads.filterKeys { it.first !in affected },
+            childLoads = childLoads.filterKeys { it.first !in affected },
+        )
     return if (firstKnownAncestors.isEmpty()) observed else observed.restoreDetailValidity(items, firstKnownAncestors)
 }
 
@@ -137,9 +138,12 @@ internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(
                     .filter { summary ->
                         summary.summaryPayload != null &&
                             full[summary.id]?.let { fact ->
-                                fact.rev != summary.rev || fact.subtreeFreshness == null || fact.subtreeFreshness != summary.subtreeFreshness
+                                fact.rev != summary.rev ||
+                                    fact.subtreeFreshness == null ||
+                                    fact.subtreeFreshness != summary.subtreeFreshness
                             } != false
-                    }.map { it.id }.toSet()
+                    }.map { it.id }
+                    .toSet()
             },
         )
     val stale = mutableSetOf<Long>()
