@@ -19,6 +19,8 @@ to scripted `ping` alongside the original
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
 It proves authoritative recovery from saved certification after restart and older
 catch-up through reader pulls; it does not use raw replay or legacy gap markers. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
+Its independent producer now negotiates `thread` and `interactive` and observes both
+completed posts and the exact reply through explicit canonical catch-up (#2513).
 The existing ping method's #2198 read proof retains complete live receipts before
 classification and confirms displayable reply and exact peer-post targets; see
 [read-target evidence](#scripted-read-target-evidence-2198).
@@ -3507,6 +3509,103 @@ certification; final admission also waits for the real lazy item provider. Curre
 epoch/generation scopes checkpoint comparisons while historical receipts remain
 accounted for. The [Linux evidence](knowledge/features/development-verification-recovery-receipt-evidence.md)
 separates the successful composed producer pair from configured inherited failures.
+
+**Negotiated producer observation (#2513).** The durable-gap producer negotiates
+`thread` and `interactive` before obtaining its own authoritative baseline, including
+required older pages. `ProducerThreadObservation` accepts explicitly correlated canonical
+query batches only after transport acceptance and a separate successful final marker.
+Catch-up resumes from the last completed checkpoint to recover source-only items and
+revision gaps. Partial, rejected, reset-needed, abandoned, wrong-conversation, stale
+connection/epoch and foreign-owner results cannot advance it. Raw `message`,
+`assistant_delta`, `turn_end`, legacy history and phone snapshots supply no producer proof.
+
+The exact completed final older post precedes the independently sent reply, which precedes
+the newer post batch. Canonical channel posts can be sessionless: the post needs its own
+item identity, order, full text and completed terminal state. The interactive reply still
+requires the exact accepted send, delivered user identity, session, turn, exact text and
+successful terminal through `OwnedReplyObservation`. An ack or unrelated identical text
+cannot substitute. The phone stays disconnected through missed production and daemon
+restart; only frozen production evidence leaves the producer helper. Phone rows, cache,
+chronology, source identity, paging, both held sides and reconnect remain independently
+proved by `DurableGapProof`.
+
+A replacement physical source must negotiate and certify its own catch-up in the same
+epoch. Retain only completed snapshots and the original actual send receipt; abandon
+partial old-source batches and decoders. The exact recorded attempt's first transport
+result may arrive after retirement. Foreign/duplicate callbacks cannot overwrite it,
+and refusal releases the provisional receipt so the existing NotSent path can submit
+previously unsent input. Accepted input is never replayed. Source loss during acquisition,
+preparation, arming or admission returns to bounded recovery and requires fresh current-source
+certification; genuine invariants still fail. Once a successful reply has been frozen,
+carry that result forward without another evidence read. Both 90000 ms waits, 50 ms polling
+and shorter peer bounds remain unchanged.
+
+Controlled `ProducerThreadObservationTest` cases cover query-only post/reply completion,
+separate finals, required baseline pages, missing capabilities, partial/stale/foreign
+queries, unrelated identical text, replacement certification and the receipt lifetime.
+`sourceLossBetweenCompletionAndAdmissionRequiresFreshReplacementCertification`,
+`sourceLossAfterCompletedPostRecoversArmingWithinOriginalBound` and
+`retirementAfterSuccessfulFreezeDoesNotRequireAnotherEvidenceRead` specifically prevent
+completion checks from hiding a later ownership race or discarding a frozen success.
+
+**Counted Linux evidence (#2513, 2026-10-24).** The
+[accepted verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2516#issuecomment-6378840785)
+reviews Mobile `b2344314ae2eb963a7b41c9beb5cbd5503cc643a`. Focused and configured
+results remain separate:
+
+| Run | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Final repair red producer controls | 20 | 17 | 3 | 0 | 0 |
+| Focused JVM classes: producer 20, owned reply 42, thread evidence 17, redial 6 | 85 | 85 | 0 | 0 | 0 |
+| Focused managed `scripted ping`, `scripted-5nmjb60_` | 2 | 2 | 0 | 0 | 0 |
+| Configured `jvm-test-gate.py --with-build-checks` | 5542 | 5542 | 0 | 0 | 0 |
+| Configured `android-test-gate.py ui` | 250 | 250 | 0 | 0 | 0 |
+| Configured `android-test-gate.py scripted-all` | 24 | 21 | 3 | 0 | 0 |
+| Configured scripted suite's named ping pair | 2 | 2 | 0 | 0 | 0 |
+
+Both native rows for the pair contain the two original methods named above; the configured
+pair is a subset of the full suite, not a separate focused run. The verifier inspected its
+fresh per-method XML and confirmed both passed. The three configured failures remain
+`interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` (#2353),
+`interactiveTurn_seededChannel_earlierSessionAgent_survivesRestartAndSettlementReconnect`
+and `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` (both #2521).
+The candidate's named rerun and the comparison on main
+`90c0747af00780798f266d48543a5425fb455857` each executed/failed 3, with zero errors/skips.
+The dispatcher accepted them as inherited;
+verifier PASS does not convert them into passing tests.
+
+Raw focused evidence was retained under agents
+`logs/evidence/2513/rework-linux-20261024-admission/`: `unit/` has red/green XML
+and exact dirty-source diffs at checkout `08a4e26cc3c34f02875c62d6c0a68e3f039e72bd`;
+`native/scripted-5nmjb60_/` has XML and phone logs; `native/harness/` has
+control/daemon/relay diagnostics. Adjacent `identities.json`, Go build metadata and
+`SHA256SUMS` identify Mobile, Core `cb556b7697fa6f10685a630fb6a73139ed82cf9c`,
+relay `2fd9338dd1662dbd68f3710a33e6a8cc4e7a0bc1`, effective binaries and both APKs.
+The daemon has no embedded VCS revision; source revision and binary hash identify it.
+`native-cleanup.json` records exit 0 and phase `finished`; harness retention completed,
+without a separate process-wide audit. These paths describe retention at the time.
+Configured counts and per-method results above are attributed to the verifier's XML
+review and the dispatcher's gate report; the removed gate worktree is not an artifact
+location. Accepted verifier bundle
+`73fcbdf5a72d2d0fbc7100188eddd4bbe13026c45eb201ccf8c1abaff3a8ddf0`
+retains the verdict and gate logs. No real-Claude or second-OS execution is claimed.
+
+Historical failures remain failures. The original #2442 Linux pair executed 2, passed 0,
+failed 2, zero errors/skips, on tested Mobile `2ff4cdae842b3a65b3de0e1577092adecceceba5`,
+Core `5ba6b8dacc0916533df8b8d9c60090190a9e6f4d` and the relay revision above.
+Agents `logs/evidence/2442/rework-linux-20261023/ping/provenance-correction.json`
+distinguishes that executed revision from retention HEAD `af7a06eb15d74fc12deb7f915bffe769bebaa381`;
+this is no fresh main baseline. In #2513, `scripted-oo07311r` on `905ef6338`
+executed 2, passed 0, failed 2: durable-gap lost its producer to 4414 during older posts;
+original ping failed reply rendering before final-read proof. `scripted-2byr1cx2` on
+`c2a165f10af099c73d17b9ad253d5a0fb2034792` executed 2, passed 1, failed 1:
+producer observations succeeded, but durable-gap lacked an exact phone receipt, subsequently
+fixed by #2515. Both had zero errors/skips and retain XML/logs, identities and cleanup
+receipts under agents `logs/evidence/2513/builder-linux-20261023/` and its harness pointers.
+The [PR's retained run history](https://github.com/pyrycode/pyrycode-mobile/pull/2516)
+also preserves earlier red controls, focused passes and configured flakes; later green
+results do not erase them. #2494's independent current-owner final-read proof and #2514's
+failure restoration remain separate from this producer migration.
 
 The following earlier fragmented-projection evidence describes the removed runtime.
 Its counts and outcomes remain historical.
@@ -8617,6 +8716,10 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Durable reconnect catch-up (#1842):** rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
   is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
+  \#2513 migrates both producer observations to negotiated canonical catch-up with
+  replacement certification; [counted Linux evidence](#scripted-ping-durable-gap-proof-1842)
+  records both named methods passing in focused and configured execution, with inherited
+  suite failures preserved. Producer evidence supplies no phone content or certification.
   [Counted evidence](#scripted-durable-gap-closure-2069) establishes #2069's missing
   non-rendering receipt cause and closes its deterministic handoff without changing the proof.
   [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) closed the rung-3

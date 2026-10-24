@@ -443,52 +443,24 @@ class DeterministicInteractiveStreamE2ETest {
                     requireNotNull(args.getString("relayUrl")),
                     requireNotNull(args.getString("serverStaticPublicKey")),
                 ),
+                threadEnabled = true,
             )
         try {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            // This scripted fixture has no settings subscriber. Read the physical session through
-            // the existing correlated probe; create-conversation summaries intentionally omit it.
-            val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
-            val session =
-                runBlocking {
-                    withTimeout(THREAD_TIMEOUT_MS) {
-                        SettingsReadProbe
-                            .read(
-                                repo as RemoteConversationRepository,
-                                conversation.id,
-                                { coordinator.currentRepository.value === repo },
-                                { coordinator.hostReadings.liveSessionBindings[conversation.id] },
-                            ).sessionId
-                            .also { check(it.isNotBlank()) { "scripted conversation has no admitted session" } }
-                    }
-                }
-            val before = runBlocking { harnessThreadEvidence(repo).observe(conversation.id).first() }
-            val observation = OwnedReplyObservation(serverId, before, legacyProducer = true, knownSession = session)
-            peer.replyObservation = observation
+            val observation = runBlocking { peer.observeProduction(conversation.id, THREAD_TIMEOUT_MS) }
             var produced: ProducedReplyEvidence? = null
             severLink()
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
                 runBlocking {
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
-                            }
-                        ) {
-                            kotlinx.coroutines.delay(50)
-                        }
-                    }
-                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
-                    withTimeout(REPLY_TIMEOUT_MS) {
-                        while (peer.recorded(conversation.id).none {
-                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
-                            }
-                        ) {
-                            delay(50)
-                        }
-                    }
-                    produced = checkNotNull(observation.produced()) { observation.producerState() }
-                    assertEquals("scripted fixture keeps its exact reply contract", "ping", produced!!.text)
+                    produced =
+                        observation
+                            .awaitReplyAfterPost(
+                                proof.lastOlderPost,
+                                REPLY_TIMEOUT_MS,
+                                catchUp = { peer.catchUpProduction(observation, REPLY_TIMEOUT_MS) },
+                                send = { peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS) },
+                            ).also { assertEquals("scripted fixture keeps its exact reply contract", "ping", it.text) }
                 }
             }
             proof.catchUp(::restoreLink, "e2e1833-completed-turn", checkNotNull(produced), listOf(hasText("e2e1833-baseline-000")))
