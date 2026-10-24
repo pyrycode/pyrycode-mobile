@@ -208,8 +208,28 @@ internal class DurableGapProof(
                     rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(oldest.fullText) and bubble)
                     rule.onNode(hasText(oldest.fullText) and bubble, useUnmergedTree = true).assertIsDisplayed()
                     assertEquals("revealing the supplied oldest row is inert", requests, AuthoritativeHistoryProbe.requests())
+                    var lastProgress: String? = null
+                    fun progress(stage: String) {
+                        val observation = AuthoritativeHistoryProbe.snapshot()
+                        val evidence = authoritativeEvidence()
+                        val lower = evidence?.sourceSnapshot?.coverage?.lowerOrder
+                        val detail =
+                            "page=$pulls current=${observation.current} accounted=${observation.exactlyAccounted} " +
+                                "accepted_delta=${observation.requests.size - requests.size} " +
+                                "certificate_delta=${observation.certificates.size - proofs.size} " +
+                                "source_matches=${evidence?.let { source.matches(it.owner) }} " +
+                                "previous_lower=${previous.lowerOrder} lower=$lower " +
+                                "advanced=${lower?.let { it < previous.lowerOrder }}"
+                        if (stage != "waiting" || detail != lastProgress) {
+                            Log.i("DurableGapProof", "event=older_page_progress stage=$stage $detail")
+                            lastProgress = detail
+                        }
+                    }
+                    progress("before_pull")
                     pull()
+                    progress("pull_returned")
                     rule.waitUntil(30_000) {
+                        progress("waiting")
                         AuthoritativeHistoryProbe.current() &&
                             AuthoritativeHistoryProbe.requests().size == requests.size + 1 &&
                             AuthoritativeHistoryProbe.certificates().size == proofs.size + 1 &&
@@ -221,6 +241,7 @@ internal class DurableGapProof(
                                         ?.let { lower -> lower < previous.lowerOrder } == true
                             } == true
                     }
+                    progress("certified")
                     val proof = AuthoritativeHistoryProbe.certificates().last()
                     val request =
                         proof.request as? ThreadQueryRequest.Page
