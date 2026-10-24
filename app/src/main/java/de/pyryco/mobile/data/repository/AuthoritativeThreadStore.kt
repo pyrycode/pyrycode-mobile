@@ -93,15 +93,18 @@ internal data class AuthoritativeThreadSnapshot(
     fun hasToolBody(item: ThreadItemDto): Boolean =
         item.id !in detailValidity.bodies &&
             (
-                item.hasToolBody ||
-                    (item.id to item.rev) in bodyContents ||
-                    item.summaryPayload != null &&
-                    items.any { full ->
-                        full.id == item.id &&
-                            full.rev == item.rev &&
-                            full.hasToolBody &&
-                            full.subtreeFreshness?.let { it == item.subtreeFreshness } == true
-                    }
+                (item.id to item.rev) in bodyContents ||
+                    detailValidity.staleFullBodies[item.id] != item.rev &&
+                    (
+                        item.hasToolBody ||
+                            item.summaryPayload != null &&
+                            items.any { full ->
+                                full.id == item.id &&
+                                    full.rev == item.rev &&
+                                    full.hasToolBody &&
+                                    full.subtreeFreshness?.let { it == item.subtreeFreshness } == true
+                            }
+                    )
             )
 
     fun retainedBody(item: ThreadItemDto): JsonObject? =
@@ -648,6 +651,7 @@ internal class AuthoritativeThreadStore {
                 .copy(
                     items = ordered(if (olderSaved) insertOlderSaved(current.items, saved.items, merged) else merged),
                 ).observeDetails(admitted, completedVersion, restoring = true)
+                .restoreDetailValidity(admitted)
                 .copy(
                     epoch = saved.epoch,
                     incarnation = saved.incarnation,

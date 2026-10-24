@@ -12,6 +12,8 @@ internal data class ExpansionDetailValidity(
     val floors: Map<Long, Long> = emptyMap(),
     val bodies: Set<Long> = emptySet(),
     val children: Set<Long> = emptySet(),
+    /** Retained full bodies cannot be revived by evicting their fetched replacement. */
+    val staleFullBodies: Map<Long, Long> = emptyMap(),
 ) {
     internal data class Observation(
         val revision: Long,
@@ -55,19 +57,8 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
                     -1,
                 )
             }
-        // Disk facts may arrive after their compact observation. Preserve that observation and
-        // the full source fact, but equal revision alone cannot make an old subtree current.
-        if (restoring && previous != null && item.rev <= previous.revision) {
-            if (known[item.id]?.summaryPayload != null &&
-                item.rev == previous.revision &&
-                item.hasToolBody &&
-                (freshness == null || freshness != previous.freshness)
-            ) {
-                changed += item.id
-                incompleteChanges += item.id
-            }
-            continue
-        }
+        // Restore may retain old full facts without revising the live observation or query capture.
+        if (restoring && previous != null && item.rev <= previous.revision) continue
         if (previous != null &&
             (
                 item.rev < previous.revision ||
@@ -109,11 +100,62 @@ internal fun AuthoritativeThreadSnapshot.observeDetails(
             floors = detailValidity.floors + affected.associateWith { maxOf(version, detailValidity.floors[it] ?: 0) },
             bodies = (detailValidity.bodies + affectedBodies) - completeBodies,
             children = detailValidity.children + affected,
+            staleFullBodies =
+                if (restoring) {
+                    detailValidity.staleFullBodies
+                } else {
+                    (
+                        detailValidity.staleFullBodies +
+                            items.filter { it.id in affectedBodies && it.hasToolBody }.associate { it.id to it.rev }
+                    ) -
+                        completeBodies
+                },
         )
     if (affected.isNotEmpty()) RelayLog.i { "event=thread_detail code=invalidated" }
     return copy(
         detailValidity = validity,
         bodyLoads = bodyLoads.filterKeys { it.first !in affected },
         childLoads = childLoads.filterKeys { it.first !in affected },
+    )
+}
+
+/** Disk arrival cannot revoke a current query or let old full facts certify compact descendants. */
+internal fun AuthoritativeThreadSnapshot.restoreDetailValidity(incoming: List<ThreadItemDto>): AuthoritativeThreadSnapshot {
+    if (!compactSelected || incoming.isEmpty()) return this
+    val full = items.associateBy { it.id }
+    val descendants = expansionItems.groupBy { it.parent }
+    val pending =
+        ArrayDeque(
+            expansionItems
+                .filter { summary ->
+                    summary.summaryPayload != null &&
+                        full[summary.id]?.let { fact ->
+                            fact.rev != summary.rev || fact.subtreeFreshness == null || fact.subtreeFreshness != summary.subtreeFreshness
+                        } != false
+                }.map { it.id },
+        )
+    val stale = mutableSetOf<Long>()
+    while (pending.isNotEmpty()) {
+        val id = pending.removeFirst()
+        if (!stale.add(id)) continue
+        descendants[id].orEmpty().forEach { pending.addLast(it.id) }
+    }
+    val restoredStale = incoming.filter { it.hasToolBody && it.id in stale }
+    // These captures were admitted against the current source before the disk read completed.
+    val fetchedChildren = (childPages.keys + childLoads.keys).mapTo(mutableSetOf()) { it.first }
+    val fetched = (bodyContents.keys + bodyLoads.keys).mapTo(fetchedChildren.toMutableSet()) { it.first }
+    return copy(
+        detailValidity =
+            detailValidity.copy(
+                staleFullBodies =
+                    (detailValidity.staleFullBodies - incoming.map { it.id }.toSet()) + restoredStale.associate { it.id to it.rev },
+                children = detailValidity.children + restoredStale.filter { it.id !in fetchedChildren }.map { it.id },
+                floors =
+                    detailValidity.floors +
+                        restoredStale.filter { it.id !in fetched }.associate {
+                            it.id to
+                                maxOf(completedVersion, detailValidity.floors[it.id] ?: 0)
+                        },
+            ),
     )
 }
