@@ -749,8 +749,6 @@ class DeterministicInteractiveStreamE2ETest {
                 proved &&
                     current === coordinator.currentRepository.value &&
                     (route.support.value as? de.pyryco.mobile.data.repository.ThreadSupport.Supported)?.connection === current &&
-                    currentEvidence != null &&
-                    current != null &&
                     pingReplyCertifiedBy(currentEvidence, replyFact, current) &&
                     currentEvidence?.sourceSnapshot === route.store.current(serverId, conversationId)
             }
