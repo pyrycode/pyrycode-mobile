@@ -196,6 +196,7 @@ class CompactChildAuthorityTest {
         assertEquals(before.completeCoverage, refreshed.completeCoverage)
         assertEquals(before.completeCheckpoint, refreshed.completeCheckpoint)
     }
+
     @Test fun compactBeforeSavedProseCannotCertifyStaleRenderedContents() = runTest { savedProse(false) }
 
     @Test fun savedChildSubsetBeforeCompactCannotCertifyStaleRenderedContents() = runTest { savedProse(true) }
@@ -203,12 +204,13 @@ class CompactChildAuthorityTest {
     private suspend fun TestScope.savedProse(savedFirst: Boolean) {
         val store = AuthoritativeThreadStore()
         val full = child()
-        val saved = AuthoritativeThreadSnapshot(
-            epoch = "e",
-            items = if (savedFirst) listOf(full) else listOf(parent(), full),
-            completedVersion = 90,
-            checkpoint = 90,
-        )
+        val saved =
+            AuthoritativeThreadSnapshot(
+                epoch = "e",
+                items = if (savedFirst) listOf(full) else listOf(parent(), full),
+                completedVersion = 90,
+                checkpoint = 90,
+            )
         if (savedFirst) assertEquals(AuthoritativeThreadOutcome.Applied, store.restore("h", "c", saved, 0))
         val f = CompactRootFixture(backgroundScope, store = store)
         f.repo.openAuthoritativeThread("c")
@@ -236,42 +238,47 @@ class CompactChildAuthorityTest {
         assertTrue(f.details.isEmpty())
     }
 
-    @Test fun savedChildCannotMoveAnIdentityAfterAuthenticatedChildEnumeration() = runTest {
-        val store = AuthoritativeThreadStore()
-        store.establishComplete("h", "c", "e", 90, listOf(parent()), 0)
-        val f = CompactRootFixture(backgroundScope, store = store)
-        f.repo.openAuthoritativeThread("c")
-        runCurrent()
-        f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
-        f.push(f.marker())
-        runCurrent()
-        f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17))
-        val request = f.details.single()
-        val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":100,\"item_id\":17,\"rev\":17"
-        val summary =
-            """{"id":20,"rev":30,"order":20,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,
+    @Test fun savedChildCannotMoveAnIdentityAfterAuthenticatedChildEnumeration() =
+        runTest {
+            val store = AuthoritativeThreadStore()
+            store.establishComplete("h", "c", "e", 90, listOf(parent()), 0)
+            val f = CompactRootFixture(backgroundScope, store = store)
+            f.repo.openAuthoritativeThread("c")
+            runCurrent()
+            f.push(f.batch(headers = listOf(CompactRootFixture.header(17, kind = "agent", facts = ",\"subtree_version\":90"))))
+            f.push(f.marker())
+            runCurrent()
+            f.repo.demandAgentChildren("c", this, store.current("h", "c"), setOf(17))
+            val request = f.details.single()
+            val scope = "\"conversation_id\":\"c\",\"epoch\":\"e\",\"version\":100,\"item_id\":17,\"rev\":17"
+            val summary =
+                """{"id":20,"rev":30,"order":20,"parent":17,"kind":"agent","status":"done","active":false,"shown":true,
                 "headline":"child","detail_omitted":true,"task_id":"current-child"}"""
-        f.push(obj("""{$scope,"children":[$summary],"final":false}"""), request, "thread_children")
-        f.push(obj("""{$scope,"children":[],"final":true,"more":false}"""), request, "thread_children")
-        runCurrent()
-        val before = store.current("h", "c")
-        val old = ThreadItemDto.decode(JsonObject(child("agent").raw + mapOf("parent" to JsonPrimitive(18), "task_id" to JsonPrimitive("old-child"))))
-        val saved = AuthoritativeThreadSnapshot(epoch = "e", items = listOf(old), completedVersion = 90, checkpoint = 90)
-        assertEquals(AuthoritativeThreadOutcome.Ignored, store.restore("h", "c", saved, 0))
-        val after = store.current("h", "c")
-        assertEquals(before, after)
-        val current = after.expansionItems.single { it.id == 20L }
-        assertEquals(30L, current.rev)
-        assertEquals(17L, current.parent)
-        assertEquals("current-child", current.summaryTaskId)
-        assertFalse(after.hasToolBody(current))
-        val p = projectDeferredAuthoritativeThread("h", "c", after)
-        assertEquals(listOf("current-child"), p.tasks.tasks.map { it.taskId })
-        val expanded = setOf("${p.scope}:17", "${p.scope}:20")
-        val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
-        assertFalse(p.suppliesReadSight(row, expanded))
-        assertFalse(p.matchesReadContents(row.listKey(0), row.item, 30))
-        assertEquals(listOf("thread_read_children"), f.details.map { it.type })
-    }
-
+            f.push(obj("""{$scope,"children":[$summary],"final":false}"""), request, "thread_children")
+            f.push(obj("""{$scope,"children":[],"final":true,"more":false}"""), request, "thread_children")
+            runCurrent()
+            val before = store.current("h", "c")
+            val old =
+                ThreadItemDto.decode(
+                    JsonObject(
+                        child("agent").raw + mapOf("parent" to JsonPrimitive(18), "task_id" to JsonPrimitive("old-child")),
+                    ),
+                )
+            val saved = AuthoritativeThreadSnapshot(epoch = "e", items = listOf(old), completedVersion = 90, checkpoint = 90)
+            assertEquals(AuthoritativeThreadOutcome.Ignored, store.restore("h", "c", saved, 0))
+            val after = store.current("h", "c")
+            assertEquals(before, after)
+            val current = after.expansionItems.single { it.id == 20L }
+            assertEquals(30L, current.rev)
+            assertEquals(17L, current.parent)
+            assertEquals("current-child", current.summaryTaskId)
+            assertFalse(after.hasToolBody(current))
+            val p = projectDeferredAuthoritativeThread("h", "c", after)
+            assertEquals(listOf("current-child"), p.tasks.tasks.map { it.taskId })
+            val expanded = setOf("${p.scope}:17", "${p.scope}:20")
+            val row = p.demandRows(p.rows, expanded).filterIsInstance<ThreadRow.Delivered>().single { it.listKey(0).endsWith(":20") }
+            assertFalse(p.suppliesReadSight(row, expanded))
+            assertFalse(p.matchesReadContents(row.listKey(0), row.item, 30))
+            assertEquals(listOf("thread_read_children"), f.details.map { it.type })
+        }
 }
