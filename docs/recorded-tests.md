@@ -809,6 +809,26 @@ the current registered source. The holder remains available to waiting readers.
 Registration and retirement share an identity check so a late old close cannot clear
 its replacement or retain the closed connection graph.
 
+The reconnect-footer consumer also uses this fence at its single reopen (#2356).
+A context-usage assertion can finish while terminal preparation still lacks the
+reopened destination's distinct request. The retained failure timed out in
+`SuiteConnections.control` through `LiveSessionCleanupRule.endWhileActivityAlive`,
+after the scenario body returned; it did not establish a context-reading timeout.
+The old provider path's replacement-source control fails when acquisition happens
+during an unconsumed terminal. The shared fence covers acquisition both during and
+after consumption while preserving strict requests, source retirement and the
+original budget. A passing unfenced native baseline alone is not causal evidence.
+
+IME diagnostics must cover the potentially blocking initial settings/service reads
+and the first Compose synchronization boundary, through restoration. Starting the
+observer after those reads or cancelling it at selection return misses that window.
+The #2356 observer is passive: after five seconds in one phase it emits at most four
+samples, each bounded to 24 frames per instrumentation/main thread, and performs no
+extra settings, service or shell reads. Final cleanup cancels it even if restoration
+fails. A sampled stack in a body that subsequently passes proves neither deadlock
+nor a historical IME, renderer or lifecycle cause. See the
+[accepted reconciliation](#model-reopen-reconciliation-2356) for its counted limits.
+
 ### Recorded terminal preparation (#2491)
 
 A successful scenario return does not imply that its Activity can close. Under
@@ -1054,6 +1074,85 @@ real-Claude turn was required. Acceptance proves neither unrelated live delivery
 one cause for all historical flakes. Related tickets retain their own holds, ownership,
 approval records and acceptance requirements; this result grants no bulk closure or
 resumption.
+
+#### Model-reopen reconciliation (#2356)
+
+The [independent verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2529#issuecomment-6385551176)
+accepted `43e5d2819b4335356e274a08be66d901bedb0fa3` on macOS in run
+`e5ca11a5e56df784e7c4e8b43bbfb5e3c7076c7d1e2a90eb739a65037130581b`.
+The model scenario retains exact saved X/Y isolation across both reopens, current
+menu selection/confirmation, saved-versus-applied distinctions, restoration and its
+original deadlines. It reuses #2505's current-query mechanism and #2493's refreshed
+model recording; production source and recording bytes are unchanged by this repair.
+The fixture SHA-256 is
+`b523906cc45de9399580e0119b7f79f93d57d68001c9e534ab54744da9767873`.
+It differs from #2505's older input, so that older pass alone cannot certify this one.
+
+The original #2351 evidence retained Y's correlated saved `sonnet`/`low` values and
+current ownership while its menu was hidden behind unmatched X catch-up work. Its
+composite confirmation failure was not independent proof of persistence loss.
+The cached-checkpoint, distinct consumed destination request and source-retirement
+controls above establish the repaired acquisition boundary. They support, without
+proving, attribution of every historical model occurrence. Preserve the diagnostic
+history in
+[`model-reopen-2351/investigation.txt`](../app/src/androidTest/assets/model-reopen-2351/investigation.txt)
+and the checked
+[`model-reopen-2356/reconciliation.txt`](../app/src/androidTest/assets/model-reopen-2356/reconciliation.txt).
+
+| Accepted configured result | Executed | Passed | Failed | Errors | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| JVM with build checks, fresh execution | 5557 | 5557 | 0 | 0 | 0 | 0 |
+| Complete recorded UI, original run | 250 | 250 | 0 | 0 | 0 | 0 |
+| Scripted-all, original run | 24 | 20 | 4 | 0 | 0 | 1 |
+
+The required
+`RecordedMobileSuiteTest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+executed/passed once in that original complete UI run (4.987 s), with zero
+failures/errors/skips. Reconnect-footer, interrupted retrieval and ping also each
+executed/passed once in that same run. They are not additional focused executions.
+The original four scripted failures remained in the exact candidate comparison and
+also failed on merged main `4a295611bec8ca3162c461ea0cb1e09fc722fdee`:
+earlier-session Agent restart, background Agent settlement and durable-gap catch-up
+belong to #2521; scripted ping belongs to #2469. The verifier accepted these inherited
+dispositions. The original failures remain failed; scripted-all was not an all-pass run.
+
+The accepted review separately authenticated focused macOS acquisition controls
+18/18, readiness controls 12/12, repaired reconnect 1/1, exact model 1/1, and the
+admitted interrupted-retrieval → ping pair 2/2, all with zero failures/errors/skips.
+The old unfenced replacement-source control remains 1 executed / 0 passed / 1 failed,
+zero errors/skips. The unrelated unrepaired reconnect baseline passed 1/1 and does
+not demonstrate the repair. Model/reconnect source was
+`4574645e3a2227ffcef12f74ca912ae42c51ac8f`; pair/control source was
+`f3a893188519b7282ba8306467c5f6adf2240da0`. Review checked relevant helper/scenario/fixture
+equivalence: later differences were bounded IME diagnostics and ping's passive
+first-wait observer. Raw TestRunner records establish retrieval followed by ping in
+one instrumentation process; passing that pair establishes no causal IME repair.
+
+Keep the earlier configured result separate: 40 completed, 39 passed, one reconnect
+terminal-cleanup failure, then an unfinished ping with no completed result. The model
+method passed in that attempt, but the UI gate was incomplete and scripted-all never
+ran. Later success cannot turn the unfinished ping into a pass or establish its
+exact historical interleaving. The separate sequence/load assessment
+`a5f9f370771aaf4afb5261e8847b7bfb8988e0e79bda0dcb24ac53c97beb7ef5`
+acknowledged zero executions. Its historical question and evidence remain retained;
+the accepted candidate's configured execution requirements are satisfied. #2368
+continues to own later model-sighting reconciliation. Neither renderer precedent
+nor the passing ordered pair attributes the original Mac hang to a renderer,
+IME, lifecycle or resource defect.
+
+The accepted verifier names the run above for fleet-evidence retention. Its producer
+`logs/verifier-gate_#2356_4.log`, `_5.log` and `_6.log` retain the counted configured
+XML after the disposable worktree is removed. Manual documentation rechecked these
+logs and retained the original output/stderr, extracted XML, hashes and counted
+receipt under agents `logs/evidence/2356/manual-documentation-20261024/`.
+Focused/history files were retained at review time under agents
+`logs/evidence/2356/builder-macos-20261024/`, `recovery-macos-20261024/` and
+`sequence-macos-20261024/`. Review authenticated their respective 84, 140 and 38
+manifest entries plus #2351's 19-entry original manifest; entries are artifacts,
+not extra test executions. These retention paths may later be pruned. Built APK
+hashes identify outputs; independent installed-byte readback was not established
+for these focused attempts. Offline replay proves no current provider/real-Claude
+behavior; Linux was outside this ticket's verification scope.
 
 ### Explicit graph-restart readiness (#2347)
 
